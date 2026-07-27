@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+target/
+*.class
+*.jar
+*.log
+.env
+.env.local
+.DS_Store
+Thumbs.db
+*.suo
+*.sln
+.idea/
+*.iml
+.vscode/
+.history/

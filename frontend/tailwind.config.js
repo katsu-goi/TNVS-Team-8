@@ -1,0 +1,103 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {
+      fontFamily: {
+        sans: ['Inter', 'sans-serif'],
+        heading: ['Outfit', 'sans-serif'],
+      },
+      colors: {
+        brand: {
+          50: '#ecfdf5',
+          100: '#a7f3d0',
+          200: '#6ee7b7',
+          500: '#10B981',
+          600: '#059669',
+          700: '#047857',
+          900: '#064e3b',
+          950: '#022c22',
+        },
+        surface: {
+          sidebar: '#0B0F19',
+          primary: '#0B1220',
+          secondary: '#0F172A',
+          tertiary: '#1e293b',
+          card: 'rgba(17, 24, 39, 0.6)',
+          'card-solid': '#111827',
+          header: 'rgba(11, 18, 32, 0.85)',
+          input: '#111827',
+          hover: 'rgba(255, 255, 255, 0.05)',
+          active: '#1e293b',
+          overlay: 'rgba(0, 0, 0, 0.6)',
+          code: '#0F172A',
+          page: '#F8FAFC',
+          'card-light': '#FFFFFF',
+          'card-light-hover': '#FAFBFC',
+          'input-light': '#FFFFFF',
+          'header-light': 'rgba(255, 255, 255, 0.85)',
+          'hover-light': '#F1F5F9',
+        },
+        content: {
+          primary: '#F8FAFC',
+          secondary: '#94A3B8',
+          muted: '#64748b',
+          dim: '#475569',
+          accent: '#00E676',
+          'accent-hover': '#10B981',
+          inverse: '#0B1220',
+          success: '#22C55E',
+          error: '#FB7185',
+          warning: '#F59E0B',
+        },
+        border: {
+          DEFAULT: '#1E293B',
+          secondary: '#0F172A',
+          accent: '#00E676',
+          success: '#22C55E',
+          error: '#FB7185',
+          warning: '#F59E0B',
+        },
+        accent: {
+          DEFAULT: '#00E676',
+          hover: '#10B981',
+          bg: 'rgba(0, 230, 118, 0.1)',
+          'bg-hover': 'rgba(0, 230, 118, 0.15)',
+        },
+        success: {
+          DEFAULT: '#22C55E',
+          bg: 'rgba(34, 197, 94, 0.1)',
+        },
+        error: {
+          DEFAULT: '#FB7185',
+          bg: 'rgba(251, 113, 133, 0.1)',
+        },
+        warning: {
+          DEFAULT: '#F59E0B',
+          bg: 'rgba(245, 158, 11, 0.1)',
+        },
+      },
+      borderRadius: {
+        'card': '1rem',
+      },
+      boxShadow: {
+        glass: '0 8px 32px rgba(0, 0, 0, 0.4)',
+        card: '0 2px 8px rgba(0, 0, 0, 0.18)',
+        soft: '0 1px 3px rgba(0, 0, 0, 0.2)',
+        medium: '0 4px 12px rgba(0, 0, 0, 0.25)',
+        strong: '0 8px 24px rgba(0, 0, 0, 0.3)',
+        heavy: '0 12px 40px rgba(0, 0, 0, 0.35)',
+        'card-light': '0 1px 2px rgba(0, 0, 0, 0.05)',
+        'card-light-hover': '0 4px 6px rgba(0, 0, 0, 0.07)',
+      },
+      backgroundImage: {
+        'gradient-page': 'linear-gradient(to bottom right, #0B1220, #0F172A)',
+        'gradient-accent': 'linear-gradient(135deg, #00E676, #10B981)',
+      },
+    },
+  },
+  plugins: [],
+}
