@@ -1,0 +1,216 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+  error:
+    include-message: always
+    include-binding-errors: always
+
+spring:
+  application:
+    name: facilities-management-service
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:default}
+
+  # Primary PostgreSQL Database
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/facilities_db}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: FacilitiesHikariPool
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      connection-test-query: SELECT 1
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        default_schema: public
+        jdbc:
+          time_zone: UTC
+        generate_statistics: false
+    open-in-view: false
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+    schemas: public
+    validate-on-migrate: true
+
+  # Mail Configuration
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:noreply@photonicomega.com}
+    password: ${MAIL_PASSWORD:changeme}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+  # Cache (Caffeine)
+  cache:
+    type: caffeine
+    caffeine:
+      spec: maximumSize=1000,expireAfterWrite=3600s
+
+  # File Upload
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 100MB
+      max-request-size: 200MB
+      file-size-threshold: 2KB
+
+  # Jackson
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+    time-zone: UTC
+    date-format: yyyy-MM-dd'T'HH:mm:ss'Z'
+
+# Application-specific settings
+app:
+  name: "Photonic Omega Facilities Management System"
+  version: "1.0.0"
+  frontend-url: ${FRONTEND_URL:http://localhost:5173}
+
+  # JWT Settings
+  jwt:
+    secret: ${JWT_SECRET:PhotonicOmega2026SuperSecretKeyForJWTTokenGenerationMustBe256BitsLong!!}
+    access-token-expiration: ${JWT_ACCESS_EXPIRY:900000}        # 15 minutes in ms
+    refresh-token-expiration: ${JWT_REFRESH_EXPIRY:604800000}   # 7 days in ms
+    issuer: photonic-omega-facilities
+
+  # OTP Settings
+  otp:
+    length: 6
+    expiry-seconds: 30
+    max-attempts: 5
+    lock-duration-minutes: 15
+
+  # File Storage - Primary (Enterprise File Server)
+  storage:
+    primary:
+      type: local
+      path: ${FILE_STORAGE_PATH:/mnt/fileserver/facilities}
+      base-url: ${FILE_STORAGE_URL:http://localhost:8080/api/files}
+    backup:
+      type: supabase
+      url: ${SUPABASE_URL:https://your-project.supabase.co}
+      key: ${SUPABASE_SERVICE_KEY:your-service-key}
+      bucket: ${SUPABASE_BUCKET:facilities-documents}
+
+  # AI Services
+  ai:
+    enabled: ${AI_ENABLED:true}
+    llama:
+      base-url: ${LLAMA_API_URL:http://ollama:11434}
+      model: ${LLAMA_MODEL:llama3.3}
+      timeout: 120000
+    qwen:
+      base-url: ${QWEN_API_URL:http://ollama:11434}
+      model: ${QWEN_MODEL:qwen2.5}
+      timeout: 120000
+    embedding:
+      model: ${EMBEDDING_MODEL:nomic-embed-text}
+      dimension: 768
+
+  # CORS
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
+    allowed-methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
+    allowed-headers: "*"
+    allow-credentials: true
+    max-age: 3600
+
+  # Scheduler
+  scheduler:
+    retention-check-cron: "0 0 2 * * ?"       # 2 AM daily
+    contract-expiry-cron: "0 0 8 * * ?"        # 8 AM daily
+    visitor-cleanup-cron: "0 0 1 * * ?"        # 1 AM daily
+    otp-cleanup-cron: "0 */5 * * * ?"          # Every 5 minutes
+
+  # Security
+  security:
+    bcrypt-strength: 12
+    password-reset-expiry-minutes: 30
+
+# Actuator
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# OpenAPI / Swagger
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: alpha
+    tagsSorter: alpha
+    disable-swagger-default-url: true
+  info:
+    title: Facilities Management API
+    version: 1.0.0
+    description: AI-Powered Facilities & Administrative Management System API
+
+# Logging
+logging:
+  level:
+    root: INFO
+    com.photonicomega: DEBUG
+    org.hibernate.SQL: WARN
+    org.springframework.security: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/facilities-management.log
+    max-size: 100MB
+    max-history: 30
+
+---
+spring:
+  config:
+    activate:
+      on-profile: docker
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:postgres}:${DB_PORT:5432}/${DB_NAME:facilities_db}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: test
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+  flyway:
+    enabled: false
