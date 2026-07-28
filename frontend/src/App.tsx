@@ -15,6 +15,19 @@ import {
   SystemHealthPage,
   SessionsPage,
 } from './components/sysadmin/AdminPages';
+import { FacilitiesManagerLayout } from './components/facilities/FacilitiesManagerLayout';
+import { FacilitiesDashboard } from './components/facilities/FacilitiesDashboard';
+import {
+  ReservationsPage,
+  ApprovalPage,
+  RoomsPage,
+  CalendarPage,
+  AssetsPage,
+  ReportsPage as FacilitiesReportsPage,
+  AnalyticsPage,
+  FacilitiesNotificationsPage,
+  ProfilePage,
+} from './components/facilities/FacilitiesPages';
 import { useAuthStore } from './stores/authStore';
 
 class ErrorBoundary extends React.Component<
@@ -45,9 +58,21 @@ class ErrorBoundary extends React.Component<
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const accessToken = useAuthStore((s) => s.accessToken);
+  const user = useAuthStore((s) => s.user);
   if (!accessToken) {
     return <Navigate to="/login" replace />;
   }
+  if (user?.roles && !user.roles.includes('FACILITIES_MANAGER')) {
+    return <>{children}</>;
+  }
+  return <>{children}</>;
+};
+
+const FacilitiesRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const user = useAuthStore((s) => s.user);
+  if (!accessToken) return <Navigate to="/login" replace />;
+  if (user?.roles && !user.roles.includes('FACILITIES_MANAGER')) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
 
@@ -81,6 +106,25 @@ export const App: React.FC = () => {
           } />
           <Route path="security/audit-logs" element={<AuditLogsPage />} />
         </Route>
+
+        {/* Facilities Manager routes */}
+        <Route element={
+          <FacilitiesRoute>
+            <FacilitiesManagerLayout />
+          </FacilitiesRoute>
+        }>
+          <Route path="facilities" element={<FacilitiesDashboard />} />
+          <Route path="facilities/reservations" element={<ReservationsPage />} />
+          <Route path="facilities/approval" element={<ApprovalPage />} />
+          <Route path="facilities/rooms" element={<RoomsPage />} />
+          <Route path="facilities/calendar" element={<CalendarPage />} />
+          <Route path="facilities/assets" element={<AssetsPage />} />
+          <Route path="facilities/reports" element={<FacilitiesReportsPage />} />
+          <Route path="facilities/analytics" element={<AnalyticsPage />} />
+          <Route path="facilities/notifications" element={<FacilitiesNotificationsPage />} />
+          <Route path="facilities/profile" element={<ProfilePage />} />
+        </Route>
+
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

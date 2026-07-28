@@ -3,17 +3,26 @@ import { useNavigate } from 'react-router-dom';
 import {
   Server, Database, Activity, Users, Shield,
   RefreshCw, AlertCircle, Cpu,
-  Download, FileText, Bell, Layers,
+  Download, Bell, Layers,
   Globe, ChevronRight, Loader2,
 } from 'lucide-react';
 import { loadAdminData, loadBackups, loadNotifications } from '../../api/adminService';
 import { securityService } from '../../api/securityService';
+import { useLiveActivities } from './useLiveActivities';
 import type { DashboardMetrics, SecurityLog, AdminNotification, BackupRecord } from '../../types';
 
-const KpiCard: React.FC<{ label: string; value: string | number; icon: React.ElementType; color?: string; sub?: string; onClick?: () => void }> = ({ label, value, icon: Icon, color, sub, onClick }) => (
+const KpiCard: React.FC<{ label: string; value: string | number; icon: React.ElementType; color?: string; sub?: string; onClick?: () => void; pulse?: boolean }> = ({ label, value, icon: Icon, color, sub, onClick, pulse }) => (
   <button onClick={onClick} className="card-stat p-4 text-left w-full cursor-pointer hover:border-emerald-300 hover:shadow-md transition-all group">
     <div className="flex items-center justify-between mb-2">
-      <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.08em] group-hover:text-emerald-700 transition-colors">{label}</p>
+      <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.08em] group-hover:text-emerald-700 transition-colors flex items-center gap-1.5">
+        {label}
+        {pulse && (
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            <span className="animate-pulse relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+          </span>
+        )}
+      </p>
       <div className="flex items-center space-x-1">
         <Icon className={`w-4 h-4 ${color || 'text-slate-400'} group-hover:scale-110 transition-transform`} />
         <ChevronRight className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 -ml-0.5 transition-all" />
@@ -33,6 +42,7 @@ export const SysAdminDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const { activities, onlineCount, peakToday } = useLiveActivities();
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -114,7 +124,7 @@ export const SysAdminDashboard: React.FC = () => {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <KpiCard label="System Status" value="Online" icon={Server} color="text-emerald-600" sub="Application server operational" onClick={() => navigate('/admin/reports')} />
         <KpiCard label="Connected Subsystems" value={`${metrics.totalDocuments + metrics.totalContracts > 0 ? '2' : '0'}`} icon={Layers} color="text-blue-500" sub="Docs + Contracts" onClick={() => navigate('/admin/integrations')} />
-        <KpiCard label="Active Sessions" value={metrics.activeSessions} icon={Users} color={metrics.activeSessions > 0 ? 'text-emerald-600' : 'text-slate-400'} sub="Current logged-in users" onClick={() => navigate('/security')} />
+        <KpiCard label="Active Users" value={onlineCount} icon={Users} color={onlineCount > 0 ? 'text-emerald-600' : 'text-slate-400'} sub={`${onlineCount} users online · Peak today: ${peakToday}`} onClick={() => navigate('/security')} pulse />
         <KpiCard label="AI Services" value={`${metrics.totalDocuments} docs`} icon={Cpu} color={metrics.totalDocuments > 0 ? 'text-emerald-600' : 'text-slate-400'} sub={`${metrics.totalContracts} contracts`} onClick={() => navigate('/admin/ai-services')} />
         <KpiCard label="Backup Status" value={backupStatus} icon={Download} color={backupStatus === 'COMPLETED' ? 'text-emerald-600' : 'text-amber-500'} sub={`Last: ${lastBackupTime}`} onClick={() => navigate('/admin/backup')} />
         <KpiCard label="Security Alerts" value={metrics.activeAlertsCount} icon={Shield} color={metrics.activeAlertsCount > 0 ? 'text-rose-500' : 'text-emerald-600'} sub="Open security alerts" onClick={() => navigate('/security')} />
@@ -155,32 +165,59 @@ export const SysAdminDashboard: React.FC = () => {
         </div>
 
         <div className="card-stat p-5">
-          <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center"><Bell className="w-4 h-4 mr-2 text-emerald-600" /> Recent Notifications</h3>
-          {notifications.length === 0 ? (
+          <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center">
+            <Activity className="w-4 h-4 mr-2 text-emerald-600" />
+            Live User Activity
+            <span className="ml-2 text-[10px] font-mono text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="animate-pulse relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
+              </span>
+              Real-Time Feed
+            </span>
+          </h3>
+          {activities.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-slate-400">
-              <Bell className="w-8 h-8 mb-2 text-slate-300" />
-              <p className="text-xs">No admin notifications</p>
+              <Activity className="w-8 h-8 mb-2 text-slate-300" />
+              <p className="text-xs">Waiting for user activity...</p>
             </div>
           ) : (
-            <div className="space-y-2">
-              {notifications.slice(0, 6).map((n) => (
-                <div key={n.id} className={`p-3 rounded-xl border ${
-                  n.severity === 'CRITICAL' ? 'bg-rose-50 border-rose-200' :
-                  n.severity === 'WARNING' ? 'bg-amber-50 border-amber-200' :
-                  'bg-slate-50 border-slate-200'
-                }`}>
-                  <div className="flex items-start space-x-2">
-                    {n.severity === 'CRITICAL' ? <AlertCircle className="w-4 h-4 text-rose-500 mt-0.5 shrink-0" /> :
-                     n.severity === 'WARNING' ? <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" /> :
-                     <Bell className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />}
-                    <div>
-                      <p className="text-sm font-medium text-slate-900">{n.title}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">{n.message}</p>
-                      <p className="text-[10px] text-slate-400 mt-1 font-mono">{new Date(n.createdAt).toLocaleString()}</p>
+            <div className="space-y-1 max-h-[480px] overflow-y-auto pr-1 scrollbar-thin">
+              {activities.map((a) => {
+                const secs = Math.floor((Date.now() - a.timestamp.getTime()) / 1000);
+                const rel = secs < 3 ? 'Just now' : secs < 60 ? `${secs}s ago` : `${Math.floor(secs / 60)}m ago`;
+                const isAdmin = a.user.role === 'Admin';
+                return (
+                  <div
+                    key={a.id}
+                    className={`flex items-start space-x-3 py-2.5 px-3 rounded-xl transition-all duration-500 ${
+                      a.isNew ? 'bg-emerald-500/10' : 'hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                      isAdmin ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-600'
+                    }`}>
+                      {a.user.initials}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <p className="text-sm font-medium text-slate-900 truncate">
+                          {a.user.name}
+                          <span className={`ml-1.5 text-[10px] font-mono px-1.5 py-0.5 rounded-full ${
+                            isAdmin ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-500'
+                          }`}>
+                            {a.user.role}
+                          </span>
+                        </p>
+                        <span className="text-[11px] text-emerald-600 font-mono shrink-0">{rel}</span>
+                      </div>
+                      <p className="text-xs text-slate-500 truncate">{a.user.email}</p>
+                      <p className="text-xs text-slate-700 mt-0.5">{a.action}</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5 font-mono">{a.ip} · {a.device}</p>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

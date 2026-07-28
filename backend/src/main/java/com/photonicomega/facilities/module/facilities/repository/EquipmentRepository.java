@@ -11,4 +11,7 @@ import java.util.UUID;
 public interface EquipmentRepository extends JpaRepository<Equipment, UUID> {
     List<Equipment> findByRoomId(UUID roomId);
     boolean existsBySerialNumber(String serialNumber);
+    long count();
+    long countByStatus(com.photonicomega.facilities.module.facilities.domain.EquipmentStatus status);
+    List<Equipment> findByCategory(String category);
 }

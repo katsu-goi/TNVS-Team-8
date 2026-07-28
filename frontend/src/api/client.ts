@@ -15,9 +15,20 @@ const attachToken = (config: any) => {
 
 apiClient.interceptors.request.use(attachToken);
 
+const AUTH_ROUTES = ['/login'];
+
 apiClient.interceptors.response.use(
   (response) => response,
-  (error: AxiosError) => Promise.reject(error)
+  (error: AxiosError) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      if (!AUTH_ROUTES.some(r => window.location.pathname.startsWith(r))) {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
 );
 
 export function extractErrorMessage(error: unknown): string {

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuthStore } from '../../stores/authStore';
+import { useAuthStore, getDashboardPath } from '../../stores/authStore';
 import { login } from '../../api/authService';
 import { extractErrorMessage } from '../../api/client';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
@@ -31,7 +31,7 @@ export const LoginPage: React.FC = () => {
       if (rememberMe) {
         localStorage.setItem('accessToken', res.accessToken);
       }
-      navigate('/', { replace: true });
+      navigate(getDashboardPath(res.user), { replace: true });
     } catch (err) {
       setError(extractErrorMessage(err));
     } finally {
@@ -96,7 +96,7 @@ export const LoginPage: React.FC = () => {
               </button>
             </form>
 
-              <div className="mt-4 pt-4 border-t border-white/10">
+              <div className="mt-4 pt-4 border-t border-white/10 space-y-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -106,6 +106,16 @@ export const LoginPage: React.FC = () => {
                   className="w-full text-center text-xs text-white/40 hover:text-[#00E676] transition-colors"
                 >
                   Quick Admin Login
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmail('fm@photonicomega.com');
+                    setPassword('Fm2026!');
+                  }}
+                  className="w-full text-center text-xs text-white/40 hover:text-[#00E676] transition-colors"
+                >
+                  Quick Facilities Login
                 </button>
               </div>
           </div>
