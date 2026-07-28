@@ -7,10 +7,8 @@ import com.photonicomega.facilities.module.auth.domain.*;
 import com.photonicomega.facilities.module.auth.dto.*;
 import com.photonicomega.facilities.module.auth.repository.*;
 import com.photonicomega.facilities.security.JwtTokenProvider;
-import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.RandomStringUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -23,7 +21,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -33,9 +30,7 @@ import java.util.UUID;
 public class AuthService {
 
     private final UserRepository userRepository;
-    private final OtpRepository otpRepository;
     private final RefreshTokenRepository refreshTokenRepository;
-    private final AuditLogRepository auditLogRepository;
     private final JwtTokenProvider jwtTokenProvider;
     private final AuthenticationManager authenticationManager;
     private final UserDetailsService userDetailsService;
@@ -43,27 +38,13 @@ public class AuthService {
     private final JavaMailSender mailSender;
     private final AuditService auditService;
 
-    @Value("${app.otp.length:6}")
-    private int otpLength;
-
-    @Value("${app.otp.expiry-seconds:30}")
-    private int otpExpirySeconds;
-
-    @Value("${app.otp.max-attempts:5}")
-    private int otpMaxAttempts;
-
-    @Value("${app.otp.lock-duration-minutes:15}")
-    private int otpLockMinutes;
-
     @Value("${app.security.password-reset-expiry-minutes:30}")
     private int passwordResetExpiryMinutes;
 
     @Value("${spring.mail.username}")
     private String fromEmail;
 
-    // ==================== LOGIN ====================
-
-    public LoginInitResponse initiateLogin(LoginRequest request, String ipAddress) {
+    public AuthTokenResponse login(LoginRequest request, String ipAddress, String userAgent) {
         try {
             authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword()));
@@ -79,58 +60,6 @@ public class AuthService {
             throw new BusinessRuleViolationException("Account is not active. Contact administrator.");
         }
 
-        // Generate and send OTP
-        String otpCode = generateAndSaveOtp(user, OtpPurpose.LOGIN_VERIFICATION, ipAddress);
-        sendOtpEmail(user, otpCode, "Login Verification OTP");
-
-        auditService.log(user, "LOGIN_INITIATED", "AUTH", null, null,
-                "Login initiated, OTP sent to " + maskEmail(user.getEmail()), ipAddress);
-
-        return LoginInitResponse.builder()
-                .userId(user.getId())
-                .email(maskEmail(user.getEmail()))
-                .otpExpirySeconds(otpExpirySeconds)
-                .message("OTP sent to your registered email address.")
-                .build();
-    }
-
-    public AuthTokenResponse verifyOtpAndLogin(OtpVerifyRequest request, String ipAddress,
-                                                String userAgent) {
-        User user = userRepository.findById(request.getUserId())
-                .orElseThrow(() -> new ResourceNotFoundException("User", "id", request.getUserId()));
-
-        List<OtpToken> activeOtps = otpRepository.findActiveOtpByUserAndPurpose(
-                user.getId(), OtpPurpose.LOGIN_VERIFICATION);
-
-        if (activeOtps.isEmpty()) {
-            throw AuthenticationException.otpExpired();
-        }
-
-        OtpToken otp = activeOtps.get(0);
-
-        if (otp.isLocked()) {
-            throw AuthenticationException.otpLocked();
-        }
-
-        if (otp.isExpired()) {
-            otp.markAsUsed();
-            otpRepository.save(otp);
-            throw AuthenticationException.otpExpired();
-        }
-
-        if (!otp.getOtpCode().equals(request.getOtpCode())) {
-            otp.incrementFailedAttempts(otpMaxAttempts, otpLockMinutes);
-            otpRepository.save(otp);
-            if (otp.isLocked()) {
-                throw AuthenticationException.otpMaxAttempts();
-            }
-            throw AuthenticationException.otpInvalid();
-        }
-
-        // OTP valid — mark as used and issue tokens
-        otp.markAsUsed();
-        otpRepository.save(otp);
-
         user.setLastLoginAt(LocalDateTime.now());
         user.setLastLoginIp(ipAddress);
         user.resetFailedAttempts();
@@ -138,13 +67,12 @@ public class AuthService {
 
         UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
         String accessToken = jwtTokenProvider.generateAccessToken(userDetails);
-        String refreshToken = jwtTokenProvider.generateRefreshToken(userDetails);
+        String refreshTokenStr = jwtTokenProvider.generateRefreshToken(userDetails);
 
-        // Persist refresh token
         refreshTokenRepository.revokeAllUserTokens(user.getId());
         RefreshToken tokenEntity = RefreshToken.builder()
                 .user(user)
-                .token(refreshToken)
+                .token(refreshTokenStr)
                 .expiresAt(LocalDateTime.now().plusDays(7))
                 .ipAddress(ipAddress)
                 .userAgent(userAgent)
@@ -156,7 +84,7 @@ public class AuthService {
 
         return AuthTokenResponse.builder()
                 .accessToken(accessToken)
-                .refreshToken(refreshToken)
+                .refreshToken(refreshTokenStr)
                 .tokenType("Bearer")
                 .expiresIn(900)
                 .user(UserSummaryDto.from(user))
@@ -211,26 +139,6 @@ public class AuthService {
                 "User logged out", null);
     }
 
-    // ==================== OTP RESEND ====================
-
-    public ResendOtpResponse resendOtp(UUID userId, String ipAddress) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User", "id", userId));
-
-        // Invalidate all previous OTPs
-        otpRepository.invalidateAllActiveOtps(userId, OtpPurpose.LOGIN_VERIFICATION);
-
-        String otpCode = generateAndSaveOtp(user, OtpPurpose.LOGIN_VERIFICATION, ipAddress);
-        sendOtpEmail(user, otpCode, "Login Verification OTP (Resend)");
-
-        return ResendOtpResponse.builder()
-                .otpExpirySeconds(otpExpirySeconds)
-                .message("New OTP sent to your registered email address.")
-                .build();
-    }
-
-    // ==================== PASSWORD RESET ====================
-
     public void requestPasswordReset(ForgotPasswordRequest request, String ipAddress) {
         userRepository.findByEmailAndDeletedFalse(request.getEmail()).ifPresent(user -> {
             String token = UUID.randomUUID().toString();
@@ -241,7 +149,6 @@ public class AuthService {
             auditService.log(user, "PASSWORD_RESET_REQUESTED", "AUTH", null, null,
                     "Password reset requested", ipAddress);
         });
-        // Always return success to prevent email enumeration
     }
 
     public void resetPassword(ResetPasswordRequest request, String ipAddress) {
@@ -262,40 +169,6 @@ public class AuthService {
         refreshTokenRepository.revokeAllUserTokens(user.getId());
         auditService.log(user, "PASSWORD_RESET_SUCCESS", "AUTH", null, null,
                 "Password reset successfully", ipAddress);
-    }
-
-    // ==================== HELPERS ====================
-
-    private String generateAndSaveOtp(User user, OtpPurpose purpose, String ipAddress) {
-        // Invalidate existing active OTPs
-        otpRepository.invalidateAllActiveOtps(user.getId(), purpose);
-
-        String code = RandomStringUtils.randomNumeric(otpLength);
-        OtpToken otp = OtpToken.builder()
-                .user(user)
-                .otpCode(code)
-                .purpose(purpose)
-                .expiresAt(LocalDateTime.now().plusSeconds(otpExpirySeconds))
-                .ipAddress(ipAddress)
-                .build();
-        otpRepository.save(otp);
-        return code;
-    }
-
-    private void sendOtpEmail(User user, String code, String subject) {
-        try {
-            SimpleMailMessage message = new SimpleMailMessage();
-            message.setFrom(fromEmail);
-            message.setTo(user.getEmail());
-            message.setSubject(subject + " - Photonic Omega");
-            message.setText(String.format(
-                    "Dear %s,\n\nYour verification OTP is: %s\n\nThis OTP expires in %d seconds.\n\n" +
-                    "Do not share this OTP with anyone.\n\nRegards,\nPhotonic Omega System",
-                    user.getFirstName(), code, otpExpirySeconds));
-            mailSender.send(message);
-        } catch (Exception e) {
-            log.error("Failed to send OTP email to {}: {}", user.getEmail(), e.getMessage());
-        }
     }
 
     private void sendPasswordResetEmail(User user, String token) {
@@ -322,11 +195,5 @@ public class AuthService {
             }
             userRepository.save(user);
         });
-    }
-
-    private String maskEmail(String email) {
-        int atIndex = email.indexOf('@');
-        if (atIndex <= 2) return email;
-        return email.charAt(0) + "*".repeat(atIndex - 2) + email.charAt(atIndex - 1) + email.substring(atIndex);
     }
 }

@@ -19,7 +19,7 @@ import java.util.Map;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/security/admin")
+@RequestMapping("/v1/security/admin")
 @RequiredArgsConstructor
 @Tag(name = "Security Admin Center", description = "Endpoints for enterprise security operations, threat monitoring, session revocation, and audit logs.")
 public class SecurityAdminController {
@@ -46,7 +46,7 @@ public class SecurityAdminController {
         metrics.put("failedLoginAttempts", failedLogins);
         metrics.put("blockedIpsCount", blockedIps);
         metrics.put("activeAlertsCount", securityAlerts);
-        metrics.put("ddosBlockedRequests", 0); // Mock analytics
+        metrics.put("ddosBlockedRequests", 0);
         metrics.put("suspiciousActivitiesCount", securityAlerts > 0 ? securityAlerts + 2 : 0);
 
         return ResponseEntity.ok(metrics);

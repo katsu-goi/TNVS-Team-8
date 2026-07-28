@@ -5,21 +5,26 @@ interface AuthState {
   user: User | null;
   accessToken: string | null;
   refreshToken: string | null;
-  otpRequired: boolean;
-  pendingUsername: string | null;
-  setLoginInit: (username: string) => void;
   setAuthTokens: (user: User, accessToken: string, refreshToken: string) => void;
   logout: () => void;
 }
 
+const savedToken = localStorage.getItem('accessToken');
+
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
-  accessToken: null,
+  accessToken: savedToken,
   refreshToken: null,
-  otpRequired: false,
-  pendingUsername: null,
-  setLoginInit: (username) => set({ otpRequired: true, pendingUsername: username }),
-  setAuthTokens: (user, accessToken, refreshToken) =>
-    set({ user, accessToken, refreshToken, otpRequired: false, pendingUsername: null }),
-  logout: () => set({ user: null, accessToken: null, refreshToken: null, otpRequired: false }),
+  setAuthTokens: (user, accessToken, refreshToken) => {
+    localStorage.setItem('accessToken', accessToken);
+    if (refreshToken) {
+      localStorage.setItem('refreshToken', refreshToken);
+    }
+    set({ user, accessToken, refreshToken });
+  },
+  logout: () => {
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
+    set({ user: null, accessToken: null, refreshToken: null });
+  },
 }));

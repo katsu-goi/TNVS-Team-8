@@ -1,17 +1,15 @@
 ﻿import React, { useState, useEffect } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { 
- Building2, Users, FileText, Scale, LayoutDashboard, LogOut, Search,
-  ShieldCheck, Leaf, ChevronRight, ChevronDown, AlertTriangle,
- FileSpreadsheet, Layers, Wrench, Tv, Calendar, BarChart3, UserCheck, Clock,
- Shield, Archive, Brain, ScanLine, Gavel, FileSearch, FileCheck, BookOpen,
- KeyRound, Activity, Monitor, Eye,
+import {
+  LayoutDashboard, LogOut, Search, ShieldCheck, Leaf, ChevronRight, ChevronDown,
+  AlertTriangle, BarChart3, KeyRound, Activity, Monitor, Layers, Download,
+  Settings, Bell, FileText, Cpu,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { useDashboardStore } from '../../stores/dashboardStore';
 import { Breadcrumbs } from './Breadcrumbs';
 
-const parentIds = ['facilities', 'visitors', 'documents', 'legal', 'contracts', 'security'];
+const parentIds = ['security'];
 
 export const AppLayout: React.FC = () => {
  const { user, logout } = useAuthStore();
@@ -56,82 +54,37 @@ export const AppLayout: React.FC = () => {
 
  const isExactActive = (path: string) => location.pathname === path;
 
- const navItems = [
- { id: 'dashboard', label: 'Dashboard', path: '/', icon: LayoutDashboard, exact: true },
- {
- id: 'facilities', label: 'Facilities & Rooms', path: '/facilities/reservations', icon: Building2,
- children: [
- { id: 'facilities-reservations', label: 'Reservation Governance', path: '/facilities/reservations', icon: FileSpreadsheet },
- { id: 'facilities-rooms', label: 'Room Management', path: '/facilities/rooms', icon: Layers },
- { id: 'facilities-maintenance', label: 'Maintenance Control', path: '/facilities/maintenance', icon: Wrench },
- { id: 'facilities-equipment', label: 'Equipment Inventory', path: '/facilities/equipment', icon: Tv },
- { id: 'facilities-calendar', label: 'Enterprise Calendar', path: '/facilities/calendar', icon: Calendar },
- { id: 'facilities-analytics', label: 'Analytics & Reports', path: '/facilities/analytics', icon: BarChart3 },
- ],
- },
- {
- id: 'visitors', label: 'Visitor Pass & Security', path: '/visitors', icon: Users,
- children: [
- { id: 'visitors-management', label: 'Visitor Management', path: '/visitors', icon: UserCheck, exact: true },
- { id: 'visitors-clearance', label: 'Security Clearance', path: '/visitors/clearance', icon: Shield },
- { id: 'visitors-approval', label: 'Visitor Approval Queue', path: '/visitors/approval', icon: Clock },
- { id: 'visitors-logs', label: 'Visitor Logs', path: '/visitors/logs', icon: FileText },
- ],
- },
- {
- id: 'documents', label: 'AI Document Management', path: '/documents', icon: FileText,
- children: [
- { id: 'documents-list', label: 'Documents', path: '/documents', icon: FileText, exact: true },
- { id: 'documents-ai', label: 'AI Classification', path: '/documents/ai-classification', icon: Brain },
- { id: 'documents-ocr', label: 'OCR Processing', path: '/documents/ocr', icon: ScanLine },
- { id: 'documents-archive', label: 'Archive', path: '/documents/archive', icon: Archive },
- ],
- },
- {
- id: 'legal', label: 'Legal & Disputes', path: '/legal', icon: Scale,
- children: [
- { id: 'legal-cases', label: 'Legal Cases', path: '/legal', icon: Gavel, exact: true },
- { id: 'legal-hearings', label: 'Hearings', path: '/legal/hearings', icon: Calendar },
- { id: 'legal-compliance', label: 'Compliance', path: '/legal/compliance', icon: ShieldCheck },
- { id: 'legal-evidence', label: 'Evidence', path: '/legal/evidence', icon: Eye },
- ],
- },
- {
- id: 'contracts', label: 'Contract Analytics AI', path: '/contracts', icon: FileText,
- children: [
- { id: 'contracts-list', label: 'Contracts', path: '/contracts', icon: FileText, exact: true },
- { id: 'contracts-risk', label: 'AI Risk Analysis', path: '/contracts/risk-analysis', icon: FileSearch },
- { id: 'contracts-renewals', label: 'Renewals', path: '/contracts/renewals', icon: FileCheck },
- { id: 'contracts-obligations', label: 'Obligations', path: '/contracts/obligations', icon: BookOpen },
- ],
- },
- {
- id: 'security', label: 'Security Center', path: '/security', icon: ShieldCheck,
- children: [
- { id: 'security-audit', label: 'Audit Logs', path: '/security', icon: FileText, exact: true },
- { id: 'security-rbac', label: 'RBAC', path: '/security/rbac', icon: KeyRound },
- { id: 'security-events', label: 'Security Events', path: '/security/events', icon: Activity },
- { id: 'security-monitoring', label: 'System Monitoring', path: '/security/monitoring', icon: Monitor },
- ],
- },
- ];
+  const navItems = [
+  { id: 'dashboard', label: 'Dashboard', path: '/', icon: LayoutDashboard, exact: true },
+  { id: 'integrations', label: 'Integrations', path: '/admin/integrations', icon: Layers, exact: true },
+  { id: 'ai-services', label: 'AI Services', path: '/admin/ai-services', icon: Cpu, exact: true },
+  { id: 'backup', label: 'Backup & DR', path: '/admin/backup', icon: Download, exact: true },
+  { id: 'settings', label: 'System Config', path: '/admin/settings', icon: Settings, exact: true },
+  { id: 'notifications', label: 'Notifications', path: '/admin/notifications', icon: Bell, exact: true },
+  { id: 'reports', label: 'Reports', path: '/admin/reports', icon: BarChart3, exact: true },
+  {
+  id: 'security', label: 'Security Center', path: '/security', icon: ShieldCheck,
+  children: [
+  { id: 'security-audit', label: 'Audit Logs', path: '/security/audit-logs', icon: FileText, exact: true },
+  { id: 'security-sessions', label: 'Sessions', path: '/admin/sessions', icon: Activity, exact: true },
+  { id: 'security-health', label: 'System Health', path: '/admin/system-health', icon: Monitor, exact: true },
+  ],
+  },
+  ];
 
  return (
-  <div className="min-h-screen bg-[#0B0F19] text-[#E2E8F0]">
- {/* Sidebar — fixed, independent of page scroll */}
-  <aside className="fixed top-0 left-0 w-72 h-screen z-30 bg-[#0B0F19] flex flex-col overflow-hidden shadow-2xl">
-  {/* Brand Header */}
-  <div className="p-5 pb-4 flex items-center space-x-3 shrink-0 border-b border-[#00E676]/20">
-  <div className="w-9 h-9 rounded-xl bg-[#00E676]/15 flex items-center justify-center shrink-0">
-  <Leaf className="w-5 h-5 text-[#00E676]" />
-  </div>
-  <div className="min-w-0">
-  <h1 className="font-heading font-bold text-sm text-[#E2E8F0] leading-tight truncate">Facilities &amp; Admin</h1>
-  <p className="text-[10px] text-[#00E676] font-medium truncate">Enterprise Management</p>
-  </div>
-  </div>
+  <div className="min-h-screen bg-[#F8FAFC]">
+   <aside className="fixed top-0 left-0 w-72 h-screen z-30 bg-[#042F24] flex flex-col overflow-hidden shadow-2xl">
+   <div className="p-5 pb-4 flex items-center space-x-3 shrink-0 bg-[#011E17] border-b border-[#00E676]/20">
+   <div className="w-9 h-9 rounded-xl bg-[#00E676]/20 flex items-center justify-center shrink-0">
+   <Leaf className="w-5 h-5 text-[#00E676]" />
+   </div>
+   <div className="min-w-0">
+    <h1 className="font-heading font-bold text-sm text-white leading-tight truncate">Green GSM</h1>
+    <p className="text-[10px] text-[#00E676] font-medium truncate">System Administration</p>
+   </div>
+   </div>
 
- {/* Navigation — fills remaining space, hidden scrollbar if overflow */}
  <nav className="flex-1 flex flex-col min-h-0">
  <div className="flex-1 overflow-y-auto scrollbar-none px-3 py-3 space-y-0.5">
  {navItems.map((item) => {
@@ -144,14 +97,14 @@ export const AppLayout: React.FC = () => {
  <div key={item.id}>
  <button
  onClick={() => { toggleMenu(item.id); navigate(item.path); }}
-  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg font-medium text-sm transition-all duration-200 ${
-  isParentActive
-  ? 'bg-[#00E676]/15 text-[#00E676] font-semibold'
-  : 'text-[#E2E8F0] hover:text-[#00E676] hover:bg-white/5'
-  }`}
-  >
-  <div className="flex items-center space-x-2.5 min-w-0">
-  <Icon className={`w-[18px] h-[18px] shrink-0 ${isParentActive ? 'text-[#00E676]' : 'text-[#64748B]'}`} />
+   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-full font-medium text-sm transition-all duration-200 ${
+   isParentActive
+   ? 'bg-[#00E676] text-white font-semibold shadow-[0_0_16px_rgba(0,230,118,0.35)]'
+   : 'text-white hover:bg-white/10'
+   }`}
+   >
+   <div className="flex items-center space-x-2.5 min-w-0">
+   <Icon className={`w-[18px] h-[18px] shrink-0 ${isParentActive ? 'text-white' : 'text-white/60'}`} />
   <span className="truncate">{item.label}</span>
   </div>
   <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} />
@@ -165,15 +118,15 @@ export const AppLayout: React.FC = () => {
  <button
  key={child.id}
  onClick={() => navigate(child.path)}
-  className={`w-full flex items-center space-x-2 px-3 py-2 rounded-md text-xs font-medium transition-all duration-200 ${
-  isChildActive
-  ? 'bg-[#00E676]/15 text-[#00E676] font-semibold'
-  : 'text-[#94A3B8] hover:text-[#00E676] hover:bg-white/5'
-  }`}
-  >
-  <ChildIcon className={`w-3.5 h-3.5 shrink-0 ${isChildActive ? 'text-[#00E676]' : 'text-[#64748B]'}`} />
-  <span className="truncate">{child.label}</span>
-  {isChildActive && <ChevronRight className="w-3 h-3 ml-auto shrink-0 text-[#00E676]" />}
+   className={`w-full flex items-center space-x-2 px-3 py-2 rounded-full text-xs font-medium transition-all duration-200 ${
+   isChildActive
+   ? 'bg-[#00E676] text-white font-semibold shadow-[0_0_14px_rgba(0,230,118,0.3)]'
+   : 'text-white/70 hover:bg-white/10'
+   }`}
+   >
+   <ChildIcon className={`w-3.5 h-3.5 shrink-0 ${isChildActive ? 'text-white' : 'text-white/50'}`} />
+   <span className="truncate">{child.label}</span>
+   {isChildActive && <ChevronRight className="w-3 h-3 ml-auto shrink-0 text-white" />}
  </button>
  );
  })}
@@ -188,83 +141,79 @@ export const AppLayout: React.FC = () => {
  <button
  key={item.id}
  onClick={() => navigate(item.path)}
-  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg font-medium text-sm transition-all duration-200 ${
-  navIsActive
-  ? 'bg-[#00E676]/15 text-[#00E676] font-semibold'
-  : 'text-[#E2E8F0] hover:text-[#00E676] hover:bg-white/5'
-  }`}
-  >
-  <div className="flex items-center space-x-2.5 min-w-0">
-  <Icon className={`w-[18px] h-[18px] shrink-0 ${navIsActive ? 'text-[#00E676]' : 'text-[#64748B]'}`} />
-  <span className="truncate">{item.label}</span>
-  </div>
-  {navIsActive && <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[#00E676]" />}
+   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-full font-medium text-sm transition-all duration-200 ${
+   navIsActive
+   ? 'bg-[#00E676] text-white font-semibold shadow-[0_0_16px_rgba(0,230,118,0.35)]'
+   : 'text-white hover:bg-white/10'
+   }`}
+   >
+   <div className="flex items-center space-x-2.5 min-w-0">
+   <Icon className={`w-[18px] h-[18px] shrink-0 ${navIsActive ? 'text-white' : 'text-white/60'}`} />
+   <span className="truncate">{item.label}</span>
+   </div>
+   {navIsActive && <ChevronRight className="w-3.5 h-3.5 shrink-0 text-white" />}
  </button>
  );
  })}
  </div>
 
-  {/* System Status */}
-  <div className="shrink-0 border-t border-white/5">
-  <div className="px-4 py-3 pt-3">
-  <div className="flex items-center justify-between mb-2">
-  <span className="text-[10px] font-semibold text-[#64748B] uppercase tracking-widest">System Status</span>
-  <span className="text-[10px] text-[#00E676] font-mono flex items-center space-x-1">
-  <span className="w-1.5 h-1.5 rounded-full bg-[#00E676] inline-block" />
-  <span>All OK</span>
-  </span>
-  </div>
-  <div className="grid grid-cols-2 gap-y-1.5">
-  {[
-  { label: 'Database', status: 'operational' as const },
-  { label: 'API', status: 'operational' as const },
-  { label: 'WebSocket', status: 'operational' as const },
-  { label: 'Storage', status: 'operational' as const },
-  ].map(s => (
-  <div key={s.label} className="flex items-center space-x-1.5">
-  <span className={`w-1.5 h-1.5 rounded-full ${s.status === 'operational' ? 'bg-[#00E676]' : 'bg-amber-500'}`} />
-  <span className="text-[10px] text-[#64748B] font-mono">{s.label}</span>
-  </div>
-  ))}
-  </div>
-  <div className="mt-3 flex items-center justify-between">
-  <span className="text-[10px] text-[#475569] font-mono">{clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-  <span className="text-[10px] text-[#475569] font-mono">Local</span>
-  </div>
-  </div>
-  </div>
+   <div className="shrink-0 px-3 py-2">
+   <div className="bg-[#042F24]/80 rounded-xl border border-[#00E676]/15 p-3 backdrop-blur-sm">
+   <div className="flex items-center justify-between mb-2">
+   <span className="text-[10px] font-semibold text-white/80 uppercase tracking-widest">System Status</span>
+   <span className="text-[10px] text-white font-mono flex items-center space-x-1">
+   <span className="w-1.5 h-1.5 rounded-full bg-[#00E676] shadow-[0_0_8px_rgba(0,230,118,0.5)] inline-block" />
+   <span>All OK</span>
+   </span>
+   </div>
+   <div className="grid grid-cols-2 gap-y-1.5">
+   {[
+   { label: 'Database', status: 'operational' as const },
+   { label: 'API', status: 'operational' as const },
+   { label: 'WebSocket', status: 'operational' as const },
+   { label: 'Storage', status: 'operational' as const },
+   ].map(s => (
+   <div key={s.label} className="flex items-center space-x-1.5">
+   <span className={`w-1.5 h-1.5 rounded-full ${s.status === 'operational' ? 'bg-[#00E676] shadow-[0_0_8px_rgba(0,230,118,0.5)]' : 'bg-amber-500'}`} />
+   <span className="text-[10px] text-white/60 font-mono">{s.label}</span>
+   </div>
+   ))}
+   </div>
+   <div className="mt-3 flex items-center justify-between">
+   <span className="text-[10px] text-white/40 font-mono">{clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+   <span className="text-[10px] text-white/40 font-mono">Local</span>
+   </div>
+   </div>
+   </div>
  </nav>
 
-  {/* User Footer — pinned to bottom */}
-  <div className="shrink-0 border-t border-white/5 bg-[#0B0F19]">
-  <div className="px-3 py-2.5 pt-2.5">
-  <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-white/5">
-  <div className="flex items-center space-x-2.5 min-w-0">
-  <div className="w-8 h-8 rounded-full bg-[#00E676]/15 flex items-center justify-center font-bold text-[#00E676] text-xs shrink-0">
-  {user?.fullName?.charAt(0) || 'A'}
-  </div>
-  <div className="min-w-0">
-  <p className="text-xs font-semibold text-[#E2E8F0] truncate leading-tight">{user?.fullName || 'Administrator'}</p>
-  <p className="text-[10px] text-[#00E676] font-mono truncate leading-tight">{user?.role || 'SUPER_ADMIN'}</p>
-  </div>
-  </div>
-  <button onClick={() => setShowLogoutModal(true)} title="Logout"
-  className="p-1.5 text-[#64748B] hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors shrink-0">
-  <LogOut className="w-3.5 h-3.5" />
-  </button>
-  </div>
-  </div>
-  </div>
+   <div className="shrink-0 px-3 py-2">
+   <div className="bg-[#042F24]/80 rounded-xl border border-[#00E676]/15 p-2.5 backdrop-blur-sm">
+   <div className="flex items-center justify-between px-3 py-2 rounded-lg">
+   <div className="flex items-center space-x-2.5 min-w-0">
+   <div className="w-8 h-8 rounded-full bg-[#00E676]/20 flex items-center justify-center font-bold text-[#00E676] text-xs shrink-0">
+   {user?.fullName?.charAt(0) || 'A'}
+   </div>
+   <div className="min-w-0">
+   <p className="text-xs font-semibold text-white truncate leading-tight">{user?.fullName || 'Administrator'}</p>
+   <p className="text-[10px] text-white/70 font-mono truncate leading-tight">{user?.role || 'SUPER_ADMIN'}</p>
+   </div>
+   </div>
+   <button onClick={() => setShowLogoutModal(true)} title="Logout"
+   className="p-1.5 text-white/40 hover:text-red-300 hover:bg-red-500/20 rounded-lg transition-colors shrink-0">
+   <LogOut className="w-3.5 h-3.5" />
+   </button>
+   </div>
+   </div>
+   </div>
  </aside>
 
- {/* Main Content — uses natural page scroll (body is the only scrollbar) */}
   <main className="pl-72 min-h-screen relative bg-[#F8FAFC]">
-  {/* Top header bar — sticky within main */}
   <header className="sticky top-0 z-10 bg-white/85 backdrop-blur-md border-b border-slate-200 px-8 py-4 flex items-center justify-between shrink-0">
   <div className="flex items-center space-x-4 flex-1 max-w-md">
   <div className="relative w-full">
   <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-  <input type="text" placeholder="Search facilities, documents, contracts, or legal cases..."
+   <input type="text" placeholder="Search logs, settings, or admin pages..."
   value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
   className="w-full bg-white border border-slate-300 text-sm rounded-xl pl-9 pr-4 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-[#00E676] focus:ring-1 focus:ring-[#00E676]/30 transition-all" />
   </div>
@@ -289,7 +238,7 @@ export const AppLayout: React.FC = () => {
   </div>
   <div className="max-h-72 overflow-y-auto">
   {notifications.length === 0 ? (
-  <div className="p-6 text-center text-xs text-slate-400">No notifications yet. Notifications appear in real-time as data is created.</div>
+  <div className="p-6 text-center text-xs text-slate-400">No WebSocket notifications yet.</div>
   ) : (
   notifications.map(n => (
   <div key={n.id} className="p-3.5 text-xs space-y-1 hover:bg-slate-50 transition-colors">
@@ -315,9 +264,7 @@ export const AppLayout: React.FC = () => {
   </div>
   </header>
 
- {/* Content — this expands naturally; page scroll is on body/html */}
  <div className="p-8">
- <Breadcrumbs />
  <Outlet />
  </div>
  </main>

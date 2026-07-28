@@ -97,13 +97,6 @@ app:
     refresh-token-expiration: ${JWT_REFRESH_EXPIRY:604800000}   # 7 days in ms
     issuer: photonic-omega-facilities
 
-  # OTP Settings
-  otp:
-    length: 6
-    expiry-seconds: 30
-    max-attempts: 5
-    lock-duration-minutes: 15
-
   # File Storage - Primary (Enterprise File Server)
   storage:
     primary:
@@ -144,7 +137,6 @@ app:
     retention-check-cron: "0 0 2 * * ?"       # 2 AM daily
     contract-expiry-cron: "0 0 8 * * ?"        # 8 AM daily
     visitor-cleanup-cron: "0 0 1 * * ?"        # 1 AM daily
-    otp-cleanup-cron: "0 */5 * * * ?"          # Every 5 minutes
 
   # Security
   security:

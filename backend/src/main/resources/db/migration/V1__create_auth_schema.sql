@@ -1,5 +1,5 @@
 -- V1: Authentication Schema
--- Users, Roles, Permissions, OTP, RefreshTokens, AuditLogs
+-- Users, Roles, Permissions, RefreshTokens, AuditLogs
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -83,21 +83,6 @@ CREATE TABLE IF NOT EXISTS role_permissions (
     PRIMARY KEY (role_id, permission_id)
 );
 
--- OTP Tokens
-CREATE TABLE IF NOT EXISTS otp_tokens (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    otp_code VARCHAR(6) NOT NULL,
-    purpose VARCHAR(30) NOT NULL,
-    expires_at TIMESTAMP NOT NULL,
-    is_used BOOLEAN NOT NULL DEFAULT FALSE,
-    used_at TIMESTAMP,
-    failed_attempts INT NOT NULL DEFAULT 0,
-    locked_until TIMESTAMP,
-    ip_address VARCHAR(45),
-    created_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
 -- Refresh Tokens
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -159,8 +144,6 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE is_deleted = FALSE;
 CREATE INDEX IF NOT EXISTS idx_users_employee_id ON users(employee_id) WHERE is_deleted = FALSE;
 CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
-CREATE INDEX IF NOT EXISTS idx_otp_user_id ON otp_tokens(user_id);
-CREATE INDEX IF NOT EXISTS idx_otp_code ON otp_tokens(otp_code);
 CREATE INDEX IF NOT EXISTS idx_refresh_token ON refresh_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_refresh_user_id ON refresh_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_user_id ON audit_logs(user_id);

@@ -27,6 +27,11 @@ public class IpBlacklistFilter implements Filter {
 
         String clientIp = getClientIp(httpRequest);
 
+        if (clientIp.equals("0:0:0:0:0:0:0:1") || clientIp.equals("127.0.0.1") || clientIp.equals("::1") || clientIp.equals("localhost")) {
+            chain.doFilter(request, response);
+            return;
+        }
+
         if (blockedIpRepository.existsByIpAddressAndStatus(clientIp, "ACTIVE")) {
             log.warn("SECURITY WARNING: Rejected request from blacklisted IP address: {}", clientIp);
             httpResponse.setStatus(HttpServletResponse.SC_FORBIDDEN);

@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/documents")
+@RequestMapping("/v1/documents")
 @RequiredArgsConstructor
 @Tag(name = "Document Management & AI", description = "Endpoints for document management, OCR processing, and AI classification/summarization")
 public class DocumentController {
