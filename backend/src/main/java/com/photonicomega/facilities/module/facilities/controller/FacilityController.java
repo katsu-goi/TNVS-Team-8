@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/facilities")
+@RequestMapping("/v1/facilities")
 @RequiredArgsConstructor
 @Tag(name = "Facilities & Reservations", description = "Endpoints for managing facilities, rooms, equipment, and room bookings")
 public class FacilityController {

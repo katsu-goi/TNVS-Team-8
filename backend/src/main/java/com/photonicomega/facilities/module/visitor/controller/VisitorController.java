@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/visitors")
+@RequestMapping("/v1/visitors")
 @RequiredArgsConstructor
 @Tag(name = "Visitor Management", description = "Endpoints for visitor registration, QR passes, and check-in/out")
 public class VisitorController {

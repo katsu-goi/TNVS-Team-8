@@ -88,7 +88,6 @@ public class RateLimitingFilter implements Filter {
 
     private boolean isSensitiveEndpoint(String path) {
         return path.contains("/auth/login") 
-                || path.contains("/auth/otp") 
                 || path.contains("/security/admin") 
                 || path.contains("/auth/reset-password");
     }

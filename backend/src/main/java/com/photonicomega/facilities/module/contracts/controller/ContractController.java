@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/contracts")
+@RequestMapping("/v1/contracts")
 @RequiredArgsConstructor
 @Tag(name = "Contract Management & AI Analytics", description = "Endpoints for contract management and AI clause risk extraction")
 public class ContractController {

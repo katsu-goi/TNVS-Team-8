@@ -13,8 +13,6 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.UUID;
-
 @RestController
 @RequestMapping("/v1/auth")
 @RequiredArgsConstructor
@@ -24,31 +22,13 @@ public class AuthController {
     private final AuthService authService;
 
     @PostMapping("/login")
-    @Operation(summary = "Initiate login - step 1", description = "Validate credentials and send OTP")
-    public ResponseEntity<ApiResponse<LoginInitResponse>> login(
+    @Operation(summary = "Login", description = "Authenticate with email and password, returns JWT tokens")
+    public ResponseEntity<ApiResponse<AuthTokenResponse>> login(
             @Valid @RequestBody LoginRequest request,
             HttpServletRequest httpRequest) {
-        LoginInitResponse response = authService.initiateLogin(request, getClientIp(httpRequest));
-        return ResponseEntity.ok(ApiResponse.success(response, "OTP sent successfully"));
-    }
-
-    @PostMapping("/verify-otp")
-    @Operation(summary = "Verify OTP - step 2", description = "Verify OTP and receive access/refresh tokens")
-    public ResponseEntity<ApiResponse<AuthTokenResponse>> verifyOtp(
-            @Valid @RequestBody OtpVerifyRequest request,
-            HttpServletRequest httpRequest) {
-        AuthTokenResponse response = authService.verifyOtpAndLogin(
+        AuthTokenResponse response = authService.login(
                 request, getClientIp(httpRequest), httpRequest.getHeader("User-Agent"));
         return ResponseEntity.ok(ApiResponse.success(response, "Login successful"));
-    }
-
-    @PostMapping("/resend-otp/{userId}")
-    @Operation(summary = "Resend OTP", description = "Resend OTP (only available after previous OTP expires)")
-    public ResponseEntity<ApiResponse<ResendOtpResponse>> resendOtp(
-            @PathVariable UUID userId,
-            HttpServletRequest httpRequest) {
-        ResendOtpResponse response = authService.resendOtp(userId, getClientIp(httpRequest));
-        return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     @PostMapping("/refresh")
@@ -67,7 +47,6 @@ public class AuthController {
     public ResponseEntity<ApiResponse<Void>> logout(
             @AuthenticationPrincipal UserDetails userDetails,
             @RequestBody(required = false) RefreshTokenRequest request) {
-        // Resolve user ID from userDetails — actual impl uses UserRepository
         authService.logout(null, request != null ? request.getRefreshToken() : null);
         return ResponseEntity.ok(ApiResponse.success("Logged out successfully"));
     }

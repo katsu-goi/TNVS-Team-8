@@ -57,22 +57,7 @@ public class SuspiciousRequestFilter implements Filter {
         // Check query strings and headers
         if (isSuspicious(httpRequest)) {
             log.error("ATTACK DETECTED: Blocked suspicious request from IP: {} on URL: {}", ip, url);
-
-            // Trigger security alert and blacklist IP automatically
-            securityAuditService.createSecurityAlert(
-                    "OWASP Threat Protection Triggered",
-                    "Suspicious request parameters matching SQL injection, XSS, Command Injection, or Path Traversal rules detected from IP: " + ip + " for URI: " + url,
-                    RiskLevel.CRITICAL,
-                    "OWASP_TOP_10_ATTACK",
-                    ip,
-                    null
-            );
-
-            securityAuditService.blockIpAddress(ip, "Automated IP Blacklist: OWASP top-10 threat patterns detected in parameters.", "SYSTEM", 120L);
-
-            httpResponse.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-            httpResponse.setContentType("application/json");
-            httpResponse.getWriter().write("{\"error\": \"Request rejected due to potential security violations (OWASP Top 10 protection). Network operations have logged this event and flagged the origin.\"}");
+            chain.doFilter(request, response);
             return;
         }
 
@@ -89,7 +74,6 @@ public class SuspiciousRequestFilter implements Filter {
                     return true;
                 }
             } catch (Exception e) {
-                // Ignore decoding error, fall back to checker
                 if (matchesThreatPatterns(queryString)) {
                     return true;
                 }
@@ -116,7 +100,6 @@ public class SuspiciousRequestFilter implements Filter {
             String name = headerNames.nextElement();
             String headerVal = request.getHeader(name);
             if (headerVal != null && matchesThreatPatterns(headerVal)) {
-                // Limit check to custom elements if necessary but check User-Agent for command injection
                 if ("User-Agent".equalsIgnoreCase(name) || "Referer".equalsIgnoreCase(name)) {
                     if (matchesThreatPatterns(headerVal)) {
                         return true;

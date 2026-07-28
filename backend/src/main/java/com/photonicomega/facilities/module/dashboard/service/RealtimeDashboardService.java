@@ -163,11 +163,11 @@ public class RealtimeDashboardService {
         long totalMemMb = totalMemory / (1024 * 1024);
 
         Map<String, Object> stats = new HashMap<>();
-        stats.put("cpuUsage", cpuLoad < 0 ? Math.random() * 20 : cpuLoad * 100); // fallback if not available
+        stats.put("cpuUsage", cpuLoad < 0 ? 0.0 : cpuLoad * 100);
         stats.put("memoryUsage", usedMemMb);
         stats.put("totalMemory", totalMemMb);
-        stats.put("dbConnections", (int)(Math.random() * 10 + 20)); // mock DB connections for visually active UI
-        stats.put("apiRequests", (int)(Math.random() * 50 + 100)); // mock API rate
+        stats.put("dbConnections", 0);
+        stats.put("apiRequests", 0);
 
         messagingTemplate.convertAndSend("/topic/dashboard/system", stats);
     }

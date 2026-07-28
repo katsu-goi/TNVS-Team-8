@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/legal-cases")
+@RequestMapping("/v1/legal-cases")
 @RequiredArgsConstructor
 @Tag(name = "Legal Case Management", description = "Endpoints for tracking legal cases, hearings, and evidence")
 public class LegalCaseController {
