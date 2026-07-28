@@ -13,4 +13,6 @@ public interface RoomRepository extends JpaRepository<Room, UUID> {
     List<Room> findByFacilityId(UUID facilityId);
     List<Room> findByType(RoomType type);
     List<Room> findByActiveTrue();
+    long countByActiveTrue();
+    List<Room> findByFloorNumber(Integer floor);
 }

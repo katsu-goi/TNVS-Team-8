@@ -31,4 +31,14 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
     );
 
     List<Reservation> findByStatus(ReservationStatus status);
+
+    long countByStatus(ReservationStatus status);
+
+    List<Reservation> findByStartTimeBetween(LocalDateTime start, LocalDateTime end);
+
+    @Query("SELECT COUNT(r) FROM Reservation r WHERE r.startTime >= :start AND r.endTime <= :end")
+    long countByDateRange(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
+
+    @Query("SELECT r FROM Reservation r WHERE (:status IS NULL OR r.status = :status) AND (:roomId IS NULL OR r.room.id = :roomId) AND (:userId IS NULL OR r.reservedBy.id = :userId)")
+    List<Reservation> findByFilters(@Param("status") ReservationStatus status, @Param("roomId") UUID roomId, @Param("userId") UUID userId);
 }

@@ -9,6 +9,12 @@ interface AuthState {
   logout: () => void;
 }
 
+export function getDashboardPath(user: User | null): string {
+  if (!user?.roles) return '/';
+  if (user.roles.includes('FACILITIES_MANAGER')) return '/facilities';
+  return '/';
+}
+
 const savedToken = localStorage.getItem('accessToken');
 
 export const useAuthStore = create<AuthState>((set) => ({
