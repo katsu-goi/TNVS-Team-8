@@ -70,6 +70,7 @@ public class SecurityConfig {
                     .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
                     .requestMatchers("/v1/admin/**").hasAnyRole("ADMIN", "SUPER_ADMIN")
                     .requestMatchers("/v1/facilities-manager/**").hasRole("FACILITIES_MANAGER")
+                    .requestMatchers("/v1/facilities-officer/**").hasRole("FACILITIES_OFFICER")
                     .anyRequest().authenticated())
             .authenticationProvider(authenticationProvider())
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);

@@ -17,6 +17,7 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
     List<Document> findByFolderId(UUID folderId);
     List<Document> findByCategoryId(UUID categoryId);
     List<Document> findByStatus(DocumentStatus status);
+    long countByStatus(DocumentStatus status);
     List<Document> findByClassificationLevel(ClassificationLevel level);
 
     @Query("""

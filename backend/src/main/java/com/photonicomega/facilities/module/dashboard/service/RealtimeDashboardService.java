@@ -1,14 +1,23 @@
 package com.photonicomega.facilities.module.dashboard.service;
 
+import com.photonicomega.facilities.module.admin.repository.AdminNotificationRepository;
+import com.photonicomega.facilities.module.auth.repository.UserRepository;
+import com.photonicomega.facilities.module.contracts.domain.ContractStatus;
 import com.photonicomega.facilities.module.contracts.repository.ContractRepository;
+import com.photonicomega.facilities.module.documents.domain.DocumentStatus;
 import com.photonicomega.facilities.module.documents.repository.DocumentRepository;
+import com.photonicomega.facilities.module.facilities.domain.ReservationStatus;
 import com.photonicomega.facilities.module.facilities.repository.FacilityRepository;
 import com.photonicomega.facilities.module.facilities.repository.ReservationRepository;
+import com.photonicomega.facilities.module.facilities.repository.RoomRepository;
+import com.photonicomega.facilities.module.legal.domain.CaseStatus;
 import com.photonicomega.facilities.module.legal.repository.LegalCaseRepository;
+import com.photonicomega.facilities.module.records.repository.RetentionPolicyRepository;
 import com.photonicomega.facilities.module.security.repository.ActiveSessionRepository;
 import com.photonicomega.facilities.module.security.repository.BlockedIpRepository;
 import com.photonicomega.facilities.module.security.repository.LoginHistoryRepository;
 import com.photonicomega.facilities.module.security.repository.SecurityAlertRepository;
+import com.photonicomega.facilities.module.visitor.domain.VisitorStatus;
 import com.photonicomega.facilities.module.visitor.repository.VisitorRepository;
 import lombok.Builder;
 import lombok.Data;
@@ -19,6 +28,7 @@ import org.springframework.stereotype.Service;
 
 import java.lang.management.ManagementFactory;
 import java.lang.management.OperatingSystemMXBean;
+import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -30,48 +40,75 @@ public class RealtimeDashboardService {
 
     // Repositories
     private final FacilityRepository facilityRepository;
+    private final RoomRepository roomRepository;
     private final ReservationRepository reservationRepository;
     private final VisitorRepository visitorRepository;
     private final DocumentRepository documentRepository;
     private final ContractRepository contractRepository;
     private final LegalCaseRepository legalCaseRepository;
+    private final RetentionPolicyRepository retentionPolicyRepository;
+    private final UserRepository userRepository;
 
     private final ActiveSessionRepository activeSessionRepository;
     private final BlockedIpRepository blockedIpRepository;
     private final SecurityAlertRepository securityAlertRepository;
     private final LoginHistoryRepository loginHistoryRepository;
+    private final AdminNotificationRepository adminNotificationRepository;
 
     @Data
     @Builder
     public static class RealtimeMetrics {
-        // User/Domain Stats
         private long totalFacilities;
-        private long totalReservations;
+        private long totalRooms;
+        private long bookingsToday;
+        private long pendingReservations;
         private long totalVisitors;
+        private long visitorsOnSite;
         private long totalDocuments;
+        private long archivedDocuments;
         private long totalContracts;
+        private long activeContracts;
+        private long expiringContracts;
         private long totalLegalCases;
-        
-        // Security Stats
+        private long openCases;
+        private long activePolicies;
         private long activeSessions;
+        private long activeUsers;
         private long failedLoginAttempts;
         private long blockedIpsCount;
         private long activeAlertsCount;
+        private long unreadNotifications;
     }
 
     public void broadcastMetrics() {
+        java.time.LocalDateTime startOfDay = java.time.LocalDateTime.now()
+                .with(java.time.temporal.ChronoField.HOUR_OF_DAY, 0)
+                .with(java.time.temporal.ChronoField.MINUTE_OF_HOUR, 0);
+        java.time.LocalDateTime endOfDay = startOfDay.plusDays(1);
+
         RealtimeMetrics metrics = RealtimeMetrics.builder()
                 .totalFacilities(facilityRepository.count())
-                .totalReservations(reservationRepository.count())
+                .totalRooms(roomRepository.count())
+                .bookingsToday(reservationRepository.countByDateRange(startOfDay, endOfDay))
+                .pendingReservations(reservationRepository.countByStatus(ReservationStatus.PENDING))
                 .totalVisitors(visitorRepository.count())
+                .visitorsOnSite(visitorRepository.countByStatus(VisitorStatus.CHECKED_IN))
                 .totalDocuments(documentRepository.count())
+                .archivedDocuments(documentRepository.countByStatus(DocumentStatus.ARCHIVED))
                 .totalContracts(contractRepository.count())
+                .activeContracts(contractRepository.countByStatus(ContractStatus.ACTIVE))
+                .expiringContracts(contractRepository.findExpiringContractsBefore(
+                        java.time.LocalDate.now().plusDays(90)).size())
                 .totalLegalCases(legalCaseRepository.count())
+                .openCases(legalCaseRepository.countByStatus(CaseStatus.OPEN))
+                .activePolicies(retentionPolicyRepository.findByActiveTrue().size())
                 .activeSessions(activeSessionRepository.findByStatus("ACTIVE").size())
-                .failedLoginAttempts(loginHistoryRepository.countByUsernameAndStatus("admin", "FAILED") + 
-                                     loginHistoryRepository.countByUsernameAndStatus("user", "FAILED"))
+                .activeUsers(userRepository.count())
+                .failedLoginAttempts(loginHistoryRepository.countByUsernameAndStatus("admin", "FAILED")
+                        + loginHistoryRepository.countByUsernameAndStatus("user", "FAILED"))
                 .blockedIpsCount(blockedIpRepository.findByStatus("ACTIVE").size())
                 .activeAlertsCount(securityAlertRepository.findByStatus("UNRESOLVED").size())
+                .unreadNotifications(adminNotificationRepository.countByReadFalse())
                 .build();
         
         messagingTemplate.convertAndSend("/topic/dashboard/metrics", metrics);
