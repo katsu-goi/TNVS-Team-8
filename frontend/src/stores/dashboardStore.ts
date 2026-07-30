@@ -49,9 +49,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   connectWebSocket: () => {
     if (get().stompClient?.active) return;
 
-    const socketUrl = (import.meta as any).env?.VITE_API_URL
-      ? `${(import.meta as any).env.VITE_API_URL.replace('http', 'ws')}/ws-endpoint`
-      : 'http://localhost:8080/ws-endpoint';
+    const socketUrl = '/ws-endpoint';
 
     const client = new Client({
       webSocketFactory: () => new SockJS(socketUrl),

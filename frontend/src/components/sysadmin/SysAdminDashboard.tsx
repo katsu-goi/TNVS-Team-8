@@ -3,13 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import {
   Server, Database, Activity, Users, Shield,
   RefreshCw, AlertCircle, Cpu,
-  Download, Bell, Layers,
-  Globe, ChevronRight, Loader2,
+  Download, Bell, Layers, Building2, FileText, FileSignature, Scale, Archive,
+  ChevronRight, Loader2,
 } from 'lucide-react';
 import { loadAdminData, loadBackups, loadNotifications } from '../../api/adminService';
+import { kpiService } from '../../api/kpiService';
 import { securityService } from '../../api/securityService';
 import { useLiveActivities } from './useLiveActivities';
-import type { DashboardMetrics, SecurityLog, AdminNotification, BackupRecord } from '../../types';
+import { KpiCardSection } from './KpiCardSection';
+import type { DashboardMetrics, SecurityLog, AdminNotification, BackupRecord, SystemKpi } from '../../types';
 
 const KpiCard: React.FC<{ label: string; value: string | number; icon: React.ElementType; color?: string; sub?: string; onClick?: () => void; pulse?: boolean }> = ({ label, value, icon: Icon, color, sub, onClick, pulse }) => (
   <button onClick={onClick} className="card-stat p-4 text-left w-full cursor-pointer hover:border-emerald-300 hover:shadow-md transition-all group">
@@ -36,6 +38,7 @@ const KpiCard: React.FC<{ label: string; value: string | number; icon: React.Ele
 export const SysAdminDashboard: React.FC = () => {
   const navigate = useNavigate();
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
+  const [kpi, setKpi] = useState<SystemKpi | null>(null);
   const [logs, setLogs] = useState<SecurityLog[]>([]);
   const [backups, setBackups] = useState<BackupRecord[]>([]);
   const [notifications, setNotifications] = useState<AdminNotification[]>([]);
@@ -48,13 +51,15 @@ export const SysAdminDashboard: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [m, l, b, n] = await Promise.all([
+      const [m, k, l, b, n] = await Promise.all([
         loadAdminData(),
+        kpiService.loadKpi(),
         securityService.getLogs(),
         loadBackups(),
         loadNotifications(),
       ]);
       setMetrics(m);
+      setKpi(k);
       setLogs(l);
       setBackups(b);
       setNotifications(n);
@@ -123,14 +128,26 @@ export const SysAdminDashboard: React.FC = () => {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <KpiCard label="System Status" value="Online" icon={Server} color="text-emerald-600" sub="Application server operational" onClick={() => navigate('/admin/reports')} />
-        <KpiCard label="Connected Subsystems" value={`${metrics.totalDocuments + metrics.totalContracts > 0 ? '2' : '0'}`} icon={Layers} color="text-blue-500" sub="Docs + Contracts" onClick={() => navigate('/admin/integrations')} />
+        <KpiCard label="Connected Subsystems" value={kpi ? `${[kpi.facilities, kpi.visitors, kpi.documents, kpi.legal, kpi.contracts].filter(m => m.totalFacilities + m.totalVisitors + m.totalDocuments + m.totalCases + m.totalContracts > 0).length}` : '0'} icon={Layers} color="text-blue-500" sub="Modules with data" onClick={() => navigate('/admin/integrations')} />
         <KpiCard label="Active Users" value={onlineCount} icon={Users} color={onlineCount > 0 ? 'text-emerald-600' : 'text-slate-400'} sub={`${onlineCount} users online · Peak today: ${peakToday}`} onClick={() => navigate('/security')} pulse />
         <KpiCard label="AI Services" value={`${metrics.totalDocuments} docs`} icon={Cpu} color={metrics.totalDocuments > 0 ? 'text-emerald-600' : 'text-slate-400'} sub={`${metrics.totalContracts} contracts`} onClick={() => navigate('/admin/ai-services')} />
         <KpiCard label="Backup Status" value={backupStatus} icon={Download} color={backupStatus === 'COMPLETED' ? 'text-emerald-600' : 'text-amber-500'} sub={`Last: ${lastBackupTime}`} onClick={() => navigate('/admin/backup')} />
         <KpiCard label="Security Alerts" value={metrics.activeAlertsCount} icon={Shield} color={metrics.activeAlertsCount > 0 ? 'text-rose-500' : 'text-emerald-600'} sub="Open security alerts" onClick={() => navigate('/security')} />
-        <KpiCard label="Failed Logins" value={metrics.failedLoginAttempts} icon={Globe} color={metrics.failedLoginAttempts > 0 ? 'text-amber-500' : 'text-emerald-600'} sub="Failed authentication attempts" onClick={() => navigate('/security')} />
+        <KpiCard label="Failed Logins" value={metrics.failedLoginAttempts} icon={Shield} color={metrics.failedLoginAttempts > 0 ? 'text-amber-500' : 'text-emerald-600'} sub="Failed authentication attempts" onClick={() => navigate('/security')} />
         <KpiCard label="Notifications" value={unreadNotifs} icon={Bell} color={unreadNotifs > 0 ? 'text-rose-500' : 'text-slate-400'} sub={`${notifications.length} total`} onClick={() => navigate('/admin/notifications')} />
       </div>
+
+      {kpi && (
+        <KpiCardSection
+          facilities={kpi.facilities}
+          visitors={kpi.visitors}
+          documents={kpi.documents}
+          records={kpi.records}
+          legal={kpi.legal}
+          contracts={kpi.contracts}
+          global={kpi.global}
+        />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="card-stat p-5">
@@ -145,19 +162,13 @@ export const SysAdminDashboard: React.FC = () => {
               {logs.slice(0, 8).map((log, i) => (
                 <div key={log.id || i} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
                   <div className="flex items-center space-x-3 min-w-0">
-                    <span className={`w-2 h-2 rounded-full shrink-0 ${
-                      log.riskLevel === 'CRITICAL' ? 'bg-rose-500' :
-                      log.riskLevel === 'HIGH' ? 'bg-orange-500' :
-                      log.riskLevel === 'MEDIUM' ? 'bg-amber-500' : 'bg-slate-300'
-                    }`} />
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${log.riskLevel === 'CRITICAL' ? 'bg-rose-500' : log.riskLevel === 'HIGH' ? 'bg-orange-500' : log.riskLevel === 'MEDIUM' ? 'bg-amber-500' : 'bg-slate-300'}`} />
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-slate-900 truncate">{log.action}</p>
                       <p className="text-xs text-slate-500">{log.fullName || log.ipAddress} · {log.module}</p>
                     </div>
                   </div>
-                  <span className="text-xs text-slate-400 font-mono shrink-0 ml-2">
-                    {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : ''}
-                  </span>
+                  <span className="text-xs text-slate-400 font-mono shrink-0 ml-2">{log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : ''}</span>
                 </div>
               ))}
             </div>
@@ -188,26 +199,13 @@ export const SysAdminDashboard: React.FC = () => {
                 const rel = secs < 3 ? 'Just now' : secs < 60 ? `${secs}s ago` : `${Math.floor(secs / 60)}m ago`;
                 const isAdmin = a.user.role === 'Admin';
                 return (
-                  <div
-                    key={a.id}
-                    className={`flex items-start space-x-3 py-2.5 px-3 rounded-xl transition-all duration-500 ${
-                      a.isNew ? 'bg-emerald-500/10' : 'hover:bg-slate-50'
-                    }`}
-                  >
-                    <span className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                      isAdmin ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-600'
-                    }`}>
-                      {a.user.initials}
-                    </span>
+                  <div key={a.id} className={`flex items-start space-x-3 py-2.5 px-3 rounded-xl transition-all duration-500 ${a.isNew ? 'bg-emerald-500/10' : 'hover:bg-slate-50'}`}>
+                    <span className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${isAdmin ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-600'}`}>{a.user.initials}</span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-baseline justify-between gap-2">
                         <p className="text-sm font-medium text-slate-900 truncate">
                           {a.user.name}
-                          <span className={`ml-1.5 text-[10px] font-mono px-1.5 py-0.5 rounded-full ${
-                            isAdmin ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-500'
-                          }`}>
-                            {a.user.role}
-                          </span>
+                          <span className={`ml-1.5 text-[10px] font-mono px-1.5 py-0.5 rounded-full ${isAdmin ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>{a.user.role}</span>
                         </p>
                         <span className="text-[11px] text-emerald-600 font-mono shrink-0">{rel}</span>
                       </div>
@@ -242,8 +240,24 @@ export const SysAdminDashboard: React.FC = () => {
             <p className="text-lg font-bold text-slate-900 mt-1">{metrics.activeSessions}</p>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs text-slate-500">Active Users</p>
+            <p className="text-lg font-bold text-slate-900 mt-1">{kpi?.global.activeUsers ?? 0}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <p className="text-xs text-slate-500">Blocked IPs</p>
             <p className="text-lg font-bold text-slate-900 mt-1">{metrics.blockedIpsCount}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs text-slate-500">Reservations Today</p>
+            <p className="text-lg font-bold text-slate-900 mt-1">{kpi?.facilities.bookingsToday ?? 0}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs text-slate-500">Visitors On-Site</p>
+            <p className="text-lg font-bold text-slate-900 mt-1">{kpi?.visitors.onSite ?? 0}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs text-slate-500">Legal Cases</p>
+            <p className="text-lg font-bold text-slate-900 mt-1">{kpi?.legal.totalCases ?? 0}</p>
           </div>
         </div>
       </div>

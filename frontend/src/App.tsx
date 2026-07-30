@@ -28,6 +28,15 @@ import {
   FacilitiesNotificationsPage,
   ProfilePage,
 } from './components/facilities/FacilitiesPages';
+import { FacilitiesOfficerLayout } from './components/facilities-officer/FacilitiesOfficerLayout';
+import { FacilitiesOfficerDashboard } from './components/facilities-officer/FacilitiesOfficerDashboard';
+import {
+  FoReservationsPage,
+  FoVisitorManagementPage,
+  FoDocumentsPage,
+  FoNotificationsPage,
+  FoProfilePage,
+} from './components/facilities-officer/FacilitiesOfficerPages';
 import { useAuthStore } from './stores/authStore';
 
 class ErrorBoundary extends React.Component<
@@ -73,6 +82,14 @@ const FacilitiesRoute: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
   if (user?.roles && !user.roles.includes('FACILITIES_MANAGER')) return <Navigate to="/" replace />;
+  return <>{children}</>;
+};
+
+const FacilitiesOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const user = useAuthStore((s) => s.user);
+  if (!accessToken) return <Navigate to="/login" replace />;
+  if (user?.roles && !user.roles.includes('FACILITIES_OFFICER')) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
 
@@ -123,6 +140,20 @@ export const App: React.FC = () => {
           <Route path="facilities/analytics" element={<AnalyticsPage />} />
           <Route path="facilities/notifications" element={<FacilitiesNotificationsPage />} />
           <Route path="facilities/profile" element={<ProfilePage />} />
+        </Route>
+
+        {/* Facilities Officer routes */}
+        <Route element={
+          <FacilitiesOfficerRoute>
+            <FacilitiesOfficerLayout />
+          </FacilitiesOfficerRoute>
+        }>
+          <Route path="facilities-officer" element={<FacilitiesOfficerDashboard />} />
+          <Route path="facilities-officer/reservations" element={<FoReservationsPage />} />
+          <Route path="facilities-officer/visitors" element={<FoVisitorManagementPage />} />
+          <Route path="facilities-officer/documents" element={<FoDocumentsPage />} />
+          <Route path="facilities-officer/notifications" element={<FoNotificationsPage />} />
+          <Route path="facilities-officer/profile" element={<FoProfilePage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

@@ -153,6 +153,9 @@ management:
   endpoint:
     health:
       show-details: when-authorized
+  health:
+    mail:
+      enabled: false
 
 # OpenAPI / Swagger
 springdoc:
@@ -204,5 +207,21 @@ spring:
   jpa:
     hibernate:
       ddl-auto: create-drop
+  flyway:
+    enabled: false
+
+---
+spring:
+  config:
+    activate:
+      on-profile: supabase
+  datasource:
+    url: jdbc:postgresql://aws-1-ap-south-1.pooler.supabase.com:5432/postgres?sslmode=require&prepareThreshold=0&preparedStatementCacheQueries=0
+    username: postgres.hffwvffqwjppecharqsd
+    password: 2ivs0XvJ2wyaDwsf
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
   flyway:
     enabled: false

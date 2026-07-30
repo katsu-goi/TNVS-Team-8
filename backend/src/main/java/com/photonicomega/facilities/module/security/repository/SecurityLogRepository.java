@@ -3,18 +3,20 @@ package com.photonicomega.facilities.module.security.repository;
 import com.photonicomega.facilities.module.security.domain.RiskLevel;
 import com.photonicomega.facilities.module.security.domain.SecurityLog;
 import com.photonicomega.facilities.module.security.domain.SecurityModule;
+import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 @Repository
-public interface SecurityLogRepository extends JpaRepository<SecurityLog, UUID> {
+public interface SecurityLogRepository extends JpaRepository<SecurityLog, UUID>, JpaSpecificationExecutor<SecurityLog> {
 
     Page<SecurityLog> findByRiskLevel(RiskLevel riskLevel, Pageable pageable);
 
@@ -22,22 +24,26 @@ public interface SecurityLogRepository extends JpaRepository<SecurityLog, UUID> 
 
     Page<SecurityLog> findByUserId(String userId, Pageable pageable);
 
-    @Query("SELECT s FROM SecurityLog s WHERE " +
-           "(:userId IS NULL OR s.userId = :userId) AND " +
-           "(:role IS NULL OR s.role = :role) AND " +
-           "(:module IS NULL OR s.module = :module) AND " +
-           "(:riskLevel IS NULL OR s.riskLevel = :riskLevel) AND " +
-           "(:ipAddress IS NULL OR s.ipAddress = :ipAddress) AND " +
-           "(:startDate IS NULL OR s.timestamp >= :startDate) AND " +
-           "(:endDate IS NULL OR s.timestamp <= :endDate)")
-    Page<SecurityLog> filterLogs(
-            @Param("userId") String userId,
-            @Param("role") String role,
-            @Param("module") SecurityModule module,
-            @Param("riskLevel") RiskLevel riskLevel,
-            @Param("ipAddress") String ipAddress,
-            @Param("startDate") Instant startDate,
-            @Param("endDate") Instant endDate,
+    default Page<SecurityLog> filterLogs(
+            String userId,
+            String role,
+            SecurityModule module,
+            RiskLevel riskLevel,
+            String ipAddress,
+            Instant startDate,
+            Instant endDate,
             Pageable pageable
-    );
+    ) {
+        return findAll((root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            if (userId != null) predicates.add(cb.equal(root.get("userId"), userId));
+            if (role != null) predicates.add(cb.equal(root.get("role"), role));
+            if (module != null) predicates.add(cb.equal(root.get("module"), module));
+            if (riskLevel != null) predicates.add(cb.equal(root.get("riskLevel"), riskLevel));
+            if (ipAddress != null) predicates.add(cb.equal(root.get("ipAddress"), ipAddress));
+            if (startDate != null) predicates.add(cb.greaterThanOrEqualTo(root.get("timestamp"), startDate));
+            if (endDate != null) predicates.add(cb.lessThanOrEqualTo(root.get("timestamp"), endDate));
+            return cb.and(predicates.toArray(new Predicate[0]));
+        }, pageable);
+    }
 }

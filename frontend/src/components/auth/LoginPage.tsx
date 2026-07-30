@@ -115,7 +115,17 @@ export const LoginPage: React.FC = () => {
                   }}
                   className="w-full text-center text-xs text-white/40 hover:text-[#00E676] transition-colors"
                 >
-                  Quick Facilities Login
+                  Quick Facilities Manager Login
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmail('fo@photonicomega.com');
+                    setPassword('Fo2026!');
+                  }}
+                  className="w-full text-center text-xs text-white/40 hover:text-[#00E676] transition-colors"
+                >
+                  Quick Facilities Officer Login
                 </button>
               </div>
           </div>

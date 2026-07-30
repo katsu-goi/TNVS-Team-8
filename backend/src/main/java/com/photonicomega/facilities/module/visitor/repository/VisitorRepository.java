@@ -14,4 +14,5 @@ public interface VisitorRepository extends JpaRepository<Visitor, UUID> {
     Optional<Visitor> findByQrCodeToken(String qrCodeToken);
     List<Visitor> findByHostId(UUID hostId);
     List<Visitor> findByStatus(VisitorStatus status);
+    long countByStatus(VisitorStatus status);
 }

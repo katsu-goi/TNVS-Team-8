@@ -31,6 +31,73 @@ export interface DashboardMetrics {
   totalNotifications: number;
 }
 
+export interface FacilitiesKpi {
+  totalFacilities: number;
+  totalRooms: number;
+  activeRooms: number;
+  bookingsToday: number;
+  pendingApprovals: number;
+  checkedIn: number;
+}
+
+export interface VisitorKpi {
+  totalVisitors: number;
+  onSite: number;
+  checkedIn: number;
+  registered: number;
+  checkedOut: number;
+}
+
+export interface DocumentKpi {
+  totalDocuments: number;
+  archived: number;
+  approved: number;
+  pendingReview: number;
+  draft: number;
+}
+
+export interface RecordsKpi {
+  totalPolicies: number;
+  activePolicies: number;
+}
+
+export interface LegalKpi {
+  totalCases: number;
+  open: number;
+  inProgress: number;
+  pendingHearing: number;
+  closed: number;
+}
+
+export interface ContractKpi {
+  totalContracts: number;
+  active: number;
+  underReview: number;
+  draft: number;
+  expired: number;
+  pendingApproval: number;
+  totalContractValue: number;
+}
+
+export interface GlobalKpi {
+  activeUsers: number;
+  activeSessions: number;
+  failedLoginAttempts: number;
+  blockedIps: number;
+  activeAlerts: number;
+  unreadNotifications: number;
+}
+
+export interface SystemKpi {
+  facilities: FacilitiesKpi;
+  visitors: VisitorKpi;
+  documents: DocumentKpi;
+  records: RecordsKpi;
+  legal: LegalKpi;
+  contracts: ContractKpi;
+  global: GlobalKpi;
+}
+
 export interface SystemConfiguration {
   id: string;
   configKey: string;

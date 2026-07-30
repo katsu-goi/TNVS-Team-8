@@ -95,5 +95,41 @@ public class BootstrapAdmin implements CommandLineRunner {
 
             log.info("Bootstrap facilities manager user created.");
         }
+
+        if (userRepository.findByEmailAndDeletedFalse("fo@photonicomega.com").isEmpty()) {
+            log.info("Creating bootstrap facilities officer user...");
+
+            Permission foPermission = Permission.builder()
+                    .name("FACILITIES_OFFICER_ACCESS")
+                    .displayName("Facilities Officer Access")
+                    .description("Grants operational access to facilities officer modules")
+                    .module("FACILITIES")
+                    .resource("*")
+                    .action(PermissionAction.READ)
+                    .build();
+
+            Role foRole = Role.builder()
+                    .name("FACILITIES_OFFICER")
+                    .displayName("Facilities Officer")
+                    .description("Facilities officer with day-to-day operational access")
+                    .systemRole(true)
+                    .permissions(Set.of(foPermission))
+                    .build();
+
+            userRepository.save(User.builder()
+                    .email("fo@photonicomega.com")
+                    .passwordHash(passwordEncoder.encode("Fo2026!"))
+                    .firstName("Facilities")
+                    .lastName("Officer")
+                    .employeeId("FO-001")
+                    .department("Facilities")
+                    .position("Facilities Officer")
+                    .status(UserStatus.ACTIVE)
+                    .emailVerified(true)
+                    .roles(Set.of(foRole))
+                    .build());
+
+            log.info("Bootstrap facilities officer user created.");
+        }
     }
 }
