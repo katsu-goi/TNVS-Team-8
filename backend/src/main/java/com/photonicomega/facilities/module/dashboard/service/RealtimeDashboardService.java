@@ -217,6 +217,34 @@ public class RealtimeDashboardService {
         messagingTemplate.convertAndSend("/topic/dashboard/notifications", notification);
     }
 
+    /**
+     * Broadcasts a consolidated facilities sync payload every 3 seconds.
+     * All three frontend modules (SysAdmin, Facilities Manager, Facilities Officer)
+     * subscribe to this topic for real-time cross-module synchronization.
+     */
+    @Scheduled(fixedRate = 3000)
+    public void broadcastFacilitiesSync() {
+        java.time.LocalDateTime startOfDay = java.time.LocalDateTime.now()
+                .with(java.time.temporal.ChronoField.HOUR_OF_DAY, 0)
+                .with(java.time.temporal.ChronoField.MINUTE_OF_HOUR, 0);
+        java.time.LocalDateTime endOfDay = startOfDay.plusDays(1);
+
+        Map<String, Object> syncPayload = new HashMap<>();
+        syncPayload.put("pendingReservations", reservationRepository.countByStatus(ReservationStatus.PENDING));
+        syncPayload.put("approvedReservations", reservationRepository.countByStatus(ReservationStatus.APPROVED));
+        syncPayload.put("totalReservations", reservationRepository.count());
+        syncPayload.put("bookingsToday", reservationRepository.countByDateRange(startOfDay, endOfDay));
+        syncPayload.put("visitorsOnSite", visitorRepository.countByStatus(VisitorStatus.CHECKED_IN));
+        syncPayload.put("totalVisitors", visitorRepository.count());
+        syncPayload.put("totalDocuments", documentRepository.count());
+        syncPayload.put("unreadNotifications", adminNotificationRepository.countByReadFalse());
+        syncPayload.put("activeSessions", activeSessionRepository.findByStatus("ACTIVE").size());
+        syncPayload.put("activeAlerts", securityAlertRepository.findByStatus("UNRESOLVED").size());
+        syncPayload.put("timestamp", System.currentTimeMillis());
+
+        messagingTemplate.convertAndSend("/topic/facilities/sync", syncPayload);
+    }
+
     @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
     public void onApplicationReady() {
         broadcastMetrics();

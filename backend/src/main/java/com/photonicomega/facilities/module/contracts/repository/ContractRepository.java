@@ -15,8 +15,11 @@ import java.util.UUID;
 @Repository
 public interface ContractRepository extends JpaRepository<Contract, UUID> {
     Optional<Contract> findByContractNumber(String contractNumber);
+
     List<Contract> findByStatus(ContractStatus status);
+
     long countByStatus(ContractStatus status);
+
     List<Contract> findByType(ContractType type);
 
     @Query("SELECT c FROM Contract c WHERE c.endDate <= :date AND c.status = 'ACTIVE'")

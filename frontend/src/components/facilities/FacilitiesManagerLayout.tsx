@@ -6,6 +6,7 @@ import {
   ChevronRight, AlertTriangle, Search,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
+import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 
 export const FacilitiesManagerLayout: React.FC = () => {
   const { user, logout } = useAuthStore();
@@ -15,12 +16,22 @@ export const FacilitiesManagerLayout: React.FC = () => {
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [clock, setClock] = useState(new Date());
 
+  const syncConnected = useRealtimeSyncStore(s => s.connected);
+  const connectSync = useRealtimeSyncStore(s => s.connectSync);
+  const disconnectSync = useRealtimeSyncStore(s => s.disconnectSync);
+
   useEffect(() => {
     const id = setInterval(() => setClock(new Date()), 30000);
-    return () => clearInterval(id);
-  }, []);
+    connectSync();
+    return () => { clearInterval(id); disconnectSync(); };
+  }, [connectSync, disconnectSync]);
 
-  const isActive = (path: string) => location.pathname === path || location.pathname.startsWith(path + '/');
+  const isActive = (path: string) => {
+    if (path === '/facilities') {
+      return location.pathname === '/facilities' || location.pathname === '/facilities/';
+    }
+    return location.pathname === path || location.pathname.startsWith(path + '/');
+  };
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', path: '/facilities', icon: LayoutDashboard },
@@ -78,9 +89,20 @@ export const FacilitiesManagerLayout: React.FC = () => {
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[10px] font-semibold text-white/80 uppercase tracking-widest">System Status</span>
                 <span className="text-[10px] text-white font-mono flex items-center space-x-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#00E676] shadow-[0_0_8px_rgba(0,230,118,0.5)] inline-block" />
-                  <span>All OK</span>
+                  <span className={`w-1.5 h-1.5 rounded-full inline-block ${syncConnected ? 'bg-[#00E676] shadow-[0_0_8px_rgba(0,230,118,0.5)]' : 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]'}`} />
+                  <span>{syncConnected ? 'All OK' : 'Connecting...'}</span>
                 </span>
+              </div>
+              <div className="grid grid-cols-2 gap-y-1.5">
+                {[
+                  { label: 'Realtime', status: syncConnected ? 'operational' as const : 'connecting' as const },
+                  { label: 'API', status: 'operational' as const },
+                ].map(s => (
+                  <div key={s.label} className="flex items-center space-x-1.5">
+                    <span className={`w-1.5 h-1.5 rounded-full ${s.status === 'operational' ? 'bg-[#00E676] shadow-[0_0_8px_rgba(0,230,118,0.5)]' : 'bg-amber-500'}`} />
+                    <span className="text-[10px] text-white/60 font-mono">{s.label}</span>
+                  </div>
+                ))}
               </div>
               <div className="mt-2 flex items-center justify-between">
                 <span className="text-[10px] text-white/40 font-mono">{clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
