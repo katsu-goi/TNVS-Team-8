@@ -35,6 +35,8 @@ const QuickActionCard: React.FC<{ label: string; desc: string; icon: React.Eleme
 
 const PIE_COLORS = ['#10B981', '#F59E0B', '#EF4444', '#6B7280', '#3B82F6'];
 
+import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
+
 export const FacilitiesOfficerDashboard: React.FC = () => {
   const navigate = useNavigate();
   const [data, setData] = useState<any>(null);
@@ -57,6 +59,9 @@ export const FacilitiesOfficerDashboard: React.FC = () => {
   }, [retry]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const revision = useRealtimeSyncStore(s => s.revision);
+  useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
 
   const kpi = data?.kpi ?? {};
   const chartData = data?.charts ?? {};

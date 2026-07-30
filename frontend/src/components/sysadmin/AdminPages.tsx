@@ -1,18 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import {
   Activity, Users, Shield,
-  AlertTriangle, XCircle, AlertCircle, Cpu,
+  AlertTriangle, AlertCircle, Cpu,
   BarChart3, Download, FileText, Bell, Settings, Layers, BookOpen,
-  Server, Database, Globe, CheckCircle, Clock, RefreshCw, Wifi, WifiOff,
-  Search, Filter, ArrowUpDown, ChevronLeft, ChevronRight,
+  Server, Database, CheckCircle, RefreshCw, Wifi, WifiOff,
+  Search, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { apiClient } from '../../api/client';
 import { loadAdminData, loadConfigs, updateConfig, loadIntegrations, loadBackups, loadNotifications, markNotificationRead } from '../../api/adminService';
 import { securityService } from '../../api/securityService';
 import type {
-  DashboardMetrics, SystemConfiguration, IntegrationStatus,
-  BackupRecord, AdminNotification, SecurityLog, BlockedIp,
-  ActiveSession, SecurityAlert,
+  SystemConfiguration, SecurityLog,
 } from '../../types';
 
 const LoadingSkeleton: React.FC = () => (
@@ -126,7 +124,7 @@ export const AiServicesPage: React.FC = () => {
       catCounts[cat] = (catCounts[cat] || 0) + 1;
     });
     const riskCounts: Record<string, number> = {};
-    contractRes.forEach((c: any) => {
+    contracts.forEach((c: any) => {
       const r = c.aiAssessedRiskLevel || 'UNKNOWN';
       riskCounts[r] = (riskCounts[r] || 0) + 1;
     });
@@ -191,7 +189,7 @@ export const SecurityCenterPage: React.FC = () => {
   if (error) return <ErrorState message={error} onRetry={retry} />;
   if (!data) return null;
 
-  const { metrics, alerts, blockedIps, sessions } = data;
+  const { metrics, alerts, sessions } = data;
 
   return (
     <div>

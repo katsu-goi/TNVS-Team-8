@@ -23,6 +23,7 @@ public class BootstrapAdmin implements CommandLineRunner {
     private final PasswordEncoder passwordEncoder;
 
     @Override
+    @org.springframework.transaction.annotation.Transactional
     public void run(String... args) {
         if (userRepository.findByEmailAndDeletedFalse("admin@photonicomega.com").isEmpty()) {
             log.info("Creating bootstrap admin user...");

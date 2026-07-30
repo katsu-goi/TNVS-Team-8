@@ -1,13 +1,14 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, LogOut, Search, ShieldCheck, Leaf, ChevronRight, ChevronDown,
-  AlertTriangle, BarChart3, KeyRound, Activity, Monitor, Layers, Download,
+  AlertTriangle, BarChart3, Activity, Monitor, Layers, Download,
   Settings, Bell, FileText, Cpu,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { useDashboardStore } from '../../stores/dashboardStore';
-import { Breadcrumbs } from './Breadcrumbs';
+import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
+// Breadcrumbs available for future use
 
 const parentIds = ['security'];
 
@@ -30,12 +31,15 @@ export const AppLayout: React.FC = () => {
 
  const connectRealtime = useDashboardStore(s => s.connectWebSocket);
  const disconnectRealtime = useDashboardStore(s => s.disconnectWebSocket);
+ const connectSync = useRealtimeSyncStore(s => s.connectSync);
+ const disconnectSync = useRealtimeSyncStore(s => s.disconnectSync);
 
  useEffect(() => {
  const id = setInterval(() => setClock(new Date()), 30000);
  connectRealtime();
- return () => { clearInterval(id); disconnectRealtime(); };
- }, [connectRealtime, disconnectRealtime]);
+ connectSync();
+ return () => { clearInterval(id); disconnectRealtime(); disconnectSync(); };
+ }, [connectRealtime, disconnectRealtime, connectSync, disconnectSync]);
 
  const unreadCount = notifications.length;
 
@@ -47,12 +51,12 @@ export const AppLayout: React.FC = () => {
  });
  };
 
- const isActive = (path: string) => {
- if (path === '/') return location.pathname === '/';
- return location.pathname.startsWith(path);
- };
+  const isActive = (path: string) => {
+    if (path === '/') return location.pathname === '/';
+    return location.pathname === path;
+  };
 
- const isExactActive = (path: string) => location.pathname === path;
+  const isExactActive = (path: string) => location.pathname === path;
 
   const navItems = [
   { id: 'dashboard', label: 'Dashboard', path: '/', icon: LayoutDashboard, exact: true },
@@ -196,7 +200,7 @@ export const AppLayout: React.FC = () => {
    </div>
    <div className="min-w-0">
    <p className="text-xs font-semibold text-white truncate leading-tight">{user?.fullName || 'Administrator'}</p>
-   <p className="text-[10px] text-white/70 font-mono truncate leading-tight">{user?.role || 'SUPER_ADMIN'}</p>
+   <p className="text-[10px] text-white/70 font-mono truncate leading-tight">{user?.roles?.[0] || 'SUPER_ADMIN'}</p>
    </div>
    </div>
    <button onClick={() => setShowLogoutModal(true)} title="Logout"

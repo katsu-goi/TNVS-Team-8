@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Server, Database, Activity, Users, Shield,
   RefreshCw, AlertCircle, Cpu,
-  Download, Bell, Layers, Building2, FileText, FileSignature, Scale, Archive,
+  Download, Bell, Layers,
   ChevronRight, Loader2,
 } from 'lucide-react';
 import { loadAdminData, loadBackups, loadNotifications } from '../../api/adminService';
@@ -128,7 +128,7 @@ export const SysAdminDashboard: React.FC = () => {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <KpiCard label="System Status" value="Online" icon={Server} color="text-emerald-600" sub="Application server operational" onClick={() => navigate('/admin/reports')} />
-        <KpiCard label="Connected Subsystems" value={kpi ? `${[kpi.facilities, kpi.visitors, kpi.documents, kpi.legal, kpi.contracts].filter(m => m.totalFacilities + m.totalVisitors + m.totalDocuments + m.totalCases + m.totalContracts > 0).length}` : '0'} icon={Layers} color="text-blue-500" sub="Modules with data" onClick={() => navigate('/admin/integrations')} />
+        <KpiCard label="Connected Subsystems" value={kpi ? `${[kpi.facilities.totalFacilities, kpi.visitors.totalVisitors, kpi.documents.totalDocuments, kpi.legal.totalCases, kpi.contracts.totalContracts].filter(v => v > 0).length}` : '0'} icon={Layers} color="text-blue-500" sub="Modules with data" onClick={() => navigate('/admin/integrations')} />
         <KpiCard label="Active Users" value={onlineCount} icon={Users} color={onlineCount > 0 ? 'text-emerald-600' : 'text-slate-400'} sub={`${onlineCount} users online · Peak today: ${peakToday}`} onClick={() => navigate('/security')} pulse />
         <KpiCard label="AI Services" value={`${metrics.totalDocuments} docs`} icon={Cpu} color={metrics.totalDocuments > 0 ? 'text-emerald-600' : 'text-slate-400'} sub={`${metrics.totalContracts} contracts`} onClick={() => navigate('/admin/ai-services')} />
         <KpiCard label="Backup Status" value={backupStatus} icon={Download} color={backupStatus === 'COMPLETED' ? 'text-emerald-600' : 'text-amber-500'} sub={`Last: ${lastBackupTime}`} onClick={() => navigate('/admin/backup')} />
@@ -137,17 +137,7 @@ export const SysAdminDashboard: React.FC = () => {
         <KpiCard label="Notifications" value={unreadNotifs} icon={Bell} color={unreadNotifs > 0 ? 'text-rose-500' : 'text-slate-400'} sub={`${notifications.length} total`} onClick={() => navigate('/admin/notifications')} />
       </div>
 
-      {kpi && (
-        <KpiCardSection
-          facilities={kpi.facilities}
-          visitors={kpi.visitors}
-          documents={kpi.documents}
-          records={kpi.records}
-          legal={kpi.legal}
-          contracts={kpi.contracts}
-          global={kpi.global}
-        />
-      )}
+      <KpiCardSection />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="card-stat p-5">

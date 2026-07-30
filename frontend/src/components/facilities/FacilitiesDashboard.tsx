@@ -6,6 +6,7 @@ import {
   BarChart3, Clock,
 } from 'lucide-react';
 import { facilitiesService } from '../../api/facilitiesService';
+import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 
 const KpiCard: React.FC<{ label: string; value: string | number; icon: React.ElementType; color?: string; sub?: string; onClick?: () => void }> = ({ label, value, icon: Icon, color, sub, onClick }) => (
   <button onClick={onClick} className="card-stat p-4 text-left w-full cursor-pointer hover:border-emerald-300 hover:shadow-md transition-all group">
@@ -39,6 +40,9 @@ export const FacilitiesDashboard: React.FC = () => {
   }, [retry]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const revision = useRealtimeSyncStore(s => s.revision);
+  useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
 
   if (loading && !kpi) {
     return (

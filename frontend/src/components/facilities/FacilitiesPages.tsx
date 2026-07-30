@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { AlertCircle, RefreshCw, Calendar, CheckSquare, XSquare, Building2, ClipboardList, BarChart3, Bell, User } from 'lucide-react';
 import { facilitiesService } from '../../api/facilitiesService';
+import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -50,6 +51,9 @@ export const ReservationsPage: React.FC = () => {
   }, [retry, statusFilter]);
 
   useEffect(() => { load(); }, [load]);
+
+  const revisionRes = useRealtimeSyncStore(s => s.revision);
+  useEffect(() => { if (revisionRes > 0) setRetry(r => r + 1); }, [revisionRes]);
 
   if (loading && !data) return <LoadingSkeleton />;
   if (error && !data) return <ErrorState message={error} onRetry={() => setRetry(r => r + 1)} />;
@@ -165,6 +169,9 @@ export const ApprovalPage: React.FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
+  const revision = useRealtimeSyncStore(s => s.revision);
+  useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
+
   const handleApprove = async (id: string) => {
     await facilitiesService.approveReservation(id);
     setReservations(prev => prev.filter(r => r.id !== id));
@@ -241,6 +248,9 @@ export const RoomsPage: React.FC = () => {
   }, [retry]);
 
   useEffect(() => { load(); }, [load]);
+
+  const revision = useRealtimeSyncStore(s => s.revision);
+  useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
 
   if (loading && rooms.length === 0) return <LoadingSkeleton />;
   if (error) return <ErrorState message={error} onRetry={() => setRetry(r => r + 1)} />;
@@ -336,6 +346,9 @@ export const CalendarPage: React.FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
+  const revision = useRealtimeSyncStore(s => s.revision);
+  useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
+
   if (loading && events.length === 0) return <LoadingSkeleton />;
   if (error) return <ErrorState message={error} onRetry={() => setRetry(r => r + 1)} />;
 
@@ -401,6 +414,9 @@ export const AssetsPage: React.FC = () => {
   }, [retry]);
 
   useEffect(() => { load(); }, [load]);
+
+  const revision = useRealtimeSyncStore(s => s.revision);
+  useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
 
   if (loading && assets.length === 0) return <LoadingSkeleton />;
   if (error) return <ErrorState message={error} onRetry={() => setRetry(r => r + 1)} />;
@@ -499,6 +515,9 @@ export const ReportsPage: React.FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
+  const revisionRep = useRealtimeSyncStore(s => s.revision);
+  useEffect(() => { if (revisionRep > 0) setRetry(r => r + 1); }, [revisionRep]);
+
   if (loading && !data) return <LoadingSkeleton />;
 
   return (
@@ -567,6 +586,9 @@ export const AnalyticsPage: React.FC = () => {
   }, [retry]);
 
   useEffect(() => { load(); }, [load]);
+
+  const revisionAna = useRealtimeSyncStore(s => s.revision);
+  useEffect(() => { if (revisionAna > 0) setRetry(r => r + 1); }, [revisionAna]);
 
   if (loading && !data) return <LoadingSkeleton />;
 
@@ -654,6 +676,9 @@ export const FacilitiesNotificationsPage: React.FC = () => {
   }, [retry]);
 
   useEffect(() => { load(); }, [load]);
+
+  const revisionN = useRealtimeSyncStore(s => s.revision);
+  useEffect(() => { if (revisionN > 0) setRetry(r => r + 1); }, [revisionN]);
 
   if (loading && notifications.length === 0) return <LoadingSkeleton />;
 

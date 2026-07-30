@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppLayout } from './components/layout/AppLayout';
 import { LoginPage } from './components/auth/LoginPage';
@@ -30,8 +30,8 @@ import {
 } from './components/facilities/FacilitiesPages';
 import { FacilitiesOfficerLayout } from './components/facilities-officer/FacilitiesOfficerLayout';
 import { FacilitiesOfficerDashboard } from './components/facilities-officer/FacilitiesOfficerDashboard';
+import { FoReservationsPage } from './components/facilities-officer/FoReservationsPage';
 import {
-  FoReservationsPage,
   FoVisitorManagementPage,
   FoDocumentsPage,
   FoNotificationsPage,
