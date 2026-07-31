@@ -5,12 +5,8 @@ import {
   Cpu, Activity, CheckCircle2, AlertTriangle, RefreshCw,
   Plus, FileText, Settings,
   Zap, Shield, Download, Server, Clock, BarChart3, Search,
-  Sparkles, Terminal, X
+  Sparkles, Terminal, X, InboxIcon
 } from 'lucide-react';
-import {
-  ResponsiveContainer, AreaChart, Area, BarChart, Bar, LineChart, Line,
-  PieChart, Pie, Cell, XAxis, YAxis, Tooltip, Legend, CartesianGrid
-} from 'recharts';
 
 // --- TYPES ---
 interface Provider {
@@ -45,130 +41,7 @@ interface RequestLog {
   user: string;
 }
 
-// --- INITIAL MOCK DATA ---
-const INITIAL_PROVIDERS: Provider[] = [
-  {
-    id: 'p1',
-    name: 'OpenAI Enterprise',
-    model: 'gpt-4o-2024-08-06',
-    status: 'CONNECTED',
-    lastSync: '2 mins ago',
-    responseTime: '142 ms',
-    isDefault: true,
-    type: 'openai',
-  },
-  {
-    id: 'p2',
-    name: 'Google Gemini Pro',
-    model: 'gemini-1.5-pro',
-    status: 'CONNECTED',
-    lastSync: '5 mins ago',
-    responseTime: '185 ms',
-    isDefault: false,
-    type: 'gemini',
-  },
-  {
-    id: 'p3',
-    name: 'Anthropic Claude',
-    model: 'claude-3-5-sonnet',
-    status: 'CONNECTED',
-    lastSync: '12 mins ago',
-    responseTime: '210 ms',
-    isDefault: false,
-    type: 'claude',
-  },
-  {
-    id: 'p4',
-    name: 'Local Ollama Cluster',
-    model: 'llama-3.3-70b-instruct',
-    status: 'OFFLINE',
-    lastSync: '1 hour ago',
-    responseTime: 'N/A',
-    isDefault: false,
-    type: 'local',
-  },
-];
-
-const INITIAL_MODULES: AIModule[] = [
-  {
-    id: 'm1',
-    name: 'Facilities Reservation',
-    iconName: 'Building',
-    enabled: true,
-    status: 'Active',
-    features: [
-      'Reservation conflict detection',
-      'Schedule optimization',
-      'Facility usage forecasting',
-    ],
-  },
-  {
-    id: 'm2',
-    name: 'Visitor Management',
-    iconName: 'UserCheck',
-    enabled: true,
-    status: 'Active',
-    features: [
-      'Visitor ID OCR',
-      'Visitor verification',
-      'Suspicious visitor detection',
-    ],
-  },
-  {
-    id: 'm3',
-    name: 'Document Management',
-    iconName: 'FileSearch',
-    enabled: true,
-    status: 'Active',
-    features: [
-      'Automatic document classification',
-      'Metadata extraction',
-      'OCR scanning',
-      'Duplicate document detection',
-    ],
-  },
-  {
-    id: 'm4',
-    name: 'Records Retention & Compliance',
-    iconName: 'ShieldAlert',
-    enabled: true,
-    status: 'Active',
-    features: [
-      'Retention schedule recommendations',
-      'Compliance monitoring',
-      'Automatic archive suggestions',
-      'Expiring record alerts',
-    ],
-  },
-  {
-    id: 'm5',
-    name: 'Legal Management',
-    iconName: 'Scale',
-    enabled: true,
-    status: 'Active',
-    features: [
-      'Legal document summarization',
-      'Case categorization',
-      'Deadline reminders',
-      'Legal risk detection',
-    ],
-  },
-  {
-    id: 'm6',
-    name: 'Contract Management',
-    iconName: 'FileCheck',
-    enabled: true,
-    status: 'Active',
-    features: [
-      'Contract summarization',
-      'Clause extraction',
-      'Expiration alerts',
-      'Missing signature detection',
-      'Compliance analysis',
-    ],
-  },
-];
-
+// --- DEFAULT SYSTEM PROMPT ---
 const DEFAULT_SYSTEM_PROMPT = `# TNVS Facilities & Administrative AI System Prompt
 Version: 2.4.0-Enterprise
 
@@ -184,59 +57,17 @@ You operate with strict adherence to Philippine government administrative standa
 
 Output must be concise, structured in valid JSON when requested, and formatted cleanly in markdown.`;
 
-const MOCK_LOGS: RequestLog[] = [];
-
-// --- ANALYTICS DATA (LIVE DYNAMIC METRICS) ---
-const REQUESTS_PER_DAY = [
-  { day: 'Mon', requests: 0 },
-  { day: 'Tue', requests: 0 },
-  { day: 'Wed', requests: 0 },
-  { day: 'Thu', requests: 0 },
-  { day: 'Fri', requests: 0 },
-  { day: 'Sat', requests: 0 },
-  { day: 'Sun', requests: 0 },
-];
-
-const TOKEN_CONSUMPTION = [
-  { day: 'Mon', tokens: 0 },
-  { day: 'Tue', tokens: 0 },
-  { day: 'Wed', tokens: 0 },
-  { day: 'Thu', tokens: 0 },
-  { day: 'Fri', tokens: 0 },
-  { day: 'Sat', tokens: 0 },
-  { day: 'Sun', tokens: 0 },
-];
-
-const RESPONSE_TIME_TREND = [
-  { time: '08:00', latency: 0 },
-  { time: '10:00', latency: 0 },
-  { time: '12:00', latency: 0 },
-  { time: '14:00', latency: 0 },
-  { time: '16:00', latency: 0 },
-  { time: '18:00', latency: 0 },
-];
-
-const MODULE_DISTRIBUTION = [
-  { name: 'Contracts', value: 0, color: '#059669' },
-  { name: 'Documents', value: 0, color: '#10b981' },
-  { name: 'Visitors', value: 0, color: '#34d399' },
-  { name: 'Reservations', value: 0, color: '#6ee7b7' },
-  { name: 'Legal', value: 0, color: '#a7f3d0' },
-  { name: 'Records', value: 0, color: '#047857' },
-];
-
 export const AiServicesPage: React.FC = () => {
-  // States
-  const [hasProvider, setHasProvider] = useState(true);
-  const [providers, setProviders] = useState<Provider[]>(INITIAL_PROVIDERS);
-  const [modules, setModules] = useState<AIModule[]>(INITIAL_MODULES);
+  // States — starts empty, no mock data
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [modules, setModules] = useState<AIModule[]>([]);
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
   const [isEditingPrompt, setIsEditingPrompt] = useState(false);
   const [tempPrompt, setTempPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
-  const [logs] = useState<RequestLog[]>(MOCK_LOGS);
+  const [logs] = useState<RequestLog[]>([]);
   const [logSearch, setLogSearch] = useState('');
   const [logStatusFilter, setLogStatusFilter] = useState('ALL');
-  
+
   // Modals & Feedback
   const [showAddProviderModal, setShowAddProviderModal] = useState(false);
   const [showConfigModuleModal, setShowConfigModuleModal] = useState<AIModule | null>(null);
@@ -271,15 +102,14 @@ export const AiServicesPage: React.FC = () => {
     const startMs = Date.now();
     try {
       const res = await apiClient.post('/ai/test-connection', {
-        provider: defaultProvider?.name || 'OpenAI Enterprise',
-        model: defaultProvider?.model || 'gpt-4o',
+        provider: defaultProvider?.name,
+        model: defaultProvider?.model,
       });
       const data = res.data?.data;
       const latency = data?.responseTimeMs || (Date.now() - startMs);
-      showToast(`Live AI Connection verified! Latency: ${latency}ms · Engine: ${data?.modelUsed || 'gpt-4o'}`);
+      showToast(`Live AI Connection verified! Latency: ${latency}ms · Engine: ${data?.modelUsed || defaultProvider?.model || 'N/A'}`);
     } catch {
-      const latency = Date.now() - startMs + 95;
-      showToast(`AI Connection test active! Real-time latency: ${latency}ms`);
+      showToast('AI Connection test failed. Verify provider configuration and connectivity.');
     } finally {
       setTestingConnection(false);
     }
@@ -307,7 +137,7 @@ export const AiServicesPage: React.FC = () => {
       model: data.model,
       status: 'CONNECTED',
       lastSync: 'Just now',
-      responseTime: '142 ms',
+      responseTime: '—',
       isDefault: data.isDefault || providers.length === 0,
       type: pType,
     };
@@ -318,7 +148,6 @@ export const AiServicesPage: React.FC = () => {
       setProviders(prev => [...prev, newP]);
     }
 
-    setHasProvider(true);
     setShowAddProviderModal(false);
     showToast(`AI Provider "${data.displayName}" added successfully!`);
   };
@@ -380,12 +209,6 @@ export const AiServicesPage: React.FC = () => {
 
         <div className="flex items-center space-x-3 self-end md:self-auto">
           <button
-            onClick={() => setHasProvider(!hasProvider)}
-            className="text-xs text-slate-500 underline hover:text-slate-700 transition-colors"
-          >
-            Toggle Preview ({hasProvider ? 'Configured' : 'Empty State'})
-          </button>
-          <button
             onClick={handleTestConnection}
             disabled={testingConnection}
             className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold text-xs hover:bg-emerald-100 transition-colors disabled:opacity-50"
@@ -433,39 +256,28 @@ export const AiServicesPage: React.FC = () => {
 
           <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm">
             <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Avg Response Time</p>
-            <p className="text-2xl font-bold text-emerald-600 mt-1">0 ms</p>
+            <p className="text-2xl font-bold text-slate-400 mt-1">— ms</p>
             <p className="text-[10px] text-slate-400 mt-1">Awaiting requests</p>
           </div>
 
           <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm">
             <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Success Rate</p>
-            <p className="text-2xl font-bold text-emerald-600 mt-1">100%</p>
-            <p className="text-[10px] text-emerald-600 font-semibold mt-1">High Availability</p>
+            <p className="text-2xl font-bold text-slate-400 mt-1">—</p>
+            <p className="text-[10px] text-slate-400 font-semibold mt-1">No requests yet</p>
           </div>
         </div>
 
-        {/* 4 Recharts Charts */}
+        {/* 4 Recharts Charts — empty state */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Requests per Day */}
           <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm">
             <h3 className="text-sm font-bold text-slate-900 mb-1">Requests per Day</h3>
             <p className="text-xs text-slate-400 mb-4">Daily volume of AI API calls over the past week</p>
-            <div className="h-60">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={REQUESTS_PER_DAY}>
-                  <defs>
-                    <linearGradient id="emeraldGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#059669" stopOpacity={0.4}/>
-                      <stop offset="95%" stopColor="#059669" stopOpacity={0.0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="day" stroke="#94a3b8" fontSize={11} />
-                  <YAxis stroke="#94a3b8" fontSize={11} />
-                  <Tooltip />
-                  <Area type="monotone" dataKey="requests" stroke="#059669" strokeWidth={2.5} fillOpacity={1} fill="url(#emeraldGrad)" />
-                </AreaChart>
-              </ResponsiveContainer>
+            <div className="h-60 flex items-center justify-center bg-slate-50/50 rounded-xl border border-slate-100">
+              <div className="text-center">
+                <BarChart3 className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                <p className="text-xs text-slate-400">No request data yet</p>
+              </div>
             </div>
           </div>
 
@@ -473,16 +285,11 @@ export const AiServicesPage: React.FC = () => {
           <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm">
             <h3 className="text-sm font-bold text-slate-900 mb-1">Token Consumption (k Tokens)</h3>
             <p className="text-xs text-slate-400 mb-4">Total token utilization across all LLM backends</p>
-            <div className="h-60">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={TOKEN_CONSUMPTION}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="day" stroke="#94a3b8" fontSize={11} />
-                  <YAxis stroke="#94a3b8" fontSize={11} />
-                  <Tooltip />
-                  <Bar dataKey="tokens" fill="#10b981" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+            <div className="h-60 flex items-center justify-center bg-slate-50/50 rounded-xl border border-slate-100">
+              <div className="text-center">
+                <BarChart3 className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                <p className="text-xs text-slate-400">No token data yet</p>
+              </div>
             </div>
           </div>
 
@@ -490,16 +297,11 @@ export const AiServicesPage: React.FC = () => {
           <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm">
             <h3 className="text-sm font-bold text-slate-900 mb-1">Response Time (ms)</h3>
             <p className="text-xs text-slate-400 mb-4">Real-time latency profile throughout active working hours</p>
-            <div className="h-60">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={RESPONSE_TIME_TREND}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="time" stroke="#94a3b8" fontSize={11} />
-                  <YAxis stroke="#94a3b8" fontSize={11} domain={[100, 220]} />
-                  <Tooltip />
-                  <Line type="monotone" dataKey="latency" stroke="#047857" strokeWidth={2.5} dot={{ r: 4, fill: '#047857' }} />
-                </LineChart>
-              </ResponsiveContainer>
+            <div className="h-60 flex items-center justify-center bg-slate-50/50 rounded-xl border border-slate-100">
+              <div className="text-center">
+                <Activity className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                <p className="text-xs text-slate-400">No latency data yet</p>
+              </div>
             </div>
           </div>
 
@@ -509,18 +311,11 @@ export const AiServicesPage: React.FC = () => {
               <h3 className="text-sm font-bold text-slate-900 mb-1">Module Usage Distribution</h3>
               <p className="text-xs text-slate-400 mb-2">Percentage breakdown of AI invocation by functional unit</p>
             </div>
-            <div className="h-56 flex items-center justify-center">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={MODULE_DISTRIBUTION} cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={4} dataKey="value">
-                    {MODULE_DISTRIBUTION.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                  <Legend verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: '11px' }} />
-                </PieChart>
-              </ResponsiveContainer>
+            <div className="h-56 flex items-center justify-center bg-slate-50/50 rounded-xl border border-slate-100">
+              <div className="text-center">
+                <Activity className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                <p className="text-xs text-slate-400">No module usage data yet</p>
+              </div>
             </div>
           </div>
         </div>
@@ -533,14 +328,14 @@ export const AiServicesPage: React.FC = () => {
             <h2 className="text-lg font-bold text-slate-900 flex items-center space-x-2">
               <span>AI Provider Settings</span>
               <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                {hasProvider ? `${providers.length} Configured` : '0 Configured'}
+                {providers.length} Configured
               </span>
             </h2>
             <p className="text-xs text-slate-500 mt-1">
               Manage LLM gateways, API keys, default engines, and multi-provider failover rules.
             </p>
           </div>
-          {hasProvider && (
+          {providers.length > 0 && (
             <button
               onClick={() => setShowAddProviderModal(true)}
               className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm transition-all"
@@ -551,7 +346,7 @@ export const AiServicesPage: React.FC = () => {
           )}
         </div>
 
-        {!hasProvider || providers.length === 0 ? (
+        {providers.length === 0 ? (
           /* Empty State */
           <div className="py-12 px-6 rounded-2xl bg-gradient-to-b from-slate-50 to-emerald-50/20 border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-center">
             <div className="p-4 rounded-full bg-white shadow-md border border-slate-100 mb-4">
@@ -667,82 +462,93 @@ export const AiServicesPage: React.FC = () => {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {modules.map(mod => (
-            <div
-              key={mod.id}
-              className={`p-5 rounded-2xl border transition-all flex flex-col justify-between ${
-                mod.enabled
-                  ? 'bg-white border-slate-200 shadow-sm hover:shadow-md'
-                  : 'bg-slate-50/60 border-slate-200/60 opacity-80'
-              }`}
-            >
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center space-x-3">
-                    <div
-                      className={`p-2.5 rounded-xl border ${
-                        mod.enabled
-                          ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
-                          : 'bg-slate-200/60 border-slate-300 text-slate-400'
-                      }`}
-                    >
-                      <Zap className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900 leading-snug">{mod.name}</h3>
-                      <span
-                        className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full mt-1 ${
-                          mod.status === 'Active'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : 'bg-slate-200 text-slate-600'
+        {modules.length === 0 ? (
+          <div className="py-10 flex flex-col items-center justify-center text-center">
+            <div className="p-3 rounded-full bg-slate-100 mb-3">
+              <Zap className="w-7 h-7 text-slate-300" />
+            </div>
+            <p className="text-sm font-semibold text-slate-600">No AI Modules Configured</p>
+            <p className="text-xs text-slate-400 mt-1 max-w-sm">
+              Modules will appear here once an AI provider is connected and modules are registered in the system.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {modules.map(mod => (
+              <div
+                key={mod.id}
+                className={`p-5 rounded-2xl border transition-all flex flex-col justify-between ${
+                  mod.enabled
+                    ? 'bg-white border-slate-200 shadow-sm hover:shadow-md'
+                    : 'bg-slate-50/60 border-slate-200/60 opacity-80'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center space-x-3">
+                      <div
+                        className={`p-2.5 rounded-xl border ${
+                          mod.enabled
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
+                            : 'bg-slate-200/60 border-slate-300 text-slate-400'
                         }`}
                       >
-                        {mod.status}
-                      </span>
+                        <Zap className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-slate-900 leading-snug">{mod.name}</h3>
+                        <span
+                          className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full mt-1 ${
+                            mod.status === 'Active'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-slate-200 text-slate-600'
+                          }`}
+                        >
+                          {mod.status}
+                        </span>
+                      </div>
                     </div>
+
+                    <button
+                      onClick={() => toggleModule(mod.id)}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                        mod.enabled ? 'bg-emerald-600' : 'bg-slate-300'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                          mod.enabled ? 'translate-x-5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
                   </div>
 
-                  {/* Animated Toggle Switch */}
+                  <div className="space-y-2 mb-4">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Features:</p>
+                    <ul className="space-y-1.5">
+                      {mod.features.map((feat, idx) => (
+                        <li key={idx} className="flex items-start space-x-2 text-xs text-slate-600">
+                          <CheckCircle2 className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${mod.enabled ? 'text-emerald-500' : 'text-slate-300'}`} />
+                          <span>{feat}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-slate-100 flex justify-end">
                   <button
-                    onClick={() => toggleModule(mod.id)}
-                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                      mod.enabled ? 'bg-emerald-600' : 'bg-slate-300'
-                    }`}
+                    onClick={() => setShowConfigModuleModal(mod)}
+                    className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors"
                   >
-                    <span
-                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                        mod.enabled ? 'translate-x-5' : 'translate-x-0'
-                      }`}
-                    />
+                    <Settings className="w-3.5 h-3.5" />
+                    <span>Configure</span>
                   </button>
                 </div>
-
-                <div className="space-y-2 mb-4">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Features:</p>
-                  <ul className="space-y-1.5">
-                    {mod.features.map((feat, idx) => (
-                      <li key={idx} className="flex items-start space-x-2 text-xs text-slate-600">
-                        <CheckCircle2 className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${mod.enabled ? 'text-emerald-500' : 'text-slate-300'}`} />
-                        <span>{feat}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
               </div>
-
-              <div className="pt-3 border-t border-slate-100 flex justify-end">
-                <button
-                  onClick={() => setShowConfigModuleModal(mod)}
-                  className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors"
-                >
-                  <Settings className="w-3.5 h-3.5" />
-                  <span>Configure</span>
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* SECTION 3 — SYSTEM PROMPT */}
@@ -865,49 +671,59 @@ export const AiServicesPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left">
-            <thead>
-              <tr className="border-b border-slate-200 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
-                <th className="py-3 px-3">Time</th>
-                <th className="py-3 px-3">Module</th>
-                <th className="py-3 px-3">AI Provider</th>
-                <th className="py-3 px-3">Operation</th>
-                <th className="py-3 px-3">Status</th>
-                <th className="py-3 px-3 text-right">Duration</th>
-                <th className="py-3 px-3 text-right">Tokens Used</th>
-                <th className="py-3 px-3 text-right">Requested By</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredLogs.map(log => (
-                <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="py-3 px-3 font-mono text-slate-500">{log.time}</td>
-                  <td className="py-3 px-3 font-medium text-slate-900">{log.module}</td>
-                  <td className="py-3 px-3 text-slate-600">{log.provider}</td>
-                  <td className="py-3 px-3 text-slate-700 font-mono text-[11px]">{log.operation}</td>
-                  <td className="py-3 px-3">
-                    <span
-                      className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        log.status === 'SUCCESS'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : 'bg-rose-100 text-rose-800'
-                      }`}
-                    >
-                      {log.status}
-                    </span>
-                  </td>
-                  <td className="py-3 px-3 text-right font-mono text-slate-600">{log.duration}</td>
-                  <td className="py-3 px-3 text-right font-mono text-slate-900 font-semibold">{log.tokens.toLocaleString()}</td>
-                  <td className="py-3 px-3 text-right text-slate-500 font-mono">{log.user}</td>
+        {filteredLogs.length === 0 ? (
+          <div className="py-10 flex flex-col items-center justify-center text-center">
+            <div className="p-3 rounded-full bg-slate-100 mb-3">
+              <InboxIcon className="w-7 h-7 text-slate-300" />
+            </div>
+            <p className="text-sm font-semibold text-slate-600">No AI Request Logs</p>
+            <p className="text-xs text-slate-400 mt-1">
+              Logs will appear here once AI requests are made through the system.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left">
+              <thead>
+                <tr className="border-b border-slate-200 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
+                  <th className="py-3 px-3">Time</th>
+                  <th className="py-3 px-3">Module</th>
+                  <th className="py-3 px-3">AI Provider</th>
+                  <th className="py-3 px-3">Operation</th>
+                  <th className="py-3 px-3">Status</th>
+                  <th className="py-3 px-3 text-right">Duration</th>
+                  <th className="py-3 px-3 text-right">Tokens Used</th>
+                  <th className="py-3 px-3 text-right">Requested By</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredLogs.map(log => (
+                  <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="py-3 px-3 font-mono text-slate-500">{log.time}</td>
+                    <td className="py-3 px-3 font-medium text-slate-900">{log.module}</td>
+                    <td className="py-3 px-3 text-slate-600">{log.provider}</td>
+                    <td className="py-3 px-3 text-slate-700 font-mono text-[11px]">{log.operation}</td>
+                    <td className="py-3 px-3">
+                      <span
+                        className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          log.status === 'SUCCESS'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-rose-100 text-rose-800'
+                        }`}
+                      >
+                        {log.status}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 text-right font-mono text-slate-600">{log.duration}</td>
+                    <td className="py-3 px-3 text-right font-mono text-slate-900 font-semibold">{log.tokens.toLocaleString()}</td>
+                    <td className="py-3 px-3 text-right text-slate-500 font-mono">{log.user}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
-
-
 
       {/* SECTION 6 — AI HEALTH MONITOR */}
       <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-sm">
@@ -918,67 +734,68 @@ export const AiServicesPage: React.FC = () => {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
-          {/* API Connection - HEALTHY */}
-          <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200/80">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">API Connection</span>
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+        {providers.length === 0 ? (
+          <div className="py-10 flex flex-col items-center justify-center text-center">
+            <div className="p-3 rounded-full bg-slate-100 mb-3">
+              <Activity className="w-7 h-7 text-slate-300" />
             </div>
-            <p className="text-base font-bold text-emerald-900">Healthy</p>
-            <p className="text-[10px] text-emerald-700 mt-0.5">Uptime: 99.98%</p>
+            <p className="text-sm font-semibold text-slate-600">No Health Data Available</p>
+            <p className="text-xs text-slate-400 mt-1 max-w-sm">
+              Connect an AI provider to start monitoring gateway health, latency, queue depth, and error rates.
+            </p>
           </div>
-
-          {/* Model Status - HEALTHY */}
-          <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200/80">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Model Status</span>
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
+            <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200/80">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">API Connection</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+              </div>
+              <p className="text-base font-bold text-emerald-900">Healthy</p>
+              <p className="text-[10px] text-emerald-700 mt-0.5">Provider connected</p>
             </div>
-            <p className="text-base font-bold text-emerald-900">Operational</p>
-            <p className="text-[10px] text-emerald-700 mt-0.5">GPT-4o Ready</p>
-          </div>
-
-          {/* Queue Length - HEALTHY */}
-          <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200/80">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Queue Length</span>
-              <Activity className="w-4 h-4 text-emerald-600" />
+            <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200/80">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Model Status</span>
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              </div>
+              <p className="text-base font-bold text-emerald-900">Operational</p>
+              <p className="text-[10px] text-emerald-700 mt-0.5">{providers.find(p => p.isDefault)?.model || providers[0]?.model || '—'}</p>
             </div>
-            <p className="text-base font-bold text-emerald-900">0 Pending</p>
-            <p className="text-[10px] text-emerald-700 mt-0.5">Immediate Processing</p>
-          </div>
-
-          {/* Average Latency - HEALTHY */}
-          <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200/80">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Avg Latency</span>
-              <Clock className="w-4 h-4 text-emerald-600" />
+            <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200/80">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Queue Length</span>
+                <Activity className="w-4 h-4 text-emerald-600" />
+              </div>
+              <p className="text-base font-bold text-emerald-900">0 Pending</p>
+              <p className="text-[10px] text-emerald-700 mt-0.5">Immediate Processing</p>
             </div>
-            <p className="text-base font-bold text-emerald-900">185 ms</p>
-            <p className="text-[10px] text-emerald-700 mt-0.5">Target: &lt; 500 ms</p>
-          </div>
-
-          {/* Daily Token Usage - WARNING (YELLOW) */}
-          <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200/80">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800">Daily Token Usage</span>
-              <AlertTriangle className="w-4 h-4 text-amber-600" />
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">Avg Latency</span>
+                <Clock className="w-4 h-4 text-slate-400" />
+              </div>
+              <p className="text-base font-bold text-slate-500">— ms</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">Awaiting first request</p>
             </div>
-            <p className="text-base font-bold text-amber-900">72% Cap</p>
-            <p className="text-[10px] text-amber-700 mt-0.5">720k / 1M Tokens</p>
-          </div>
-
-          {/* Error Rate - HEALTHY */}
-          <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200/80">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Error Rate</span>
-              <Shield className="w-4 h-4 text-emerald-600" />
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">Daily Token Usage</span>
+                <AlertTriangle className="w-4 h-4 text-slate-400" />
+              </div>
+              <p className="text-base font-bold text-slate-500">0 Tokens</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">No usage recorded</p>
             </div>
-            <p className="text-base font-bold text-emerald-900">0.02%</p>
-            <p className="text-[10px] text-emerald-700 mt-0.5">Threshold: &lt; 1.0%</p>
+            <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200/80">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Error Rate</span>
+                <Shield className="w-4 h-4 text-emerald-600" />
+              </div>
+              <p className="text-base font-bold text-emerald-900">0.00%</p>
+              <p className="text-[10px] text-emerald-700 mt-0.5">Threshold: &lt; 1.0%</p>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* SECTION 7 — QUICK ACTIONS */}

@@ -3,9 +3,8 @@ import {
   Activity, Users, Shield,
   AlertTriangle, AlertCircle, Cpu,
   BarChart3, Download, FileText, Bell, Settings, Layers, BookOpen,
-  Server, Database, CheckCircle, RefreshCw, Wifi, WifiOff,
-  Search, ChevronLeft, ChevronRight,
-} from 'lucide-react';
+  CheckCircle, RefreshCw, Wifi, WifiOff,
+  Search, ChevronLeft, ChevronRight,} from 'lucide-react';
 import { loadAdminData, loadConfigs, updateConfig, loadIntegrations, loadBackups, loadNotifications, markNotificationRead } from '../../api/adminService';
 import { securityService } from '../../api/securityService';
 import { SubsystemHealthGrid } from './SubsystemHealthGrid';
@@ -321,18 +320,6 @@ export const BackupPage: React.FC = () => {
           </div>
         </div>
       </div>
-      <div className="glass-panel p-5">
-        <div className="flex items-center space-x-3 mb-3">
-          <Server className="w-5 h-5 text-emerald-600" />
-          <h3 className="text-sm font-bold text-slate-900">Disaster Recovery Readiness</h3>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-          <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200"><p className="font-semibold text-emerald-700">Primary DB</p><p className="text-emerald-600 mt-1">H2 In-Memory (Dev)</p></div>
-          <div className="p-3 rounded-lg bg-amber-50 border border-amber-200"><p className="font-semibold text-amber-700">Supabase</p><p className="text-amber-600 mt-1">Emergency Backup</p></div>
-          <div className="p-3 rounded-lg bg-slate-50 border border-slate-200"><p className="font-semibold text-slate-700">DR Plan</p><p className="text-slate-500 mt-1">Documentation Available</p></div>
-          <div className="p-3 rounded-lg bg-slate-50 border border-slate-200"><p className="font-semibold text-slate-700">RPO</p><p className="text-slate-500 mt-1">24 hours</p></div>
-        </div>
-      </div>
     </div>
   );
 };
@@ -478,7 +465,6 @@ export const ReportsPage: React.FC = () => {
   const reportItems = [
     { label: 'Security Report', icon: Shield, desc: `${alerts.length} alerts, ${metrics.activeAlertsCount} open`, color: 'text-rose-500', value: alerts.length },
     { label: 'Audit Report', icon: FileText, desc: `${logs.length} audit events tracked`, color: 'text-blue-500', value: logs.length },
-    { label: 'Integration Report', icon: Layers, desc: `2 subsystems connected`, color: 'text-purple-500', value: '2' },
     { label: 'AI Performance', icon: Cpu, desc: `${metrics.totalDocuments} docs, ${metrics.totalContracts} contracts`, color: 'text-emerald-600', value: metrics.totalDocuments + metrics.totalContracts },
     { label: 'Backup Report', icon: Download, desc: `${metrics.totalBackups} backup records`, color: 'text-amber-500', value: metrics.totalBackups },
     { label: 'System Health', icon: Activity, desc: `${metrics.activeSessions} active sessions`, color: 'text-emerald-600', value: metrics.activeSessions },
@@ -506,37 +492,10 @@ export const ReportsPage: React.FC = () => {
 };
 
 export const SystemHealthPage: React.FC = () => {
-  const { data, loading, error, retry } = useQuery(loadAdminData);
-  if (loading) return <LoadingSkeleton />;
-  if (error) return <ErrorState message={error} onRetry={retry} />;
-  if (!data) return null;
-
-  const services = [
-    { name: 'Application Server', status: 'operational', icon: Server },
-    { name: 'Database (H2)', status: 'operational', icon: Database },
-    { name: 'Security Service', status: 'operational', icon: Shield },
-    { name: 'WebSocket', status: 'operational', icon: Activity },
-    { name: 'Backup Service', status: data.totalBackups > 0 ? 'operational' : 'inactive', icon: Download },
-    { name: 'Notification Service', status: data.totalNotifications > 0 ? 'operational' : 'inactive', icon: Bell },
-  ];
-
   return (
     <div className="space-y-6">
       <PageHeader icon={Activity} title="System Health" subtitle="Infrastructure status overview" />
       <SubsystemHealthGrid />
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {services.map((s) => (
-          <div key={s.name} className="card-stat p-5 flex items-center space-x-4">
-            <div className={`p-3 rounded-xl ${s.status === 'operational' ? 'bg-emerald-50' : 'bg-slate-100'}`}>
-              <s.icon className={`w-6 h-6 ${s.status === 'operational' ? 'text-emerald-600' : 'text-slate-400'}`} />
-            </div>
-            <div>
-              <p className="text-sm font-bold text-slate-900">{s.name}</p>
-              <span className={`text-xs font-semibold ${s.status === 'operational' ? 'text-emerald-600' : 'text-slate-400'}`}>{s.status.toUpperCase()}</span>
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   );
 };
