@@ -10,7 +10,7 @@ import { loadAdminData, loadBackups, loadNotifications } from '../../api/adminSe
 import { kpiService } from '../../api/kpiService';
 import { securityService } from '../../api/securityService';
 import { useLiveActivities } from './useLiveActivities';
-import { KpiCardSection } from './KpiCardSection';
+import { SubsystemHealthGrid } from './SubsystemHealthGrid';
 import type { DashboardMetrics, SecurityLog, AdminNotification, BackupRecord, SystemKpi } from '../../types';
 
 const KpiCard: React.FC<{ label: string; value: string | number; icon: React.ElementType; color?: string; sub?: string; onClick?: () => void; pulse?: boolean }> = ({ label, value, icon: Icon, color, sub, onClick, pulse }) => (
@@ -137,8 +137,6 @@ export const SysAdminDashboard: React.FC = () => {
         <KpiCard label="Notifications" value={unreadNotifs} icon={Bell} color={unreadNotifs > 0 ? 'text-rose-500' : 'text-slate-400'} sub={`${notifications.length} total`} onClick={() => navigate('/admin/notifications')} />
       </div>
 
-      <KpiCardSection />
-
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="card-stat p-5">
           <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center"><Shield className="w-4 h-4 mr-2 text-rose-500" /> Recent Security Events</h3>
@@ -210,6 +208,9 @@ export const SysAdminDashboard: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* SUBSYSTEM HEALTH & AVAILABILITY MONITORING 2x2 GRID */}
+      <SubsystemHealthGrid />
 
       <div className="glass-panel p-5">
         <div className="flex items-center space-x-3 mb-5">

@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { loadAdminData, loadConfigs, updateConfig, loadIntegrations, loadBackups, loadNotifications, markNotificationRead } from '../../api/adminService';
 import { securityService } from '../../api/securityService';
+import { SubsystemHealthGrid } from './SubsystemHealthGrid';
 import type {
   SystemConfiguration, SecurityLog,
 } from '../../types';
@@ -520,8 +521,9 @@ export const SystemHealthPage: React.FC = () => {
   ];
 
   return (
-    <div>
+    <div className="space-y-6">
       <PageHeader icon={Activity} title="System Health" subtitle="Infrastructure status overview" />
+      <SubsystemHealthGrid />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {services.map((s) => (
           <div key={s.name} className="card-stat p-5 flex items-center space-x-4">
