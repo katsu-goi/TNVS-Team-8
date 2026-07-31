@@ -36,8 +36,9 @@ export const useRealtimeSyncStore = create<RealtimeSyncState>((set, get) => ({
   connectSync: () => {
     if (get().stompClient?.active) return;
 
+    const wsBase = import.meta.env.VITE_WS_BASE_URL || '';
     const client = new Client({
-      webSocketFactory: () => new SockJS('/ws-endpoint'),
+      webSocketFactory: () => new SockJS(`${wsBase}/ws-endpoint`),
       reconnectDelay: 5000,
       heartbeatIncoming: 4000,
       heartbeatOutgoing: 4000,

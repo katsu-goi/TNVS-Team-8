@@ -6,7 +6,6 @@ import {
   Server, Database, CheckCircle, RefreshCw, Wifi, WifiOff,
   Search, ChevronLeft, ChevronRight,
 } from 'lucide-react';
-import { apiClient } from '../../api/client';
 import { loadAdminData, loadConfigs, updateConfig, loadIntegrations, loadBackups, loadNotifications, markNotificationRead } from '../../api/adminService';
 import { securityService } from '../../api/securityService';
 import type {
@@ -110,70 +109,7 @@ export const IntegrationsPage: React.FC = () => {
   );
 };
 
-export const AiServicesPage: React.FC = () => {
-  const { data, loading, error, retry } = useQuery(async () => {
-    const [docRes, contractRes] = await Promise.all([
-      apiClient.get('/documents'),
-      apiClient.get('/contracts'),
-    ]);
-    const docs = docRes.data?.data ?? [];
-    const contracts = contractRes.data?.data ?? [];
-    const catCounts: Record<string, number> = {};
-    docs.forEach((d: any) => {
-      const cat = d.aiPredictedCategory || d.classificationLevel || 'Uncategorized';
-      catCounts[cat] = (catCounts[cat] || 0) + 1;
-    });
-    const riskCounts: Record<string, number> = {};
-    contracts.forEach((c: any) => {
-      const r = c.aiAssessedRiskLevel || 'UNKNOWN';
-      riskCounts[r] = (riskCounts[r] || 0) + 1;
-    });
-    return { totalDocs: docs.length, docCategories: catCounts, totalContracts: contracts.length, contractRisks: riskCounts };
-  });
-  if (loading) return <LoadingSkeleton />;
-  if (error) return <ErrorState message={error} onRetry={retry} />;
-  if (!data) return null;
-
-  return (
-    <div>
-      <PageHeader icon={Cpu} title="AI Services" subtitle="Real statistics from document classification & contract analysis" />
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="card-stat p-5">
-          <p className="text-sm font-bold text-slate-900 mb-3">Document Classification</p>
-          <p className="text-2xl font-bold text-slate-900">{data.totalDocs}</p>
-          <p className="text-xs text-slate-500 mt-1">Total documents processed</p>
-          {Object.keys(data.docCategories).length > 0 && (
-            <div className="mt-4 space-y-1.5">
-              {Object.entries(data.docCategories).map(([cat, count]) => (
-                <div key={cat} className="flex items-center justify-between text-xs">
-                  <span className="text-slate-600">{cat}</span>
-                  <span className="font-mono text-slate-900">{count}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="card-stat p-5">
-          <p className="text-sm font-bold text-slate-900 mb-3">Contract Analytics</p>
-          <p className="text-2xl font-bold text-slate-900">{data.totalContracts}</p>
-          <p className="text-xs text-slate-500 mt-1">Total contracts</p>
-          {Object.keys(data.contractRisks).length > 0 && (
-            <div className="mt-4 space-y-1.5">
-              {Object.entries(data.contractRisks).map(([risk, count]) => (
-                <div key={risk} className="flex items-center justify-between text-xs">
-                  <span className={`font-semibold ${
-                    risk === 'HIGH' ? 'text-rose-600' : risk === 'MEDIUM' ? 'text-amber-600' : 'text-emerald-600'
-                  }`}>{risk}</span>
-                  <span className="font-mono text-slate-900">{count}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
+export { AiServicesPage } from './AiServicesPage';
 
 export const SecurityCenterPage: React.FC = () => {
   const { data, loading, error, retry } = useQuery(async () => {
