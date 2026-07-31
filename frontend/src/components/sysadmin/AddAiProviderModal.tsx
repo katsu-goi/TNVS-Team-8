@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiClient } from '../../api/client';
 import {
   X, Eye, EyeOff, RefreshCw, AlertCircle, Sparkles,
   Sliders, ShieldCheck, Cpu, Key, Globe, ArrowRight
@@ -136,7 +137,7 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
     }, 800);
   };
 
-  const handleTestConnection = () => {
+  const handleTestConnection = async () => {
     if (!apiKey && !providerType.includes('Local') && !providerType.includes('LM Studio')) {
       setErrors(prev => ({ ...prev, apiKey: 'API Key is required to test remote provider connection.' }));
       setTestStatus('error');
@@ -145,13 +146,18 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
     setErrors(prev => ({ ...prev, apiKey: undefined }));
     setTestStatus('testing');
 
-    setTimeout(() => {
-      if (apiKey.includes('invalid') || (apiKey === '' && !providerType.includes('Local') && !providerType.includes('LM Studio'))) {
-        setTestStatus('error');
-      } else {
-        setTestStatus('success');
-      }
-    }, 1200);
+    try {
+      await apiClient.post('/ai/test-connection', {
+        provider: providerType,
+        model,
+        baseUrl,
+        endpoint,
+        apiKey,
+      });
+      setTestStatus('success');
+    } catch {
+      setTestStatus('error');
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -554,7 +560,7 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
               </div>
 
               <span className="text-[11px] text-slate-400 font-mono">
-                {testStatus === 'success' ? 'Latency: 142 ms' : 'Status: Ready'}
+                {testStatus === 'success' ? 'Connection verified' : 'Status: Ready'}
               </span>
             </div>
           </div>

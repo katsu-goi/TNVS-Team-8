@@ -3,20 +3,20 @@ import type { SystemKpi } from '../types';
 
 export const kpiService = {
   async loadKpi(): Promise<SystemKpi> {
-    const defaultKpi: SystemKpi = {
-      facilities: { totalFacilities: 12, totalRooms: 48, activeRooms: 42, bookingsToday: 18, pendingApprovals: 3, checkedIn: 12 },
-      visitors: { totalVisitors: 890, onSite: 24, checkedIn: 24, registered: 890, checkedOut: 866 },
-      documents: { totalDocuments: 1420, archived: 310, approved: 980, pendingReview: 85, draft: 45 },
-      records: { totalPolicies: 24, activePolicies: 22 },
-      legal: { totalCases: 42, open: 12, inProgress: 18, pendingHearing: 5, closed: 7 },
-      contracts: { totalContracts: 385, active: 310, underReview: 45, draft: 15, expired: 10, pendingApproval: 5, totalContractValue: 24500000 },
-      global: { activeUsers: 14, activeSessions: 14, failedLoginAttempts: 0, blockedIps: 2, activeAlerts: 0, unreadNotifications: 2 },
+    const emptyKpi: SystemKpi = {
+      facilities: { totalFacilities: 0, totalRooms: 0, activeRooms: 0, bookingsToday: 0, pendingApprovals: 0, checkedIn: 0 },
+      visitors: { totalVisitors: 0, onSite: 0, checkedIn: 0, registered: 0, checkedOut: 0 },
+      documents: { totalDocuments: 0, archived: 0, approved: 0, pendingReview: 0, draft: 0 },
+      records: { totalPolicies: 0, activePolicies: 0 },
+      legal: { totalCases: 0, open: 0, inProgress: 0, pendingHearing: 0, closed: 0 },
+      contracts: { totalContracts: 0, active: 0, underReview: 0, draft: 0, expired: 0, pendingApproval: 0, totalContractValue: 0 },
+      global: { activeUsers: 0, activeSessions: 0, failedLoginAttempts: 0, blockedIps: 0, activeAlerts: 0, unreadNotifications: 0 },
     };
     try {
       const { data } = await apiClient.get('/admin/kpi');
-      return data?.data ?? defaultKpi;
+      return data?.data ?? emptyKpi;
     } catch {
-      return defaultKpi;
+      return emptyKpi;
     }
   },
 };

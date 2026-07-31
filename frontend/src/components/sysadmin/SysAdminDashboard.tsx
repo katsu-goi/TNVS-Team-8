@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Server, Database, Activity, Users, Shield,
+  Database, Activity, Users, Shield,
   RefreshCw, AlertCircle, Cpu,
   Download, Bell, Layers,
   ChevronRight, Loader2,
@@ -64,17 +64,8 @@ export const SysAdminDashboard: React.FC = () => {
       setBackups(b);
       setNotifications(n);
     } catch (err: any) {
-      console.warn('Backend connection issue, displaying fallback system metrics:', err);
-      setMetrics({
-        totalDocuments: 1420,
-        totalContracts: 385,
-        activeSessions: 14,
-        failedLoginAttempts: 0,
-        blockedIpsCount: 2,
-        activeAlertsCount: 0,
-        totalBackups: 3,
-        totalNotifications: 2,
-      });
+      console.warn('Backend connection issue:', err);
+      setError(err?.message || 'Failed to load system data');
     } finally {
       setLoading(false);
     }
@@ -126,10 +117,6 @@ export const SysAdminDashboard: React.FC = () => {
           <p className="text-slate-500 text-sm mt-1">Infrastructure, Integration & Platform Monitoring</p>
         </div>
         <div className="flex items-center space-x-3">
-          <div className="flex items-center px-3 py-1.5 rounded-lg border bg-emerald-50 border-emerald-200">
-            <Activity className="w-4 h-4 mr-2 text-emerald-600" />
-            <span className="text-xs font-mono font-semibold text-emerald-600">ONLINE</span>
-          </div>
           <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition text-slate-400 hover:text-slate-700" title="Refresh from database">
             <RefreshCw className="w-4 h-4" />
           </button>
@@ -137,7 +124,6 @@ export const SysAdminDashboard: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <KpiCard label="System Status" value="Online" icon={Server} color="text-emerald-600" sub="Application server operational" onClick={() => navigate('/admin/reports')} />
         <KpiCard label="Connected Subsystems" value={kpi ? `${[kpi.facilities.totalFacilities, kpi.visitors.totalVisitors, kpi.documents.totalDocuments, kpi.legal.totalCases, kpi.contracts.totalContracts].filter(v => v > 0).length}` : '0'} icon={Layers} color="text-blue-500" sub="Modules with data" onClick={() => navigate('/admin/integrations')} />
         <KpiCard label="Active Users" value={onlineCount} icon={Users} color={onlineCount > 0 ? 'text-emerald-600' : 'text-slate-400'} sub={`${onlineCount} users online · Peak today: ${peakToday}`} onClick={() => navigate('/security')} pulse />
         <KpiCard label="AI Services" value={`${metrics.totalDocuments} docs`} icon={Cpu} color={metrics.totalDocuments > 0 ? 'text-emerald-600' : 'text-slate-400'} sub={`${metrics.totalContracts} contracts`} onClick={() => navigate('/admin/ai-services')} />
