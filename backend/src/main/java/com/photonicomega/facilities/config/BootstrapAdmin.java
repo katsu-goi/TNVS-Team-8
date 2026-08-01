@@ -25,6 +25,14 @@ import com.photonicomega.facilities.module.legal.domain.CaseType;
 import com.photonicomega.facilities.module.legal.domain.LegalCase;
 import com.photonicomega.facilities.module.legal.repository.LegalCaseRepository;
 import com.photonicomega.facilities.module.legal.service.LegalService;
+import com.photonicomega.facilities.module.procurement.domain.ObligationStatus;
+import com.photonicomega.facilities.module.procurement.domain.Vendor;
+import com.photonicomega.facilities.module.procurement.domain.VendorCategory;
+import com.photonicomega.facilities.module.procurement.domain.VendorObligation;
+import com.photonicomega.facilities.module.procurement.domain.VendorStatus;
+import com.photonicomega.facilities.module.procurement.repository.VendorObligationRepository;
+import com.photonicomega.facilities.module.procurement.repository.VendorRepository;
+import com.photonicomega.facilities.module.procurement.service.ProcurementService;
 import com.photonicomega.facilities.module.records.domain.PolicyAction;
 import com.photonicomega.facilities.module.records.domain.RetentionPolicy;
 import com.photonicomega.facilities.module.records.repository.RetentionPolicyRepository;
@@ -53,6 +61,9 @@ public class BootstrapAdmin implements CommandLineRunner {
     private final ComplianceService complianceService;
     private final LegalCaseRepository legalCaseRepository;
     private final LegalService legalService;
+    private final VendorRepository vendorRepository;
+    private final VendorObligationRepository vendorObligationRepository;
+    private final ProcurementService procurementService;
 
     @Override
     public void run(String... args) {
@@ -63,6 +74,8 @@ public class BootstrapAdmin implements CommandLineRunner {
         seedComplianceSampleData();
         seedLegalOfficer();
         seedLegalSampleData();
+        seedContractOfficer();
+        seedProcurementSampleData();
     }
 
     private void seedAdmin() {
@@ -415,5 +428,136 @@ public class BootstrapAdmin implements CommandLineRunner {
 
         legalService.generateNotices();
         log.info("Legal notices seeded.");
+    }
+
+    private void seedContractOfficer() {
+        if (userRepository.findByEmailAndDeletedFalse("contract@photonicomega.com").isPresent()) {
+            return;
+        }
+        log.info("Creating bootstrap contract officer user...");
+
+        Permission contractPermission = Permission.builder()
+                .name("CONTRACT_OPERATIONS")
+                .displayName("Contract Operations")
+                .description("Grants access to contract, vendor, and procurement modules")
+                .module("PROCUREMENT")
+                .resource("*")
+                .action(PermissionAction.MANAGE)
+                .build();
+
+        Role contractRole = Role.builder()
+                .name("CONTRACT_OFFICER")
+                .displayName("Contract Officer")
+                .description("Contract/procurement officer with contract lifecycle and vendor management access")
+                .systemRole(true)
+                .permissions(Set.of(contractPermission))
+                .build();
+
+        userRepository.save(User.builder()
+                .email("contract@photonicomega.com")
+                .passwordHash(passwordEncoder.encode("Contract2026!"))
+                .firstName("Contract")
+                .lastName("Officer")
+                .employeeId("CTO-001")
+                .department("Procurement")
+                .position("Contract Officer")
+                .status(UserStatus.ACTIVE)
+                .emailVerified(true)
+                .roles(Set.of(contractRole))
+                .build());
+
+        log.info("Bootstrap contract officer user created.");
+    }
+
+    /**
+     * Seeds sample vendors + obligations, back-fills {@code Contract.vendorId}
+     * by matching the compliance-seeded contract counterParties to vendor names,
+     * then generates the initial procurement notices so the Contract Officer
+     * dashboard shows live data on a fresh (H2 test-profile) database.
+     * Idempotent: skips if any vendors already exist.
+     */
+    private void seedProcurementSampleData() {
+        if (vendorRepository.count() > 0) {
+            return;
+        }
+        log.info("Seeding procurement sample data (vendors, obligations)...");
+        LocalDate today = LocalDate.now();
+
+        Vendor skyline = vendorRepository.save(Vendor.builder()
+                .vendorCode("VND-0001").name("Skyline Properties Ltd")
+                .category(VendorCategory.FACILITIES).status(VendorStatus.ACTIVE)
+                .contactName("Adwoa Boateng").contactEmail("leasing@skylineproperties.com")
+                .contactPhone("+233 30 111 2233").address("12 Tower Road, Accra")
+                .performanceScore(88).slaComplianceRate(new BigDecimal("96.5"))
+                .notes("Landlord for Tower A; reliable, timely maintenance response.")
+                .build());
+
+        Vendor brightClean = vendorRepository.save(Vendor.builder()
+                .vendorCode("VND-0002").name("BrightClean Co")
+                .category(VendorCategory.MAINTENANCE).status(VendorStatus.ACTIVE)
+                .contactName("Kofi Asare").contactEmail("ops@brightclean.com")
+                .contactPhone("+233 30 222 3344").address("5 Industrial Ave, Tema")
+                .performanceScore(74).slaComplianceRate(new BigDecimal("91.0"))
+                .notes("Daily cleaning services; occasional missed weekend shifts.")
+                .build());
+
+        Vendor dataViz = vendorRepository.save(Vendor.builder()
+                .vendorCode("VND-0003").name("DataViz Inc")
+                .category(VendorCategory.IT_SERVICES).status(VendorStatus.PENDING_APPROVAL)
+                .contactName("Sarah Lin").contactEmail("contracts@dataviz.io")
+                .contactPhone("+1 415 555 0100").address("880 Market St, San Francisco")
+                .performanceScore(58).slaComplianceRate(new BigDecimal("82.0"))
+                .notes("Analytics suite vendor; SLA compliance below threshold, under review.")
+                .build());
+
+        Vendor secureForce = vendorRepository.save(Vendor.builder()
+                .vendorCode("VND-0004").name("SecureForce Ltd")
+                .category(VendorCategory.PROFESSIONAL_SERVICES).status(VendorStatus.SUSPENDED)
+                .contactName("Daniel Owusu").contactEmail("accounts@secureforce.com")
+                .contactPhone("+233 30 333 4455").address("40 Ring Road, Accra")
+                .performanceScore(45).slaComplianceRate(new BigDecimal("70.0"))
+                .notes("Security guard services; contract expired with coverage gap, performance poor.")
+                .build());
+
+        // Back-fill vendorId on the compliance-seeded contracts by matching
+        // counterParty to the vendor name.
+        List<Vendor> vendors = List.of(skyline, brightClean, dataViz, secureForce);
+        contractRepository.findAll().forEach(contract -> vendors.stream()
+                .filter(v -> v.getName().equalsIgnoreCase(contract.getCounterParty()))
+                .findFirst()
+                .ifPresent(v -> {
+                    contract.setVendorId(v.getId());
+                    contractRepository.save(contract);
+                }));
+
+        vendorObligationRepository.saveAll(List.of(
+                VendorObligation.builder()
+                        .vendor(skyline).title("Quarterly HVAC servicing report")
+                        .description("Submit HVAC maintenance report for Tower A.")
+                        .dueDate(today.plusDays(9)).status(ObligationStatus.PENDING)
+                        .build(),
+                VendorObligation.builder()
+                        .vendor(brightClean).title("Monthly cleaning quality audit")
+                        .description("Provide signed cleaning quality audit for the prior month.")
+                        .dueDate(today.minusDays(5)).status(ObligationStatus.IN_PROGRESS)
+                        .notes("Overdue; awaiting audit sign-off.")
+                        .build(),
+                VendorObligation.builder()
+                        .vendor(dataViz).title("SLA remediation plan")
+                        .description("Deliver a remediation plan to restore SLA compliance above 90%.")
+                        .dueDate(today.plusDays(3)).status(ObligationStatus.PENDING)
+                        .build(),
+                VendorObligation.builder()
+                        .vendor(secureForce).title("Handover of access credentials")
+                        .description("Return all site access credentials following suspension.")
+                        .dueDate(today.minusDays(20)).status(ObligationStatus.OVERDUE)
+                        .notes("Well past due; escalate.")
+                        .build()
+        ));
+
+        log.info("Procurement sample data seeded.");
+
+        procurementService.generateNotices();
+        log.info("Procurement notices seeded.");
     }
 }

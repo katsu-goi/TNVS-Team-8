@@ -73,6 +73,7 @@ public class SecurityConfig {
                     .requestMatchers("/v1/facilities-officer/**").hasRole("FACILITIES_OFFICER")
                     .requestMatchers("/v1/compliance/**").hasRole("COMPLIANCE_OFFICER")
                     .requestMatchers("/v1/legal/**").hasRole("LEGAL_OFFICER")
+                    .requestMatchers("/v1/procurement/**").hasRole("CONTRACT_OFFICER")
                     .anyRequest().authenticated())
             .authenticationProvider(authenticationProvider())
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);

@@ -147,6 +147,16 @@ export const LoginPage: React.FC = () => {
                 >
                   Quick Legal Officer Login
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmail('contract@photonicomega.com');
+                    setPassword('Contract2026!');
+                  }}
+                  className="w-full text-center text-xs text-white/40 hover:text-[#00E676] transition-colors"
+                >
+                  Quick Contract Officer Login
+                </button>
               </div>
           </div>
         </div>

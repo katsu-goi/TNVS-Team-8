@@ -22,6 +22,10 @@ public interface ContractRepository extends JpaRepository<Contract, UUID> {
 
     List<Contract> findByType(ContractType type);
 
+    List<Contract> findByVendorId(UUID vendorId);
+
+    long countByVendorId(UUID vendorId);
+
     @Query("SELECT c FROM Contract c WHERE c.endDate <= :date AND c.status = 'ACTIVE'")
     List<Contract> findExpiringContractsBefore(LocalDate date);
 }

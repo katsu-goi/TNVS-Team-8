@@ -9,6 +9,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 @Entity
 @Table(name = "contracts")
@@ -31,6 +32,11 @@ public class Contract extends BaseEntity {
 
     private String counterParty;
     private BigDecimal contractValue;
+
+    // Optional link to a procurement Vendor. Stored as a plain column (not a JPA
+    // association) so the shared contracts module keeps no dependency on the
+    // procurement module. Nullable — legacy/legal contracts leave it unset.
+    private UUID vendorId;
 
     private LocalDate startDate;
     private LocalDate endDate;
