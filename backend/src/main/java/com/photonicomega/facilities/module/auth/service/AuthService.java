@@ -37,6 +37,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JavaMailSender mailSender;
     private final AuditService auditService;
+    private final com.photonicomega.facilities.module.security.service.UserActivityService userActivityService;
 
     @Value("${app.security.password-reset-expiry-minutes:30}")
     private int passwordResetExpiryMinutes;
@@ -81,6 +82,8 @@ public class AuthService {
 
         auditService.log(user, "LOGIN_SUCCESS", "AUTH", null, null,
                 "User logged in successfully", ipAddress);
+
+        userActivityService.registerSession(user, ipAddress, userAgent);
 
         return AuthTokenResponse.builder()
                 .accessToken(accessToken)
@@ -132,11 +135,16 @@ public class AuthService {
                 .build();
     }
 
-    public void logout(UUID userId, String refreshTokenStr) {
-        refreshTokenRepository.revokeAllUserTokens(userId);
-        User user = userRepository.findById(userId).orElse(null);
-        auditService.log(user, "LOGOUT", "AUTH", null, null,
-                "User logged out", null);
+    public void logout(String username, String refreshTokenStr) {
+        User user = (username != null && !username.isBlank())
+                ? userRepository.findByEmailAndDeletedFalse(username).orElse(null)
+                : null;
+        if (user != null) {
+            refreshTokenRepository.revokeAllUserTokens(user.getId());
+            userActivityService.markOffline(user);
+            auditService.log(user, "LOGOUT", "AUTH", null, null,
+                    "User logged out", null);
+        }
     }
 
     public void requestPasswordReset(ForgotPasswordRequest request, String ipAddress) {

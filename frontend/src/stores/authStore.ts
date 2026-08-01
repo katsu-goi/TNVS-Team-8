@@ -11,8 +11,9 @@ interface AuthState {
 
 export function getDashboardPath(user: User | null): string {
   if (!user?.roles) return '/';
-  if (user.roles.includes('FACILITIES_MANAGER')) return '/facilities';
-  if (user.roles.includes('FACILITIES_OFFICER')) return '/facilities-officer';
+  const roles = user.roles.map(r => r.toUpperCase());
+  if (roles.includes('FACILITIES_MANAGER') || roles.includes('ROLE_FACILITIES_MANAGER')) return '/facilities';
+  if (roles.includes('FACILITIES_OFFICER') || roles.includes('ROLE_FACILITIES_OFFICER')) return '/facilities-officer';
   return '/';
 }
 

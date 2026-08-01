@@ -181,7 +181,7 @@ export const SysAdminDashboard: React.FC = () => {
               {activities.map((a) => {
                 const secs = Math.floor((Date.now() - a.timestamp.getTime()) / 1000);
                 const rel = secs < 3 ? 'Just now' : secs < 60 ? `${secs}s ago` : `${Math.floor(secs / 60)}m ago`;
-                const isAdmin = a.user.role === 'Admin';
+                const isAdmin = /ADMIN/i.test(a.user.role);
                 return (
                   <div key={a.id} className={`flex items-start space-x-3 py-2.5 px-3 rounded-xl transition-all duration-500 ${a.isNew ? 'bg-emerald-500/10' : 'hover:bg-slate-50'}`}>
                     <span className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${isAdmin ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-600'}`}>{a.user.initials}</span>

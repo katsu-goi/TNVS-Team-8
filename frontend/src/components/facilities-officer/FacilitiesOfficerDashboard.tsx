@@ -37,6 +37,8 @@ const PIE_COLORS = ['#10B981', '#F59E0B', '#EF4444', '#6B7280', '#3B82F6'];
 
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 
+import { safeFetchJson } from '../../api/client';
+
 export const FacilitiesOfficerDashboard: React.FC = () => {
   const navigate = useNavigate();
   const [data, setData] = useState<any>(null);
@@ -48,8 +50,7 @@ export const FacilitiesOfficerDashboard: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/v1/facilities-officer/dashboard/summary');
-      const json = await res.json();
+      const json = await safeFetchJson('/api/v1/facilities-officer/dashboard/summary');
       setData(json?.data ?? {});
     } catch (err: any) {
       setError(err?.message || 'Failed to load dashboard');

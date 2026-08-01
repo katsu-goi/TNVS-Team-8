@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.*;
 public class AuthController {
 
     private final AuthService authService;
+    private final com.photonicomega.facilities.module.security.service.UserActivityService userActivityService;
 
     @PostMapping("/login")
     @Operation(summary = "Login", description = "Authenticate with email and password, returns JWT tokens")
@@ -47,8 +48,24 @@ public class AuthController {
     public ResponseEntity<ApiResponse<Void>> logout(
             @AuthenticationPrincipal UserDetails userDetails,
             @RequestBody(required = false) RefreshTokenRequest request) {
-        authService.logout(null, request != null ? request.getRefreshToken() : null);
+        authService.logout(
+                userDetails != null ? userDetails.getUsername() : null,
+                request != null ? request.getRefreshToken() : null);
         return ResponseEntity.ok(ApiResponse.success("Logged out successfully"));
+    }
+
+    @PostMapping("/heartbeat")
+    @Operation(summary = "Record user activity heartbeat", description = "Updates the active session last-activity timestamp and broadcasts online status in realtime")
+    public ResponseEntity<ApiResponse<Void>> heartbeat(
+            @AuthenticationPrincipal UserDetails userDetails,
+            HttpServletRequest httpRequest) {
+        if (userDetails != null) {
+            userActivityService.heartbeat(
+                    userDetails.getUsername(),
+                    getClientIp(httpRequest),
+                    httpRequest.getHeader("User-Agent"));
+        }
+        return ResponseEntity.ok(ApiResponse.success("Heartbeat recorded"));
     }
 
     @PostMapping("/forgot-password")
