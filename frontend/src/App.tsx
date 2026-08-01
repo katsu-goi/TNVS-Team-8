@@ -39,6 +39,18 @@ import {
   FoProfilePage,
   FoSettingsPage,
 } from './components/facilities-officer/FacilitiesOfficerPages';
+import { ComplianceOfficerLayout } from './components/compliance/ComplianceOfficerLayout';
+import { ComplianceOfficerDashboard } from './components/compliance/ComplianceOfficerDashboard';
+import {
+  CoDocumentsPage,
+  CoContractsPage,
+  CoRetentionPoliciesPage,
+  CoDisposalApprovalsPage,
+  CoComplianceAlertsPage,
+  CoAuditLogsPage,
+  CoProfilePage,
+  CoSettingsPage,
+} from './components/compliance/ComplianceOfficerPages';
 import { useAuthStore } from './stores/authStore';
 
 class ErrorBoundary extends React.Component<
@@ -94,6 +106,15 @@ const FacilitiesOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ child
   if (!accessToken) return <Navigate to="/login" replace />;
   const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
   if (!roles.includes('FACILITIES_OFFICER') && !roles.includes('ROLE_FACILITIES_OFFICER')) return <Navigate to="/" replace />;
+  return <>{children}</>;
+};
+
+const ComplianceOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const user = useAuthStore((s) => s.user);
+  if (!accessToken) return <Navigate to="/login" replace />;
+  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
+  if (!roles.includes('COMPLIANCE_OFFICER') && !roles.includes('ROLE_COMPLIANCE_OFFICER')) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
 
@@ -160,6 +181,23 @@ export const App: React.FC = () => {
           <Route path="facilities-officer/notifications" element={<FoNotificationsPage />} />
           <Route path="facilities-officer/profile" element={<FoProfilePage />} />
           <Route path="facilities-officer/settings" element={<FoSettingsPage />} />
+        </Route>
+
+        {/* Compliance Officer routes */}
+        <Route element={
+          <ComplianceOfficerRoute>
+            <ComplianceOfficerLayout />
+          </ComplianceOfficerRoute>
+        }>
+          <Route path="compliance" element={<ComplianceOfficerDashboard />} />
+          <Route path="compliance/documents" element={<CoDocumentsPage />} />
+          <Route path="compliance/contracts" element={<CoContractsPage />} />
+          <Route path="compliance/alerts" element={<CoComplianceAlertsPage />} />
+          <Route path="compliance/retention-policies" element={<CoRetentionPoliciesPage />} />
+          <Route path="compliance/disposals" element={<CoDisposalApprovalsPage />} />
+          <Route path="compliance/audit-logs" element={<CoAuditLogsPage />} />
+          <Route path="compliance/profile" element={<CoProfilePage />} />
+          <Route path="compliance/settings" element={<CoSettingsPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
