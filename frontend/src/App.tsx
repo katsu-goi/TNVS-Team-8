@@ -51,6 +51,18 @@ import {
   CoProfilePage,
   CoSettingsPage,
 } from './components/compliance/ComplianceOfficerPages';
+import { LegalOfficerLayout } from './components/legal/LegalOfficerLayout';
+import { LegalOfficerDashboard } from './components/legal/LegalOfficerDashboard';
+import {
+  LoContractsPage,
+  LoLegalCasesPage,
+  LoLegalNoticesPage,
+  LoDocumentsPage,
+  LoRetentionPage,
+  LoAuditLogsPage,
+  LoProfilePage,
+  LoSettingsPage,
+} from './components/legal/LegalOfficerPages';
 import { useAuthStore } from './stores/authStore';
 
 class ErrorBoundary extends React.Component<
@@ -115,6 +127,15 @@ const ComplianceOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ child
   if (!accessToken) return <Navigate to="/login" replace />;
   const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
   if (!roles.includes('COMPLIANCE_OFFICER') && !roles.includes('ROLE_COMPLIANCE_OFFICER')) return <Navigate to="/" replace />;
+  return <>{children}</>;
+};
+
+const LegalOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const user = useAuthStore((s) => s.user);
+  if (!accessToken) return <Navigate to="/login" replace />;
+  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
+  if (!roles.includes('LEGAL_OFFICER') && !roles.includes('ROLE_LEGAL_OFFICER')) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
 
@@ -198,6 +219,23 @@ export const App: React.FC = () => {
           <Route path="compliance/audit-logs" element={<CoAuditLogsPage />} />
           <Route path="compliance/profile" element={<CoProfilePage />} />
           <Route path="compliance/settings" element={<CoSettingsPage />} />
+        </Route>
+
+        {/* Legal Officer routes */}
+        <Route element={
+          <LegalOfficerRoute>
+            <LegalOfficerLayout />
+          </LegalOfficerRoute>
+        }>
+          <Route path="legal" element={<LegalOfficerDashboard />} />
+          <Route path="legal/contracts" element={<LoContractsPage />} />
+          <Route path="legal/cases" element={<LoLegalCasesPage />} />
+          <Route path="legal/notices" element={<LoLegalNoticesPage />} />
+          <Route path="legal/documents" element={<LoDocumentsPage />} />
+          <Route path="legal/retention-policies" element={<LoRetentionPage />} />
+          <Route path="legal/audit-logs" element={<LoAuditLogsPage />} />
+          <Route path="legal/profile" element={<LoProfilePage />} />
+          <Route path="legal/settings" element={<LoSettingsPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
