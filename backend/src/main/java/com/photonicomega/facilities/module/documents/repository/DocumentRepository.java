@@ -19,6 +19,7 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
     List<Document> findByStatus(DocumentStatus status);
     long countByStatus(DocumentStatus status);
     List<Document> findByClassificationLevel(ClassificationLevel level);
+    List<Document> findByCreatedByAndDeletedFalseOrderByCreatedAtDesc(String createdBy);
 
     @Query("""
         SELECT d FROM Document d

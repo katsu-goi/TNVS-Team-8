@@ -75,6 +75,17 @@ import {
   PoProfilePage,
   PoSettingsPage,
 } from './components/procurement/ProcurementOfficerPages';
+import { EmployeeLayout } from './components/employee/EmployeeLayout';
+import { EmployeeDashboard } from './components/employee/EmployeeDashboard';
+import {
+  EmpReservationsPage,
+  EmpVisitorsPage,
+  EmpDocumentsPage,
+  EmpRequestsPage,
+  EmpNotificationsPage,
+  EmpProfilePage,
+  EmpSettingsPage,
+} from './components/employee/EmployeePages';
 import { useAuthStore } from './stores/authStore';
 
 class ErrorBoundary extends React.Component<
@@ -157,6 +168,15 @@ const ContractOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ childre
   if (!accessToken) return <Navigate to="/login" replace />;
   const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
   if (!roles.includes('CONTRACT_OFFICER') && !roles.includes('ROLE_CONTRACT_OFFICER')) return <Navigate to="/" replace />;
+  return <>{children}</>;
+};
+
+const EmployeeRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const user = useAuthStore((s) => s.user);
+  if (!accessToken) return <Navigate to="/login" replace />;
+  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
+  if (!roles.includes('EMPLOYEE') && !roles.includes('ROLE_EMPLOYEE')) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
 
@@ -274,6 +294,22 @@ export const App: React.FC = () => {
           <Route path="procurement/audit-logs" element={<PoAuditLogsPage />} />
           <Route path="procurement/profile" element={<PoProfilePage />} />
           <Route path="procurement/settings" element={<PoSettingsPage />} />
+        </Route>
+
+        {/* Employee routes */}
+        <Route element={
+          <EmployeeRoute>
+            <EmployeeLayout />
+          </EmployeeRoute>
+        }>
+          <Route path="employee" element={<EmployeeDashboard />} />
+          <Route path="employee/reservations" element={<EmpReservationsPage />} />
+          <Route path="employee/visitors" element={<EmpVisitorsPage />} />
+          <Route path="employee/documents" element={<EmpDocumentsPage />} />
+          <Route path="employee/requests" element={<EmpRequestsPage />} />
+          <Route path="employee/notifications" element={<EmpNotificationsPage />} />
+          <Route path="employee/profile" element={<EmpProfilePage />} />
+          <Route path="employee/settings" element={<EmpSettingsPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

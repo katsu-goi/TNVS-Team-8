@@ -19,6 +19,10 @@ import com.photonicomega.facilities.module.documents.domain.ClassificationLevel;
 import com.photonicomega.facilities.module.documents.domain.Document;
 import com.photonicomega.facilities.module.documents.domain.DocumentStatus;
 import com.photonicomega.facilities.module.documents.repository.DocumentRepository;
+import com.photonicomega.facilities.module.employee.domain.NotificationType;
+import com.photonicomega.facilities.module.employee.domain.RequestType;
+import com.photonicomega.facilities.module.employee.repository.EmployeeNotificationRepository;
+import com.photonicomega.facilities.module.employee.repository.EmployeeRequestRepository;
 import com.photonicomega.facilities.module.legal.domain.CasePriority;
 import com.photonicomega.facilities.module.legal.domain.CaseStatus;
 import com.photonicomega.facilities.module.legal.domain.CaseType;
@@ -64,6 +68,12 @@ public class BootstrapAdmin implements CommandLineRunner {
     private final VendorRepository vendorRepository;
     private final VendorObligationRepository vendorObligationRepository;
     private final ProcurementService procurementService;
+    private final com.photonicomega.facilities.module.facilities.repository.FacilityRepository facilityRepository;
+    private final com.photonicomega.facilities.module.facilities.repository.RoomRepository roomRepository;
+    private final com.photonicomega.facilities.module.facilities.repository.ReservationRepository reservationRepository;
+    private final com.photonicomega.facilities.module.visitor.repository.VisitorRepository visitorRepository;
+    private final EmployeeRequestRepository employeeRequestRepository;
+    private final EmployeeNotificationRepository employeeNotificationRepository;
 
     @Override
     public void run(String... args) {
@@ -76,6 +86,8 @@ public class BootstrapAdmin implements CommandLineRunner {
         seedLegalSampleData();
         seedContractOfficer();
         seedProcurementSampleData();
+        seedEmployee();
+        seedEmployeeSampleData();
     }
 
     private void seedAdmin() {
@@ -559,5 +571,181 @@ public class BootstrapAdmin implements CommandLineRunner {
 
         procurementService.generateNotices();
         log.info("Procurement notices seeded.");
+    }
+
+    private void seedEmployee() {
+        if (userRepository.findByEmailAndDeletedFalse("employee@photonicomega.com").isPresent()) {
+            return;
+        }
+        log.info("Creating bootstrap employee user...");
+
+        Permission employeePermission = Permission.builder()
+                .name("EMPLOYEE_OPERATIONS")
+                .displayName("Employee Operations")
+                .description("Grants self-service access to reservations, visitors, documents, and requests")
+                .module("EMPLOYEE")
+                .resource("*")
+                .action(PermissionAction.MANAGE)
+                .build();
+
+        Role employeeRole = Role.builder()
+                .name("EMPLOYEE")
+                .displayName("Employee")
+                .description("Self-service employee/requester with owner-scoped access to their own records")
+                .systemRole(true)
+                .permissions(Set.of(employeePermission))
+                .build();
+
+        userRepository.save(User.builder()
+                .email("employee@photonicomega.com")
+                .passwordHash(passwordEncoder.encode("Employee2026!"))
+                .firstName("General")
+                .lastName("Employee")
+                .employeeId("EMP-001")
+                .department("General")
+                .position("Employee")
+                .status(UserStatus.ACTIVE)
+                .emailVerified(true)
+                .roles(Set.of(employeeRole))
+                .build());
+
+        log.info("Bootstrap employee user created.");
+    }
+
+    /**
+     * Seeds owner-scoped sample data for {@code employee@photonicomega.com} so the
+     * Employee dashboard shows live data on a fresh (H2 test-profile) database:
+     * a dedicated facility + room, a few reservations (mixed statuses), visitors,
+     * a document, contract/legal requests, and notifications. Idempotent: skips
+     * if any employee requests already exist.
+     */
+    private void seedEmployeeSampleData() {
+        if (employeeRequestRepository.count() > 0) {
+            return;
+        }
+        User employee = userRepository.findByEmailAndDeletedFalse("employee@photonicomega.com").orElse(null);
+        if (employee == null) {
+            return;
+        }
+        log.info("Seeding employee sample data (reservations, visitors, documents, requests, notifications)...");
+
+        LocalDate today = LocalDate.now();
+
+        // A dedicated facility + bookable room so reservations resolve a real room.
+        com.photonicomega.facilities.module.facilities.domain.Facility facility =
+                facilityRepository.save(com.photonicomega.facilities.module.facilities.domain.Facility.builder()
+                        .name("Green GSM Head Office")
+                        .code("HQ-EMP")
+                        .type(com.photonicomega.facilities.module.facilities.domain.FacilityType.HEADQUARTERS)
+                        .address("1 Innovation Way, Accra").city("Accra").country("Ghana")
+                        .timezone("Africa/Accra").totalCapacity(120).active(true)
+                        .build());
+
+        com.photonicomega.facilities.module.facilities.domain.Room room =
+                roomRepository.save(com.photonicomega.facilities.module.facilities.domain.Room.builder()
+                        .facility(facility).roomNumber("R-201").name("Collaboration Room 201")
+                        .type(com.photonicomega.facilities.module.facilities.domain.RoomType.MEETING_ROOM)
+                        .floorNumber(2).building("Main").capacity(12)
+                        .openTime(java.time.LocalTime.of(7, 0)).closeTime(java.time.LocalTime.of(20, 0))
+                        .status(com.photonicomega.facilities.module.facilities.domain.RoomStatus.VACANT)
+                        .hasProjector(true).hasVideoConference(true).hasWhiteboard(true)
+                        .active(true)
+                        .build());
+
+        reservationRepository.saveAll(List.of(
+                com.photonicomega.facilities.module.facilities.domain.Reservation.builder()
+                        .room(room).reservedBy(employee).title("Team Sync")
+                        .description("Weekly team sync-up.")
+                        .startTime(today.plusDays(2).atTime(10, 0)).endTime(today.plusDays(2).atTime(11, 0))
+                        .status(com.photonicomega.facilities.module.facilities.domain.ReservationStatus.APPROVED)
+                        .expectedAttendees(8).build(),
+                com.photonicomega.facilities.module.facilities.domain.Reservation.builder()
+                        .room(room).reservedBy(employee).title("Project Kickoff")
+                        .description("Kickoff meeting for the Q3 initiative.")
+                        .startTime(today.plusDays(5).atTime(14, 0)).endTime(today.plusDays(5).atTime(15, 30))
+                        .status(com.photonicomega.facilities.module.facilities.domain.ReservationStatus.PENDING)
+                        .expectedAttendees(10).build(),
+                com.photonicomega.facilities.module.facilities.domain.Reservation.builder()
+                        .room(room).reservedBy(employee).title("1:1 Review")
+                        .description("Requested outside operating hours.")
+                        .startTime(today.plusDays(1).atTime(9, 0)).endTime(today.plusDays(1).atTime(9, 30))
+                        .status(com.photonicomega.facilities.module.facilities.domain.ReservationStatus.REJECTED)
+                        .rejectionReason("Room unavailable at requested time.")
+                        .expectedAttendees(2).build()
+        ));
+
+        visitorRepository.saveAll(List.of(
+                com.photonicomega.facilities.module.visitor.domain.Visitor.builder()
+                        .fullName("Ama Serwaa").email("ama.serwaa@partner.com")
+                        .phoneNumber("+233 24 555 0111").company("Partner Logistics")
+                        .host(employee).purposeOfVisit("Contract handover meeting")
+                        .expectedArrival(today.plusDays(1).atTime(11, 0))
+                        .status(com.photonicomega.facilities.module.visitor.domain.VisitorStatus.REGISTERED)
+                        .qrCodeToken("VIS-EMP0001").build(),
+                com.photonicomega.facilities.module.visitor.domain.Visitor.builder()
+                        .fullName("Yaw Mensah").email("yaw.mensah@supplier.io")
+                        .phoneNumber("+233 20 555 0222").company("Supplier Co")
+                        .host(employee).purposeOfVisit("Equipment delivery")
+                        .expectedArrival(today.plusDays(3).atTime(9, 30))
+                        .status(com.photonicomega.facilities.module.visitor.domain.VisitorStatus.REGISTERED)
+                        .qrCodeToken("VIS-EMP0002").build()
+        ));
+
+        // Stamp createdBy to the employee's email (via the auditing SecurityContext)
+        // so the document appears in their owner-scoped document list.
+        org.springframework.security.core.context.SecurityContext previous =
+                org.springframework.security.core.context.SecurityContextHolder.getContext();
+        try {
+            org.springframework.security.core.context.SecurityContext ctx =
+                    org.springframework.security.core.context.SecurityContextHolder.createEmptyContext();
+            ctx.setAuthentication(new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                    employee.getEmail(), null, java.util.Collections.emptyList()));
+            org.springframework.security.core.context.SecurityContextHolder.setContext(ctx);
+            documentRepository.save(Document.builder()
+                    .title("Expense Reimbursement - June")
+                    .fileName("expense-june.pdf").fileType("application/pdf").fileSize(128_512L)
+                    .classificationLevel(ClassificationLevel.INTERNAL)
+                    .status(DocumentStatus.PENDING_REVIEW)
+                    .versionNumber(1).build());
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.setContext(previous);
+        }
+
+        employeeRequestRepository.saveAll(List.of(
+                com.photonicomega.facilities.module.employee.domain.EmployeeRequest.builder()
+                        .requester(employee)
+                        .type(RequestType.CONTRACT)
+                        .title("New laptop procurement")
+                        .description("Request procurement of a replacement laptop for field work.")
+                        .status(com.photonicomega.facilities.module.employee.domain.RequestStatus.PENDING)
+                        .build(),
+                com.photonicomega.facilities.module.employee.domain.EmployeeRequest.builder()
+                        .requester(employee)
+                        .type(RequestType.LEGAL)
+                        .title("NDA review for external consultant")
+                        .description("Please review the attached NDA before signing with the consultant.")
+                        .status(com.photonicomega.facilities.module.employee.domain.RequestStatus.IN_REVIEW)
+                        .build()
+        ));
+
+        employeeNotificationRepository.saveAll(List.of(
+                com.photonicomega.facilities.module.employee.domain.EmployeeNotification.builder()
+                        .recipient(employee).type(NotificationType.APPROVAL)
+                        .title("Reservation approved")
+                        .message("Your reservation \"Team Sync\" has been approved.")
+                        .relatedEntityType("Reservation").read(false).build(),
+                com.photonicomega.facilities.module.employee.domain.EmployeeNotification.builder()
+                        .recipient(employee).type(NotificationType.REJECTION)
+                        .title("Reservation rejected")
+                        .message("Your reservation \"1:1 Review\" was rejected: room unavailable at requested time.")
+                        .relatedEntityType("Reservation").read(false).build(),
+                com.photonicomega.facilities.module.employee.domain.EmployeeNotification.builder()
+                        .recipient(employee).type(NotificationType.REMINDER)
+                        .title("Upcoming visitor")
+                        .message("Reminder: Ama Serwaa is expected tomorrow at 11:00.")
+                        .relatedEntityType("Visitor").read(false).build()
+        ));
+
+        log.info("Employee sample data seeded.");
     }
 }
