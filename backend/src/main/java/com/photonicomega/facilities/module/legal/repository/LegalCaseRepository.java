@@ -14,6 +14,8 @@ import java.util.UUID;
 public interface LegalCaseRepository extends JpaRepository<LegalCase, UUID> {
     Optional<LegalCase> findByCaseNumber(String caseNumber);
     List<LegalCase> findByStatus(CaseStatus status);
+    List<LegalCase> findByStatusOrderByCreatedAtDesc(CaseStatus status);
+    List<LegalCase> findAllByOrderByCreatedAtDesc();
     long countByStatus(CaseStatus status);
     List<LegalCase> findByPriority(CasePriority priority);
     List<LegalCase> findByLeadLawyerId(UUID leadLawyerId);

@@ -19,6 +19,12 @@ import com.photonicomega.facilities.module.documents.domain.ClassificationLevel;
 import com.photonicomega.facilities.module.documents.domain.Document;
 import com.photonicomega.facilities.module.documents.domain.DocumentStatus;
 import com.photonicomega.facilities.module.documents.repository.DocumentRepository;
+import com.photonicomega.facilities.module.legal.domain.CasePriority;
+import com.photonicomega.facilities.module.legal.domain.CaseStatus;
+import com.photonicomega.facilities.module.legal.domain.CaseType;
+import com.photonicomega.facilities.module.legal.domain.LegalCase;
+import com.photonicomega.facilities.module.legal.repository.LegalCaseRepository;
+import com.photonicomega.facilities.module.legal.service.LegalService;
 import com.photonicomega.facilities.module.records.domain.PolicyAction;
 import com.photonicomega.facilities.module.records.domain.RetentionPolicy;
 import com.photonicomega.facilities.module.records.repository.RetentionPolicyRepository;
@@ -45,6 +51,8 @@ public class BootstrapAdmin implements CommandLineRunner {
     private final RetentionPolicyRepository retentionPolicyRepository;
     private final DisposalRequestRepository disposalRequestRepository;
     private final ComplianceService complianceService;
+    private final LegalCaseRepository legalCaseRepository;
+    private final LegalService legalService;
 
     @Override
     public void run(String... args) {
@@ -53,6 +61,8 @@ public class BootstrapAdmin implements CommandLineRunner {
         seedFacilitiesOfficer();
         seedComplianceOfficer();
         seedComplianceSampleData();
+        seedLegalOfficer();
+        seedLegalSampleData();
     }
 
     private void seedAdmin() {
@@ -321,5 +331,89 @@ public class BootstrapAdmin implements CommandLineRunner {
 
         complianceService.generateAlerts();
         log.info("Compliance disposal request and alerts seeded.");
+    }
+
+    private void seedLegalOfficer() {
+        if (userRepository.findByEmailAndDeletedFalse("legal@photonicomega.com").isPresent()) {
+            return;
+        }
+        log.info("Creating bootstrap legal officer user...");
+
+        Permission legalPermission = Permission.builder()
+                .name("LEGAL_OPERATIONS")
+                .displayName("Legal Operations")
+                .description("Grants access to legal, contract, and compliance modules")
+                .module("LEGAL")
+                .resource("*")
+                .action(PermissionAction.MANAGE)
+                .build();
+
+        Role legalRole = Role.builder()
+                .name("LEGAL_OFFICER")
+                .displayName("Legal Officer")
+                .description("Legal officer with contract, legal-case, and compliance oversight access")
+                .systemRole(true)
+                .permissions(Set.of(legalPermission))
+                .build();
+
+        userRepository.save(User.builder()
+                .email("legal@photonicomega.com")
+                .passwordHash(passwordEncoder.encode("Legal2026!"))
+                .firstName("Legal")
+                .lastName("Officer")
+                .employeeId("LG-001")
+                .department("Legal")
+                .position("Legal Officer")
+                .status(UserStatus.ACTIVE)
+                .emailVerified(true)
+                .roles(Set.of(legalRole))
+                .build());
+
+        log.info("Bootstrap legal officer user created.");
+    }
+
+    /**
+     * Seeds sample legal cases so the Legal Officer dashboard shows live data on
+     * a fresh (H2 test-profile) database, then generates the initial legal
+     * notices (which also draw on contracts seeded by the compliance seeder).
+     * Idempotent: skips the cases if any already exist.
+     */
+    private void seedLegalSampleData() {
+        if (legalCaseRepository.count() == 0) {
+            log.info("Seeding legal sample data (legal cases)...");
+            LocalDate today = LocalDate.now();
+            legalCaseRepository.saveAll(List.of(
+                    LegalCase.builder()
+                            .caseNumber("CASE-2026-001").title("Vendor Breach - DataViz Analytics")
+                            .description("Alleged breach of SLA terms by analytics vendor; recovery of damages sought.")
+                            .courtName("Commercial Court").judgeName("Hon. R. Mensah")
+                            .opposingParty("DataViz Inc")
+                            .caseType(CaseType.CONTRACT_DISPUTE).status(CaseStatus.PENDING_HEARING)
+                            .priority(CasePriority.HIGH)
+                            .filingDate(today.minusMonths(2)).expectedResolutionDate(today.plusMonths(3))
+                            .build(),
+                    LegalCase.builder()
+                            .caseNumber("CASE-2026-002").title("Regulatory Inquiry - Data Protection")
+                            .description("Data-protection authority inquiry into cross-border transfers.")
+                            .caseType(CaseType.REGULATORY).status(CaseStatus.IN_PROGRESS)
+                            .priority(CasePriority.CRITICAL)
+                            .filingDate(today.minusMonths(1)).expectedResolutionDate(today.plusMonths(2))
+                            .build(),
+                    LegalCase.builder()
+                            .caseNumber("CASE-2025-014").title("Lease Deposit Recovery")
+                            .description("Recovery of retained deposit from prior premises lease.")
+                            .courtName("Small Claims Tribunal")
+                            .opposingParty("Skyline Properties Ltd")
+                            .caseType(CaseType.CONTRACT_DISPUTE).status(CaseStatus.SETTLED)
+                            .priority(CasePriority.LOW)
+                            .filingDate(today.minusMonths(8)).closedDate(today.minusMonths(1))
+                            .resolutionNotes("Settled out of court; 80% of deposit recovered.")
+                            .build()
+            ));
+            log.info("Legal sample data seeded.");
+        }
+
+        legalService.generateNotices();
+        log.info("Legal notices seeded.");
     }
 }

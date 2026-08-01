@@ -30,6 +30,9 @@ public class LegalCase extends BaseEntity {
     private String opposingParty;
 
     @Enumerated(EnumType.STRING)
+    private CaseType caseType;
+
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private CaseStatus status;
 
@@ -43,4 +46,8 @@ public class LegalCase extends BaseEntity {
 
     private LocalDate filingDate;
     private LocalDate expectedResolutionDate;
+    private LocalDate closedDate;
+
+    @Column(columnDefinition = "TEXT")
+    private String resolutionNotes;
 }
