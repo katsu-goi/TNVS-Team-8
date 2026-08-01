@@ -63,6 +63,18 @@ import {
   LoProfilePage,
   LoSettingsPage,
 } from './components/legal/LegalOfficerPages';
+import { ProcurementOfficerLayout } from './components/procurement/ProcurementOfficerLayout';
+import { ProcurementOfficerDashboard } from './components/procurement/ProcurementOfficerDashboard';
+import {
+  PoContractsPage,
+  PoVendorsPage,
+  PoNoticesPage,
+  PoDocumentsPage,
+  PoLegalCasesPage,
+  PoAuditLogsPage,
+  PoProfilePage,
+  PoSettingsPage,
+} from './components/procurement/ProcurementOfficerPages';
 import { useAuthStore } from './stores/authStore';
 
 class ErrorBoundary extends React.Component<
@@ -136,6 +148,15 @@ const LegalOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ children }
   if (!accessToken) return <Navigate to="/login" replace />;
   const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
   if (!roles.includes('LEGAL_OFFICER') && !roles.includes('ROLE_LEGAL_OFFICER')) return <Navigate to="/" replace />;
+  return <>{children}</>;
+};
+
+const ContractOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const user = useAuthStore((s) => s.user);
+  if (!accessToken) return <Navigate to="/login" replace />;
+  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
+  if (!roles.includes('CONTRACT_OFFICER') && !roles.includes('ROLE_CONTRACT_OFFICER')) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
 
@@ -236,6 +257,23 @@ export const App: React.FC = () => {
           <Route path="legal/audit-logs" element={<LoAuditLogsPage />} />
           <Route path="legal/profile" element={<LoProfilePage />} />
           <Route path="legal/settings" element={<LoSettingsPage />} />
+        </Route>
+
+        {/* Contract Officer routes */}
+        <Route element={
+          <ContractOfficerRoute>
+            <ProcurementOfficerLayout />
+          </ContractOfficerRoute>
+        }>
+          <Route path="procurement" element={<ProcurementOfficerDashboard />} />
+          <Route path="procurement/contracts" element={<PoContractsPage />} />
+          <Route path="procurement/vendors" element={<PoVendorsPage />} />
+          <Route path="procurement/notices" element={<PoNoticesPage />} />
+          <Route path="procurement/documents" element={<PoDocumentsPage />} />
+          <Route path="procurement/legal-cases" element={<PoLegalCasesPage />} />
+          <Route path="procurement/audit-logs" element={<PoAuditLogsPage />} />
+          <Route path="procurement/profile" element={<PoProfilePage />} />
+          <Route path="procurement/settings" element={<PoSettingsPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
