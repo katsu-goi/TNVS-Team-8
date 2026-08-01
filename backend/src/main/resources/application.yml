@@ -109,6 +109,13 @@ app:
       key: ${SUPABASE_SERVICE_KEY:your-service-key}
       bucket: ${SUPABASE_BUCKET:facilities-documents}
 
+  # Supabase Realtime (live user activity / online users)
+  supabase:
+    url: ${SUPABASE_URL:https://dunijfrvfozwlykpkfhy.supabase.co}
+    anon-key: ${SUPABASE_ANON_KEY:sb_publishable_UWaHC31yeIQCKgSN20oPEg_qY-iJsQE}
+    activity-table: ${SUPABASE_ACTIVITY_TABLE:user_activity_events}
+    online-table: ${SUPABASE_ONLINE_TABLE:online_users}
+
   # AI Services
   ai:
     enabled: ${AI_ENABLED:true}
@@ -219,6 +226,22 @@ spring:
     url: jdbc:postgresql://aws-1-ap-south-1.pooler.supabase.com:5432/postgres?sslmode=require&prepareThreshold=0&preparedStatementCacheQueries=0
     username: postgres.hffwvffqwjppecharqsd
     password: 2ivs0XvJ2wyaDwsf
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+  flyway:
+    enabled: false
+
+---
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/facilities_db}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:

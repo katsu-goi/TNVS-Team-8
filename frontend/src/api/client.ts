@@ -44,3 +44,27 @@ export function extractErrorMessage(error: unknown): string {
   if (typeof error === 'string') return error;
   return 'An unexpected error occurred.';
 }
+
+export async function safeFetchJson<T = any>(url: string, options?: RequestInit): Promise<T | null> {
+  try {
+    const token = localStorage.getItem('accessToken');
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options?.headers as Record<string, string> || {}),
+    };
+
+    const res = await fetch(url, { ...options, headers });
+    if (!res.ok) {
+      return null;
+    }
+    const text = await res.text();
+    if (!text || !text.trim()) {
+      return null;
+    }
+    return JSON.parse(text) as T;
+  } catch (err) {
+    console.warn(`Safe fetch JSON failed for ${url}:`, err);
+    return null;
+  }
+}

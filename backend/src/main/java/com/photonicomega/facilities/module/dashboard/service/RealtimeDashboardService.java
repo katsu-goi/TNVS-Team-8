@@ -55,6 +55,8 @@ public class RealtimeDashboardService {
     private final LoginHistoryRepository loginHistoryRepository;
     private final AdminNotificationRepository adminNotificationRepository;
 
+    private final com.photonicomega.facilities.module.security.service.SupabaseRealtimePublisher supabaseRealtimePublisher;
+
     @Data
     @Builder
     public static class RealtimeMetrics {
@@ -243,6 +245,36 @@ public class RealtimeDashboardService {
         syncPayload.put("timestamp", System.currentTimeMillis());
 
         messagingTemplate.convertAndSend("/topic/facilities/sync", syncPayload);
+    }
+
+    /**
+     * Broadcasts the current list of online users (active sessions) every 5 seconds.
+     * The System Administrator dashboard subscribes to keep the "Active Users"
+     * count and "Live User Activity" feed in sync in realtime.
+     */
+    @Scheduled(fixedRate = 5000)
+    public void broadcastOnlineUsers() {
+        java.util.List<com.photonicomega.facilities.module.security.domain.ActiveSession> sessions =
+                activeSessionRepository.findByStatus("ACTIVE");
+        java.time.Instant cutoff = java.time.Instant.now().minusSeconds(90);
+
+        java.util.List<java.util.Map<String, Object>> users = new java.util.ArrayList<>();
+        for (com.photonicomega.facilities.module.security.domain.ActiveSession s : sessions) {
+            if (s.getLastActivity() == null || s.getLastActivity().isBefore(cutoff)) {
+                continue;
+            }
+            java.util.Map<String, Object> row = new HashMap<>();
+            row.put("username", s.getUsername());
+            row.put("user_id", s.getUserId());
+            row.put("full_name", s.getFullName() != null ? s.getFullName() : s.getUsername());
+            row.put("role", s.getRole() != null ? s.getRole() : "EMPLOYEE");
+            row.put("ip", s.getIpAddress());
+            row.put("device", s.getDeviceName() != null ? s.getDeviceName() : "");
+            row.put("browser", s.getBrowser() != null ? s.getBrowser() : "");
+            users.add(row);
+        }
+
+        supabaseRealtimePublisher.syncOnlineUsers(users);
     }
 
     @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)

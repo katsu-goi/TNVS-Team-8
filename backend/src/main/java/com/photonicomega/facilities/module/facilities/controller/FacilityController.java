@@ -5,11 +5,12 @@ import com.photonicomega.facilities.module.facilities.domain.*;
 import com.photonicomega.facilities.module.facilities.repository.*;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.Builder;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -25,14 +26,50 @@ public class FacilityController {
 
     @GetMapping
     @Operation(summary = "Get all facilities")
-    public ResponseEntity<ApiResponse<List<Facility>>> getAllFacilities() {
-        return ResponseEntity.ok(ApiResponse.success(facilityRepository.findAll(), "Facilities fetched successfully"));
+    public ResponseEntity<ApiResponse<List<FacilityDto>>> getAllFacilities() {
+        List<FacilityDto> facilities = facilityRepository.findAll().stream()
+                .map(this::toDto)
+                .toList();
+        return ResponseEntity.ok(ApiResponse.success(facilities, "Facilities fetched successfully"));
     }
 
     @PostMapping
     @Operation(summary = "Create a new facility")
-    public ResponseEntity<ApiResponse<Facility>> createFacility(@RequestBody Facility facility) {
-        return ResponseEntity.ok(ApiResponse.success(facilityRepository.save(facility), "Facility created successfully"));
+    public ResponseEntity<ApiResponse<FacilityDto>> createFacility(@RequestBody Facility facility) {
+        Facility saved = facilityRepository.save(facility);
+        return ResponseEntity.ok(ApiResponse.success(toDto(saved), "Facility created successfully"));
+    }
+
+    private FacilityDto toDto(Facility f) {
+        return FacilityDto.builder()
+                .id(f.getId())
+                .name(f.getName())
+                .code(f.getCode())
+                .type(f.getType() != null ? f.getType().name() : null)
+                .address(f.getAddress())
+                .city(f.getCity())
+                .country(f.getCountry())
+                .timezone(f.getTimezone())
+                .totalCapacity(f.getTotalCapacity())
+                .active(f.getActive())
+                .roomCount(roomRepository.countByFacilityId(f.getId()))
+                .build();
+    }
+
+    @Data
+    @Builder
+    public static class FacilityDto {
+        private UUID id;
+        private String name;
+        private String code;
+        private String type;
+        private String address;
+        private String city;
+        private String country;
+        private String timezone;
+        private Integer totalCapacity;
+        private Boolean active;
+        private long roomCount;
     }
 
     @GetMapping("/{facilityId}/rooms")

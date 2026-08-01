@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   AlertCircle, RefreshCw, Calendar, FileText, Bell, User, Eye,
-  Building2,
+  Building2, Settings,
 } from 'lucide-react';
+import { safeFetchJson } from '../../api/client';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -39,8 +40,7 @@ export const FoReservationsPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/v1/facilities-officer/reservations');
-      const json = await res.json();
+      const json = await safeFetchJson('/api/v1/facilities-officer/reservations');
       setReservations(json?.data ?? []);
     } catch (err: any) {
       setError(err?.message || 'Failed to load');
@@ -123,8 +123,7 @@ export const FoVisitorManagementPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/v1/facilities-officer/visitors');
-      const json = await res.json();
+      const json = await safeFetchJson('/api/v1/facilities-officer/visitors');
       setVisitors(json?.data ?? []);
     } catch (err: any) {
       setError(err?.message || 'Failed to load');
@@ -204,8 +203,7 @@ export const FoDocumentsPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/v1/facilities-officer/documents');
-      const json = await res.json();
+      const json = await safeFetchJson('/api/v1/facilities-officer/documents');
       setDocuments(json?.data ?? []);
     } catch (err: any) {
       setError(err?.message || 'Failed to load');
@@ -271,8 +269,7 @@ export const FoNotificationsPage: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/v1/facilities-officer/notifications');
-      const json = await res.json();
+      const json = await safeFetchJson('/api/v1/facilities-officer/notifications');
       setNotifications(json?.data ?? []);
     } catch {} finally { setLoading(false); }
   }, [retry]);
@@ -328,6 +325,20 @@ export const FoProfilePage: React.FC = () => {
         </div>
       </div>
       <EmptyState icon={User} title="Profile Settings" desc="Profile management will be available via TEAM 1 - Human Resource Management integration." />
+    </div>
+  );
+};
+
+export const FoSettingsPage: React.FC = () => {
+  return (
+    <div className="space-y-6">
+      <div className="glass-panel p-5">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">Settings</h2>
+          <p className="text-xs text-slate-500">Facilities Officer account and module preferences</p>
+        </div>
+      </div>
+      <EmptyState icon={Settings} title="Settings" desc="Account and module settings will be available via TEAM 1 - Human Resource Management integration." />
     </div>
   );
 };

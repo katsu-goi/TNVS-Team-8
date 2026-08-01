@@ -27,6 +27,7 @@ import {
   AnalyticsPage,
   FacilitiesNotificationsPage,
   ProfilePage,
+  FacilitiesSettingsPage,
 } from './components/facilities/FacilitiesPages';
 import { FacilitiesOfficerLayout } from './components/facilities-officer/FacilitiesOfficerLayout';
 import { FacilitiesOfficerDashboard } from './components/facilities-officer/FacilitiesOfficerDashboard';
@@ -36,6 +37,7 @@ import {
   FoDocumentsPage,
   FoNotificationsPage,
   FoProfilePage,
+  FoSettingsPage,
 } from './components/facilities-officer/FacilitiesOfficerPages';
 import { useAuthStore } from './stores/authStore';
 
@@ -81,7 +83,8 @@ const FacilitiesRoute: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  if (user?.roles && !user.roles.includes('FACILITIES_MANAGER')) return <Navigate to="/" replace />;
+  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
+  if (!roles.includes('FACILITIES_MANAGER') && !roles.includes('ROLE_FACILITIES_MANAGER')) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
 
@@ -89,7 +92,8 @@ const FacilitiesOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ child
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  if (user?.roles && !user.roles.includes('FACILITIES_OFFICER')) return <Navigate to="/" replace />;
+  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
+  if (!roles.includes('FACILITIES_OFFICER') && !roles.includes('ROLE_FACILITIES_OFFICER')) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
 
@@ -140,6 +144,7 @@ export const App: React.FC = () => {
           <Route path="facilities/analytics" element={<AnalyticsPage />} />
           <Route path="facilities/notifications" element={<FacilitiesNotificationsPage />} />
           <Route path="facilities/profile" element={<ProfilePage />} />
+          <Route path="facilities/settings" element={<FacilitiesSettingsPage />} />
         </Route>
 
         {/* Facilities Officer routes */}
@@ -154,6 +159,7 @@ export const App: React.FC = () => {
           <Route path="facilities-officer/documents" element={<FoDocumentsPage />} />
           <Route path="facilities-officer/notifications" element={<FoNotificationsPage />} />
           <Route path="facilities-officer/profile" element={<FoProfilePage />} />
+          <Route path="facilities-officer/settings" element={<FoSettingsPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

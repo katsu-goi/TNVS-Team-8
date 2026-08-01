@@ -2,16 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, LogOut, Calendar, CheckSquare,
-  Building2, ClipboardList, BarChart3, Bell, User,
+  Building2, ClipboardList, BarChart3, Bell, User, Settings,
   ChevronRight, AlertTriangle, Search,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
+import { logout as apiLogout } from '../../api/authService';
+import { useUserHeartbeat } from '../../hooks/useUserHeartbeat';
 
 export const FacilitiesManagerLayout: React.FC = () => {
   const { user, logout } = useAuthStore();
   const location = useLocation();
   const navigate = useNavigate();
+  useUserHeartbeat();
   const [searchQuery, setSearchQuery] = useState('');
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [clock, setClock] = useState(new Date());
@@ -44,6 +47,7 @@ export const FacilitiesManagerLayout: React.FC = () => {
     { id: 'analytics', label: 'Analytics', path: '/facilities/analytics', icon: BarChart3 },
     { id: 'notifications', label: 'Notifications', path: '/facilities/notifications', icon: Bell },
     { id: 'profile', label: 'Profile', path: '/facilities/profile', icon: User },
+    { id: 'settings', label: 'Settings', path: '/facilities/settings', icon: Settings },
   ];
 
   return (
@@ -166,7 +170,7 @@ export const FacilitiesManagerLayout: React.FC = () => {
             <p className="text-xs text-slate-600 leading-relaxed">Are you sure you want to end your session?</p>
             <div className="flex justify-end space-x-3 pt-2">
               <button onClick={() => setShowLogoutModal(false)} className="px-4 py-2 rounded-xl text-slate-500 hover:text-slate-900 text-xs font-semibold">Cancel</button>
-              <button onClick={() => { setShowLogoutModal(false); logout(); }} className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold text-xs">Confirm Logout</button>
+              <button onClick={() => { setShowLogoutModal(false); apiLogout().finally(() => logout()); }} className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold text-xs">Confirm Logout</button>
             </div>
           </div>
         </div>

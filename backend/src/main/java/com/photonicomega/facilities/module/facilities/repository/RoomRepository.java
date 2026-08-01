@@ -11,6 +11,7 @@ import java.util.UUID;
 @Repository
 public interface RoomRepository extends JpaRepository<Room, UUID> {
     List<Room> findByFacilityId(UUID facilityId);
+    long countByFacilityId(UUID facilityId);
     List<Room> findByType(RoomType type);
     List<Room> findByActiveTrue();
     long countByActiveTrue();

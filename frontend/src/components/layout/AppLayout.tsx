@@ -8,6 +8,8 @@ import {
 import { useAuthStore } from '../../stores/authStore';
 import { useDashboardStore } from '../../stores/dashboardStore';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
+import { logout as apiLogout } from '../../api/authService';
+import { useUserHeartbeat } from '../../hooks/useUserHeartbeat';
 // Breadcrumbs available for future use
 
 const parentIds = ['security'];
@@ -16,6 +18,7 @@ export const AppLayout: React.FC = () => {
  const { user, logout } = useAuthStore();
  const location = useLocation();
  const navigate = useNavigate();
+ useUserHeartbeat();
  const [searchQuery, setSearchQuery] = useState('');
  const [showNotifications, setShowNotifications] = useState(false);
  const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -286,7 +289,7 @@ export const AppLayout: React.FC = () => {
   <p className="text-xs text-slate-600 leading-relaxed">Are you sure you want to end your session? Any unsaved changes in progress will be saved to audit logs.</p>
   <div className="flex justify-end space-x-3 pt-2">
   <button onClick={() => setShowLogoutModal(false)} className="px-4 py-2 rounded-xl text-slate-500 hover:text-slate-900 text-xs font-semibold">Cancel</button>
-  <button onClick={() => { setShowLogoutModal(false); logout(); }} className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold text-xs">Confirm Logout</button>
+  <button onClick={() => { setShowLogoutModal(false); apiLogout().finally(() => logout()); }} className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold text-xs">Confirm Logout</button>
   </div>
   </div>
   </div>

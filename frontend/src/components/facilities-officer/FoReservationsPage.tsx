@@ -3,9 +3,12 @@ import {
   Calendar, Clock, Building2,
   PlusCircle, FileText, Download, Edit3,
   Send, X, Eye, Wrench, BarChart2,
-  CheckSquare, ArrowUpRight, FileSpreadsheet, FileCode, Activity
+  CheckSquare, ArrowUpRight, FileSpreadsheet, FileCode, Activity, DoorOpen, Loader2, Sparkles
 } from 'lucide-react';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
+import { safeFetchJson, extractErrorMessage } from '../../api/client';
+import { facilitiesService } from '../../api/facilitiesService';
+import { RoomPicker, RoomPickerSelection } from './RoomPicker';
 
 export interface ReservationItem {
   id: string;
@@ -53,115 +56,61 @@ export const FoReservationsPage: React.FC = () => {
   const [createForm, setCreateForm] = useState({
     title: '',
     category: 'ROOM' as 'ROOM' | 'VEHICLE_BAY' | 'EQUIPMENT',
-    facilityName: 'Executive Conference Room A',
+    facilityName: '',
     requesterName: '',
     requesterEmail: '',
     date: new Date().toISOString().split('T')[0],
     startTime: '09:00',
     endTime: '11:00',
+    expectedAttendees: '' as string,
     priority: 'MEDIUM' as 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT',
     description: '',
     attachments: ''
   });
+  const [selectedRoom, setSelectedRoom] = useState<RoomPickerSelection | null>(null);
+  const [showRoomPicker, setShowRoomPicker] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
 
-  // Mock initial dataset representing full backend capabilities
-  const [reservations, setReservations] = useState<ReservationItem[]>([
-    {
-      id: 'res-101',
-      reservationId: 'RES-2026-0891',
-      title: 'Q3 Regional Leadership Strategy Workshop',
-      facilityCategory: 'ROOM',
-      facilityName: 'Executive Conference Room A',
-      requesterName: 'Sarah Jenkins',
-      requesterEmail: 's.jenkins@photonic.com',
-      reservationDate: '2026-08-01',
-      startTime: '09:00',
-      endTime: '12:30',
-      durationHours: 3.5,
-      status: 'APPROVED',
-      priorityLevel: 'HIGH',
-      description: 'Strategic planning session with regional division heads.',
-      updatedAt: '2026-07-30 16:45',
-      updatedBy: 'Facilities Officer',
-      modificationNotes: 'Confirmed AV equipment setup and catering access.'
-    },
-    {
-      id: 'res-102',
-      reservationId: 'RES-2026-0892',
-      title: 'Fleet Vehicle Bay Inspection & Loading',
-      facilityCategory: 'VEHICLE_BAY',
-      facilityName: 'Vehicle Loading Dock Bay 3',
-      requesterName: 'Michael Chen',
-      requesterEmail: 'm.chen@photonic.com',
-      reservationDate: '2026-08-01',
-      startTime: '13:00',
-      endTime: '15:00',
-      durationHours: 2.0,
-      status: 'PENDING',
-      priorityLevel: 'MEDIUM',
-      description: 'Monthly fleet loading dock inspection.',
-      updatedAt: '2026-07-30 15:20',
-      updatedBy: 'Michael Chen',
-      modificationNotes: 'Submitted initial reservation request.'
-    },
-    {
-      id: 'res-103',
-      reservationId: 'RES-2026-0893',
-      title: 'Emergency IT Server Rack Maintenance',
-      facilityCategory: 'ROOM',
-      facilityName: 'Main Server Room Hub',
-      requesterName: 'David Ross',
-      requesterEmail: 'd.ross@photonic.com',
-      reservationDate: '2026-08-02',
-      startTime: '10:00',
-      endTime: '11:30',
-      durationHours: 1.5,
-      status: 'ESCALATED',
-      priorityLevel: 'URGENT',
-      description: 'Urgent cooling pipe replacement requiring room isolation.',
-      updatedAt: '2026-07-30 17:10',
-      updatedBy: 'Facilities Officer',
-      modificationNotes: 'Escalated to Facilities Manager for urgent security override.'
-    },
-    {
-      id: 'res-104',
-      reservationId: 'RES-2026-0894',
-      title: 'All-Hands Auditorium Town Hall',
-      facilityCategory: 'ROOM',
-      facilityName: 'Grand Auditorium B',
-      requesterName: 'Elena Rostova',
-      requesterEmail: 'e.rostova@photonic.com',
-      reservationDate: '2026-08-05',
-      startTime: '14:00',
-      endTime: '16:00',
-      durationHours: 2.0,
-      status: 'APPROVED',
-      priorityLevel: 'HIGH',
-      description: 'Quarterly company town hall broadcast.',
-      updatedAt: '2026-07-29 11:30',
-      updatedBy: 'Facilities Officer',
-      modificationNotes: 'Rescheduled time slot by 1 hour.'
-    }
-  ]);
+  // Dynamic state for reservations and maintenance notices (no hardcoded seed data)
+  const [reservations, setReservations] = useState<ReservationItem[]>([]);
+  const [maintenanceNotices] = useState<MaintenanceNotice[]>([]);
 
-  const [maintenanceNotices] = useState<MaintenanceNotice[]>([
-    {
-      id: 'maint-1',
-      facilityName: 'Conference Room C (East Wing)',
-      maintenanceType: 'HVAC Duct Maintenance & Filter Cleaning',
-      startDate: '2026-08-02',
-      endDate: '2026-08-04',
-      availabilityStatus: 'OUT_OF_SERVICE'
-    },
-    {
-      id: 'maint-2',
-      facilityName: 'Vehicle Dock Bay 1',
-      maintenanceType: 'Hydraulic Lift Calibration',
-      startDate: '2026-08-01',
-      endDate: '2026-08-01',
-      availabilityStatus: 'LIMITED_ACCESS'
-    }
-  ]);
+  React.useEffect(() => {
+    const fetchReservations = async () => {
+      try {
+        const json = await safeFetchJson('/api/v1/facilities-officer/reservations');
+        if (json?.data && Array.isArray(json.data)) {
+          setReservations(json.data.map((r: any) => mapBackendReservation(r)));
+        }
+      } catch (e) {
+        console.warn('Backend reservations offline, default to empty list', e);
+      }
+    };
+    fetchReservations();
+  }, []);
+
+  const mapBackendReservation = (r: any): ReservationItem => ({
+    id: r.id,
+    reservationId: `RES-${r.id?.slice(0, 8).toUpperCase()}`,
+    title: r.title,
+    facilityCategory: 'ROOM',
+    facilityName: r.roomName || r.facilityName || '',
+    requesterName: r.employeeName || 'Facilities Officer',
+    requesterEmail: r.employeeEmail || '',
+    reservationDate: (r.startTime || '').slice(0, 10),
+    startTime: (r.startTime || '').slice(11, 16),
+    endTime: (r.endTime || '').slice(11, 16),
+    durationHours: r.startTime && r.endTime
+      ? Math.max(0, (new Date(r.endTime).getTime() - new Date(r.startTime).getTime()) / 3600000)
+      : 0,
+    status: (r.status === 'PENDING' || r.status === 'APPROVED' || r.status === 'REJECTED' || r.status === 'CANCELLED') ? r.status : 'PENDING',
+    priorityLevel: 'MEDIUM',
+    description: r.description,
+    updatedAt: r.createdAt || new Date().toLocaleString(),
+    updatedBy: r.employeeName || 'Facilities Officer',
+    modificationNotes: `Requested ${r.roomName} · ${r.facilityName || ''}`.trim()
+  });
 
   // Derived metrics for Component 1: Summary Cards & Component 6: Resource Utilization
   const pendingCount = syncData?.pendingReservations ?? reservations.filter(r => r.status === 'PENDING' || r.status === 'ESCALATED').length;
@@ -171,37 +120,142 @@ export const FoReservationsPage: React.FC = () => {
   const occupancyRate = 68; // 68% calculated occupancy rate
 
   // Quick Action Handlers
-  const handleCreateReservationSubmit = (e: React.FormEvent) => {
+  const handleCreateReservationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newRes: ReservationItem = {
-      id: `res-${Date.now()}`,
-      reservationId: `RES-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-      title: createForm.title || 'Untitled Reservation',
-      facilityCategory: createForm.category,
-      facilityName: createForm.facilityName,
-      requesterName: createForm.requesterName || 'Facilities Officer',
-      requesterEmail: createForm.requesterEmail || 'officer@photonic.com',
-      reservationDate: createForm.date,
-      startTime: createForm.startTime,
-      endTime: createForm.endTime,
-      durationHours: 2.0,
-      status: 'PENDING',
-      priorityLevel: createForm.priority,
-      description: createForm.description,
-      updatedAt: new Date().toLocaleString(),
-      updatedBy: 'Facilities Officer',
-      modificationNotes: 'Created reservation request. Auto-escalated for Facilities Manager approval.'
-    };
-    setReservations([newRes, ...reservations]);
-    setShowCreateModal(false);
-    setCreateForm({
-      title: '', category: 'ROOM', facilityName: 'Executive Conference Room A',
-      requesterName: '', requesterEmail: '', date: new Date().toISOString().split('T')[0],
-      startTime: '09:00', endTime: '11:00', priority: 'MEDIUM', description: '', attachments: ''
-    });
+    setSubmitError('');
+    if (!selectedRoom) {
+      setSubmitError('Please assign a room for this reservation request.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await facilitiesService.createReservation({
+        roomId: selectedRoom.roomId,
+        title: createForm.title,
+        description: createForm.description,
+        startTime: `${createForm.date}T${createForm.startTime}:00`,
+        endTime: `${createForm.date}T${createForm.endTime}:00`,
+        expectedAttendees: createForm.expectedAttendees ? Number(createForm.expectedAttendees) : null,
+      });
+      const list = await facilitiesService.getMyReservations();
+      setReservations(list.map((r: any) => mapBackendReservation(r)));
+      setShowCreateModal(false);
+      setSelectedRoom(null);
+      setCreateForm({
+        title: '', category: 'ROOM', facilityName: '',
+        requesterName: '', requesterEmail: '', date: new Date().toISOString().split('T')[0],
+        startTime: '09:00', endTime: '11:00', expectedAttendees: '', priority: 'MEDIUM', description: '', attachments: ''
+      });
+    } catch (err: any) {
+      setSubmitError(err?.response?.data?.message ?? 'Unable to submit reservation request. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const [escalateNotes, setEscalateNotes] = useState('');
+
+  // AI Reservation Assistant state
+  const [aiQuery, setAiQuery] = useState('');
+  const [aiSuggestions, setAiSuggestions] = useState<any[]>([]);
+  const [aiValidation, setAiValidation] = useState<any>(null);
+  const [aiDraftApplied, setAiDraftApplied] = useState(false);
+  const [aiLoading, setAiLoading] = useState<'suggest' | 'draft' | 'validate' | null>(null);
+  const [aiError, setAiError] = useState('');
+
+  const handleAiSuggest = async () => {
+    if (!aiQuery.trim()) return;
+    setAiLoading('suggest');
+    setAiError('');
+    setAiValidation(null);
+    setAiDraftApplied(false);
+    try {
+      const data = await facilitiesService.aiSuggestRooms({
+        query: aiQuery,
+        date: createForm.date,
+        startTime: createForm.startTime,
+        endTime: createForm.endTime,
+        limit: 5,
+      });
+      setAiSuggestions(data.suggestions ?? []);
+    } catch (err: any) {
+      setAiError(extractErrorMessage(err));
+      setAiSuggestions([]);
+    } finally {
+      setAiLoading(null);
+    }
+  };
+
+  const handleAiDraft = async () => {
+    if (!aiQuery.trim()) return;
+    setAiLoading('draft');
+    setAiError('');
+    try {
+      const draft = await facilitiesService.aiDraftReservation({ text: aiQuery });
+      setCreateForm(prev => ({
+        ...prev,
+        title: draft.title || prev.title,
+        date: draft.date || prev.date,
+        startTime: draft.startTime || prev.startTime,
+        endTime: draft.endTime || prev.endTime,
+        expectedAttendees: draft.expectedAttendees != null ? String(draft.expectedAttendees) : prev.expectedAttendees,
+        description: draft.description || prev.description,
+      }));
+      setAiDraftApplied(true);
+    } catch (err: any) {
+      setAiError(extractErrorMessage(err));
+    } finally {
+      setAiLoading(null);
+    }
+  };
+
+  const applyAiSuggestion = (s: any) => {
+    setSelectedRoom({
+      roomId: s.roomId,
+      roomName: s.roomName,
+      roomNumber: s.roomNumber,
+      facilityName: s.facilityName,
+      floorNumber: s.floorNumber,
+      building: s.building,
+      capacity: s.capacity,
+      type: s.roomType,
+      amenities: s.amenities ?? [],
+    });
+  };
+
+  const handleAiValidate = async () => {
+    if (!selectedRoom) {
+      setAiError('Assign a room first to run AI validation.');
+      return;
+    }
+    setAiLoading('validate');
+    setAiError('');
+    setAiSuggestions([]);
+    try {
+      const data = await facilitiesService.aiValidateReservation({
+        roomId: selectedRoom.roomId,
+        startTime: `${createForm.date}T${createForm.startTime}:00`,
+        endTime: `${createForm.date}T${createForm.endTime}:00`,
+        expectedAttendees: createForm.expectedAttendees ? Number(createForm.expectedAttendees) : null,
+      });
+      setAiValidation(data);
+    } catch (err: any) {
+      setAiError(extractErrorMessage(err));
+      setAiValidation(null);
+    } finally {
+      setAiLoading(null);
+    }
+  };
+
+  const applyAlternativeSlot = (alt: any) => {
+    setCreateForm(prev => ({
+      ...prev,
+      date: alt.date,
+      startTime: String(alt.startTime).slice(0, 5),
+      endTime: String(alt.endTime).slice(0, 5),
+    }));
+    setAiValidation((prev: any) => prev ? { ...prev, alternatives: [] } : prev);
+  };
 
   const handleEscalateSubmit = (id: string) => {
     setReservations(reservations.map(r => r.id === id ? {
@@ -682,12 +736,119 @@ export const FoReservationsPage: React.FC = () => {
                 ℹ️ Request creation will be validated and automatically escalated to the Facilities Manager for final approval.
               </div>
 
+              {/* AI Reservation Assistant */}
+              <div className="p-3 rounded-xl border border-indigo-200 bg-indigo-50/70">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="font-bold text-slate-700 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-indigo-600" />
+                    AI Reservation Assistant
+                  </label>
+                  <span className="text-[10px] text-slate-400 font-mono">Heuristic + optional LLM</span>
+                </div>
+                <textarea
+                  rows={2}
+                  placeholder="Describe your needs... e.g. 30 people, projector, Tuesday 2-4pm, conference room"
+                  value={aiQuery}
+                  onChange={e => setAiQuery(e.target.value)}
+                  className="w-full bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-indigo-500 focus:outline-none"
+                />
+                <div className="flex flex-wrap gap-2 mt-2">
+                  <button
+                    type="button" onClick={handleAiSuggest} disabled={aiLoading !== null}
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs inline-flex items-center gap-1.5 disabled:opacity-60"
+                  >
+                    {aiLoading === 'suggest' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    Suggest Rooms
+                  </button>
+                  <button
+                    type="button" onClick={handleAiDraft} disabled={aiLoading !== null}
+                    className="px-3 py-1.5 rounded-lg bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold text-xs disabled:opacity-60"
+                  >
+                    Auto-fill Draft
+                  </button>
+                  <button
+                    type="button" onClick={handleAiValidate} disabled={aiLoading !== null}
+                    className="px-3 py-1.5 rounded-lg bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold text-xs disabled:opacity-60"
+                  >
+                    AI Validate
+                  </button>
+                </div>
+
+                {aiDraftApplied && (
+                  <div className="mt-2 p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-medium">
+                    Draft applied to the form below. Review and adjust before submitting.
+                  </div>
+                )}
+                {aiError && (
+                  <div className="mt-2 p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[11px] font-medium">{aiError}</div>
+                )}
+
+                {aiSuggestions.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Suggested Rooms (ranked)</p>
+                    {aiSuggestions.map((s, i) => (
+                      <div key={s.roomId} className="p-2.5 rounded-lg bg-white border border-slate-200 flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="w-4 h-4 rounded-full bg-indigo-600 text-white text-[9px] font-bold flex items-center justify-center shrink-0">{i + 1}</span>
+                            <span className="font-bold text-slate-900 text-xs">{s.roomName}</span>
+                            <span className="font-mono text-[10px] text-slate-400">{s.capacity ?? '—'} seats</span>
+                          </div>
+                          <p className="text-[10px] text-slate-500 mt-0.5 truncate">{s.matchReason}</p>
+                          <p className="text-[10px] text-slate-400 font-mono">{s.facilityName}{s.floorNumber != null ? ` · Floor ${s.floorNumber}` : ''}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => applyAiSuggestion(s)}
+                          className={`shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-bold transition ${
+                            selectedRoom?.roomId === s.roomId ? 'bg-emerald-600 text-white' : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                          }`}
+                        >
+                          {selectedRoom?.roomId === s.roomId ? 'Selected' : 'Select'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {aiValidation && (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      Validation {aiValidation.valid
+                        ? <span className="text-emerald-600">PASSED</span>
+                        : <span className="text-rose-600">BLOCKED</span>}
+                    </p>
+                    {(aiValidation.warnings ?? []).map((w: any, i: number) => (
+                      <div key={i} className={`p-2 rounded-lg text-[11px] font-medium border ${
+                        w.severity === 'ERROR' ? 'bg-rose-50 border-rose-200 text-rose-700'
+                          : w.severity === 'WARNING' ? 'bg-amber-50 border-amber-200 text-amber-800'
+                            : 'bg-slate-50 border-slate-200 text-slate-600'
+                      }`}>
+                        {w.message}
+                      </div>
+                    ))}
+                    {(aiValidation.alternatives ?? []).length > 0 && (
+                      <div className="pt-1">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Alternative Slots</p>
+                        <div className="space-y-1.5">
+                          {(aiValidation.alternatives ?? []).map((alt: any, i: number) => (
+                            <button key={i} type="button" onClick={() => applyAlternativeSlot(alt)} className="w-full text-left p-2 rounded-lg bg-white border border-emerald-200 hover:bg-emerald-50 text-[11px] font-mono text-slate-700">
+                              {alt.date} · {String(alt.startTime).slice(0, 5)} - {String(alt.endTime).slice(0, 5)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div>
                 <label className="font-bold text-slate-700">Reservation Title *</label>
                 <input
                   type="text" required placeholder="e.g. Executive Board Meeting"
                   value={createForm.title} onChange={e => setCreateForm({ ...createForm, title: e.target.value })}
-                  className="w-full mt-1 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                  className="w-full mt-1 bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
                 />
               </div>
 
@@ -696,21 +857,41 @@ export const FoReservationsPage: React.FC = () => {
                   <label className="font-bold text-slate-700">Facility Category</label>
                   <select
                     value={createForm.category} onChange={e => setCreateForm({ ...createForm, category: e.target.value as any })}
-                    className="w-full mt-1 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                    className="w-full mt-1 bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
                   >
-                    <option value="ROOM">Conference / Meeting Room</option>
-                    <option value="VEHICLE_BAY">Vehicle Dock Bay</option>
-                    <option value="EQUIPMENT">Specialized AV / Equipment</option>
+                    <option value="ROOM" className="bg-white text-slate-900">Conference / Meeting Room</option>
+                    <option value="VEHICLE_BAY" className="bg-white text-slate-900">Vehicle Dock Bay</option>
+                    <option value="EQUIPMENT" className="bg-white text-slate-900">Specialized AV / Equipment</option>
                   </select>
                 </div>
 
                 <div>
                   <label className="font-bold text-slate-700">Room / Bay Selection</label>
-                  <input
-                    type="text" required value={createForm.facilityName}
-                    onChange={e => setCreateForm({ ...createForm, facilityName: e.target.value })}
-                    className="w-full mt-1 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
-                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowRoomPicker(true)}
+                    className={`w-full mt-1 bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none flex items-center justify-between gap-2 transition hover:border-emerald-400 ${
+                      selectedRoom ? 'text-slate-900 font-semibold border-emerald-400' : 'text-slate-500 border-dashed'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2 truncate">
+                      <DoorOpen className={`w-4 h-4 shrink-0 ${selectedRoom ? 'text-emerald-600' : 'text-slate-400'}`} />
+                      {selectedRoom ? (
+                        <span className="truncate">
+                          {selectedRoom.roomName}
+                          <span className="text-slate-400 font-normal"> · {selectedRoom.facilityName}{selectedRoom.floorNumber != null ? ` · Floor ${selectedRoom.floorNumber}` : ''}</span>
+                        </span>
+                      ) : (
+                        'Assign Room'
+                      )}
+                    </span>
+                    <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg shrink-0">
+                      {selectedRoom ? 'Change' : 'Choose'}
+                    </span>
+                  </button>
+                  {!selectedRoom && (
+                    <p className="text-[10px] text-slate-400 mt-1">Select a room from the directory. Availability is checked against the selected date & time.</p>
+                  )}
                 </div>
               </div>
 
@@ -720,7 +901,7 @@ export const FoReservationsPage: React.FC = () => {
                   <input
                     type="text" required placeholder="Full Name" value={createForm.requesterName}
                     onChange={e => setCreateForm({ ...createForm, requesterName: e.target.value })}
-                    className="w-full mt-1 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                    className="w-full mt-1 bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
                 <div>
@@ -728,7 +909,7 @@ export const FoReservationsPage: React.FC = () => {
                   <input
                     type="email" required placeholder="name@photonic.com" value={createForm.requesterEmail}
                     onChange={e => setCreateForm({ ...createForm, requesterEmail: e.target.value })}
-                    className="w-full mt-1 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                    className="w-full mt-1 bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
               </div>
@@ -739,7 +920,7 @@ export const FoReservationsPage: React.FC = () => {
                   <input
                     type="date" required value={createForm.date}
                     onChange={e => setCreateForm({ ...createForm, date: e.target.value })}
-                    className="w-full mt-1 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                    className="w-full mt-1 bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
                 <div>
@@ -747,7 +928,7 @@ export const FoReservationsPage: React.FC = () => {
                   <input
                     type="time" required value={createForm.startTime}
                     onChange={e => setCreateForm({ ...createForm, startTime: e.target.value })}
-                    className="w-full mt-1 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                    className="w-full mt-1 bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
                 <div>
@@ -755,22 +936,33 @@ export const FoReservationsPage: React.FC = () => {
                   <input
                     type="time" required value={createForm.endTime}
                     onChange={e => setCreateForm({ ...createForm, endTime: e.target.value })}
-                    className="w-full mt-1 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                    className="w-full mt-1 bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="font-bold text-slate-700">Priority Level</label>
-                <select
-                  value={createForm.priority} onChange={e => setCreateForm({ ...createForm, priority: e.target.value as any })}
-                  className="w-full mt-1 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
-                >
-                  <option value="LOW">Low</option>
-                  <option value="MEDIUM">Medium</option>
-                  <option value="HIGH">High</option>
-                  <option value="URGENT">Urgent (Immediate Escalation)</option>
-                </select>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-700">Expected Attendees</label>
+                  <input
+                    type="number" min={1} placeholder="e.g. 12" value={createForm.expectedAttendees}
+                    onChange={e => setCreateForm({ ...createForm, expectedAttendees: e.target.value })}
+                    className="w-full mt-1 bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">Used by AI validation to check room capacity fit.</p>
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700">Priority Level</label>
+                  <select
+                    value={createForm.priority} onChange={e => setCreateForm({ ...createForm, priority: e.target.value as any })}
+                    className="w-full mt-1 bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                  >
+                    <option value="LOW" className="bg-white text-slate-900">Low</option>
+                    <option value="MEDIUM" className="bg-white text-slate-900">Medium</option>
+                    <option value="HIGH" className="bg-white text-slate-900">High</option>
+                    <option value="URGENT" className="bg-white text-slate-900">Urgent (Immediate Escalation)</option>
+                  </select>
+                </div>
               </div>
 
               <div>
@@ -778,16 +970,21 @@ export const FoReservationsPage: React.FC = () => {
                 <textarea
                   rows={2} placeholder="Event description, required setup..." value={createForm.description}
                   onChange={e => setCreateForm({ ...createForm, description: e.target.value })}
-                  className="w-full mt-1 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                  className="w-full mt-1 bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
                 />
               </div>
+
+              {submitError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 font-medium">{submitError}</div>
+              )}
 
               <div className="pt-3 border-t flex justify-end space-x-2">
                 <button type="button" onClick={() => setShowCreateModal(false)} className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-semibold hover:bg-slate-200">
                   Cancel
                 </button>
-                <button type="submit" className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700">
-                  Submit & Escalate Request
+                <button type="submit" disabled={submitting} className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 inline-flex items-center space-x-1.5 disabled:opacity-60">
+                  {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{submitting ? 'Submitting…' : 'Submit & Escalate Request'}</span>
                 </button>
               </div>
             </form>
@@ -806,16 +1003,16 @@ export const FoReservationsPage: React.FC = () => {
             <form onSubmit={handleEditSave} className="p-5 space-y-3 text-xs">
               <div>
                 <label className="font-bold text-slate-700">Title</label>
-                <input type="text" value={editModal.title} onChange={e => setEditModal({ ...editModal, title: e.target.value })} className="w-full mt-1 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none" />
+                <input type="text" value={editModal.title} onChange={e => setEditModal({ ...editModal, title: e.target.value })} className="w-full mt-1 bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="font-bold text-slate-700">Start Time</label>
-                  <input type="time" value={editModal.startTime} onChange={e => setEditModal({ ...editModal, startTime: e.target.value })} className="w-full mt-1 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none" />
+                  <input type="time" value={editModal.startTime} onChange={e => setEditModal({ ...editModal, startTime: e.target.value })} className="w-full mt-1 bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none" />
                 </div>
                 <div>
                   <label className="font-bold text-slate-700">End Time</label>
-                  <input type="time" value={editModal.endTime} onChange={e => setEditModal({ ...editModal, endTime: e.target.value })} className="w-full mt-1 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none" />
+                  <input type="time" value={editModal.endTime} onChange={e => setEditModal({ ...editModal, endTime: e.target.value })} className="w-full mt-1 bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none" />
                 </div>
               </div>
               <div className="pt-3 flex justify-end space-x-2">
@@ -850,7 +1047,7 @@ export const FoReservationsPage: React.FC = () => {
                   placeholder="Provide context, urgency reasons, or special requirements for the Facilities Manager..."
                   value={escalateNotes}
                   onChange={e => setEscalateNotes(e.target.value)}
-                  className="w-full border border-slate-300 rounded-xl p-2.5 text-xs focus:border-emerald-500 focus:outline-none"
+                  className="w-full bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded-xl p-2.5 text-xs focus:border-emerald-500 focus:outline-none"
                 />
               </div>
 
@@ -939,6 +1136,20 @@ export const FoReservationsPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Room Picker Modal */}
+      <RoomPicker
+        open={showRoomPicker}
+        date={createForm.date}
+        startTime={createForm.startTime}
+        endTime={createForm.endTime}
+        onSelect={(room) => {
+          setSelectedRoom(room);
+          setCreateForm(f => ({ ...f, facilityName: room.facilityName }));
+          setShowRoomPicker(false);
+        }}
+        onClose={() => setShowRoomPicker(false)}
+      />
     </div>
   );
 };
