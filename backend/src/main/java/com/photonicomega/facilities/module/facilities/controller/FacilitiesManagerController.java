@@ -419,6 +419,7 @@ public class FacilitiesManagerController {
 
     @GetMapping("/calendar")
     @Operation(summary = "Calendar events (reservations + maintenance)")
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getCalendar(
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Integer month) {
@@ -462,6 +463,7 @@ public class FacilitiesManagerController {
 
     @GetMapping("/analytics")
     @Operation(summary = "Analytics data for charts")
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<ApiResponse<Map<String, Object>>> getAnalytics() {
         LocalDate today = LocalDate.now();
 
