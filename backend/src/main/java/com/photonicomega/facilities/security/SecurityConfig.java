@@ -85,9 +85,19 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(Arrays.asList(allowedOrigins.split(",")));
+        // Origin *patterns* rather than exact origins: allowCredentials(true)
+        // forbids a bare "*" in setAllowedOrigins, and the Vite dev server
+        // shifts ports (5173 -> 5174 -> ...) whenever a previous instance is
+        // still running. An unmatched origin is rejected by Spring's CORS
+        // filter with "403 Invalid CORS request" before authentication runs,
+        // which surfaces in the UI as a failed login rather than a CORS error.
+        config.setAllowedOriginPatterns(Arrays.stream(allowedOrigins.split(","))
+                .map(String::trim)
+                .filter(origin -> !origin.isEmpty())
+                .toList());
         config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
+        config.setExposedHeaders(List.of("Content-Disposition"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 

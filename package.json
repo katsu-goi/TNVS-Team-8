@@ -5,5 +5,8 @@
   "scripts": {
     "build": "cd frontend && npm install && npm run build",
     "dev": "cd frontend && npm run dev"
+  },
+  "dependencies": {
+    "@supabase/server": "^1.4.1"
   }
 }

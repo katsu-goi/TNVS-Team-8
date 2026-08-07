@@ -419,6 +419,11 @@ public class FacilitiesManagerController {
 
     @GetMapping("/calendar")
     @Operation(summary = "Calendar events (reservations + maintenance)")
+    // Reservation.room / .reservedBy and MaintenanceSchedule.room are LAZY and
+    // open-in-view is disabled, so building the event DTOs below would hit a
+    // detached proxy ("could not initialize proxy - no Session") and 500.
+    // Same read-only transaction the other list endpoints in this controller use.
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getCalendar(
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Integer month) {
@@ -462,6 +467,10 @@ public class FacilitiesManagerController {
 
     @GetMapping("/analytics")
     @Operation(summary = "Analytics data for charts")
+    // Groups reservations by Reservation.reservedBy.department and
+    // Room.facility.name, both LAZY - needs an open session for the same
+    // reason as /calendar.
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<ApiResponse<Map<String, Object>>> getAnalytics() {
         LocalDate today = LocalDate.now();
 

@@ -1,5 +1,6 @@
 package com.photonicomega.facilities.module.auth.domain;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.photonicomega.facilities.common.domain.BaseEntity;
 import jakarta.persistence.*;
 import lombok.*;
@@ -32,6 +33,10 @@ public class User extends BaseEntity {
     @Column(name = "email", nullable = false, unique = true, length = 255)
     private String email;
 
+    // WRITE_ONLY: never serialised into a response, but still accepted when
+    // binding inbound JSON. Any endpoint that returns an entity referencing a
+    // User would otherwise expose the bcrypt hash.
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 
@@ -72,9 +77,11 @@ public class User extends BaseEntity {
     @Column(name = "locked_until")
     private LocalDateTime lockedUntil;
 
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @Column(name = "password_reset_token")
     private String passwordResetToken;
 
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @Column(name = "password_reset_expires_at")
     private LocalDateTime passwordResetExpiresAt;
 
