@@ -22,13 +22,26 @@ export function getDashboardPath(user: User | null): string {
 }
 
 const savedToken = localStorage.getItem('accessToken');
+const savedRefreshToken = localStorage.getItem('refreshToken');
+
+function loadSavedUser(): User | null {
+  const raw = localStorage.getItem('user');
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as User;
+  } catch {
+    localStorage.removeItem('user');
+    return null;
+  }
+}
 
 export const useAuthStore = create<AuthState>((set) => ({
-  user: null,
+  user: loadSavedUser(),
   accessToken: savedToken,
-  refreshToken: null,
+  refreshToken: savedRefreshToken,
   setAuthTokens: (user, accessToken, refreshToken) => {
     localStorage.setItem('accessToken', accessToken);
+    localStorage.setItem('user', JSON.stringify(user));
     if (refreshToken) {
       localStorage.setItem('refreshToken', refreshToken);
     }
@@ -37,6 +50,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   logout: () => {
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
+    localStorage.removeItem('user');
     set({ user: null, accessToken: null, refreshToken: null });
   },
 }));
