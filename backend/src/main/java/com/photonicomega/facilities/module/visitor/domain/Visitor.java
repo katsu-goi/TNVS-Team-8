@@ -26,7 +26,11 @@ public class Visitor extends BaseEntity {
     private String company;
     private String idNumber;
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    // EAGER: open-in-view is disabled, so a lazy proxy here fails to
+    // serialise ("could not initialize proxy - no Session") and turns
+    // GET /v1/visitors into a 500. User exposes no back-reference to
+    // Visitor, and its credential fields are WRITE_ONLY.
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "host_id", nullable = false)
     private User host;
 
