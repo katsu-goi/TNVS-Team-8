@@ -4,6 +4,7 @@ import com.photonicomega.facilities.common.domain.BaseEntity;
 import com.photonicomega.facilities.module.documents.domain.Document;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.BatchSize;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -56,7 +57,9 @@ public class Contract extends BaseEntity {
     @JoinColumn(name = "document_id")
     private Document associatedDocument;
 
-    @OneToMany(mappedBy = "contract", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OneToMany(mappedBy = "contract", cascade = CascadeType.ALL, orphanRemoval = true,
+            fetch = FetchType.EAGER)
+    @BatchSize(size = 50)
     @Builder.Default
     private List<ContractClause> clauses = new ArrayList<>();
 }

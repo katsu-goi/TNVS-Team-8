@@ -16,6 +16,9 @@ import com.photonicomega.facilities.module.documents.repository.DocumentReposito
 import com.photonicomega.facilities.module.records.domain.PolicyAction;
 import com.photonicomega.facilities.module.records.domain.RetentionPolicy;
 import com.photonicomega.facilities.module.records.repository.RetentionPolicyRepository;
+import com.photonicomega.facilities.module.visitor.domain.Visitor;
+import com.photonicomega.facilities.module.visitor.domain.VisitorStatus;
+import com.photonicomega.facilities.module.visitor.repository.VisitorRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -23,8 +26,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -39,13 +45,16 @@ public class ComplianceService {
 
     private static final int EXPIRY_WINDOW_DAYS = 30;
     private static final int REVIEW_OVERDUE_DAYS = 14;
+    private static final int VISITOR_STALE_HOURS = 12;
     private static final String MODULE = "COMPLIANCE";
+    private static final String VISITOR_MODULE = "VISITOR";
 
     private final DocumentRepository documentRepository;
     private final ContractRepository contractRepository;
     private final RetentionPolicyRepository retentionPolicyRepository;
     private final DisposalRequestRepository disposalRequestRepository;
     private final ComplianceAlertRepository complianceAlertRepository;
+    private final VisitorRepository visitorRepository;
     private final AuditService auditService;
 
     // --- Document archiving ---
@@ -186,8 +195,9 @@ public class ComplianceService {
     // --- Compliance alerts ---
 
     /**
-     * Scans contracts, documents, and pending disposals and upserts alerts by
-     * dedupKey. Idempotent: existing alerts keep their acknowledge/dismiss state.
+     * Scans contracts, documents, retention windows, and pending disposals and
+     * upserts alerts by dedupKey. Idempotent: existing alerts keep their
+     * acknowledge/dismiss state.
      */
     @Transactional
     public void generateAlerts() {
@@ -219,6 +229,30 @@ public class ComplianceService {
                     "Disposal awaiting approval: " + r.getDocumentTitle(),
                     "A document disposal request requires your decision.",
                     "DisposalRequest", r.getId().toString());
+        }
+
+        // Retention windows. Only documents that already carry a schedule are
+        // considered - assignment happens in applyRetentionToDocuments().
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime retentionWindowEnd = now.plusDays(EXPIRY_WINDOW_DAYS);
+        for (Document d : documentRepository.findByRetentionExpiresAtIsNotNullAndDeletedFalse()) {
+            if (d.getStatus() == DocumentStatus.DELETED) {
+                continue; // Already disposed of; retention no longer applies.
+            }
+            LocalDateTime expiresAt = d.getRetentionExpiresAt();
+            if (expiresAt.isBefore(now)) {
+                upsertAlert("RETENTION_EXPIRED:" + d.getId(), AlertType.RETENTION_EXPIRED,
+                        AlertSeverity.CRITICAL, "Retention period expired: " + d.getTitle(),
+                        "Retention ended on " + expiresAt.toLocalDate()
+                                + ". Review this document for disposal or re-classification.",
+                        "Document", d.getId().toString());
+            } else if (expiresAt.isBefore(retentionWindowEnd)) {
+                upsertAlert("RETENTION_EXPIRING:" + d.getId(), AlertType.RETENTION_EXPIRING,
+                        AlertSeverity.WARNING, "Retention period ending soon: " + d.getTitle(),
+                        "Retention ends on " + expiresAt.toLocalDate()
+                                + ", within the next " + EXPIRY_WINDOW_DAYS + " days.",
+                        "Document", d.getId().toString());
+            }
         }
     }
 
@@ -261,6 +295,139 @@ public class ComplianceService {
         auditService.log(user, "DISMISS_ALERT", MODULE, "ComplianceAlert", id.toString(),
                 "Dismissed alert: " + alert.getTitle(), null);
         return saved;
+    }
+
+    // --- Scheduled automation (driven by ComplianceScheduler) ---
+
+    /**
+     * Assigns a retention policy to every document that does not have one yet,
+     * computes {@code retentionExpiresAt = createdAt + retentionPeriodDays}, and
+     * then regenerates compliance alerts.
+     *
+     * <p>Matching is by policy <em>name</em>, case-insensitively, against the
+     * document's category name and its AI-predicted category. When nothing
+     * matches, the first active policy whose name contains {@code GENERAL} or
+     * {@code DEFAULT} is used as the catch-all; if there is no such policy the
+     * document is left unassigned and skipped. Policies are never created here -
+     * only what already exists in {@code retention_policies} is assigned.
+     *
+     * <p>Idempotent and safe to re-run: documents that already carry a policy are
+     * not touched, except to backfill a missing expiry date.
+     *
+     * @return the number of documents whose retention fields were written
+     */
+    @Transactional
+    public int applyRetentionToDocuments() {
+        List<RetentionPolicy> policies = retentionPolicyRepository.findByActiveTrue().stream()
+                .filter(p -> p.getName() != null && p.getRetentionPeriodDays() != null)
+                .toList();
+        if (policies.isEmpty()) {
+            log.warn("Retention check: no active retention policies exist, nothing to assign.");
+            generateAlerts();
+            return 0;
+        }
+        RetentionPolicy fallback = policies.stream()
+                .filter(p -> {
+                    String n = p.getName().toUpperCase(Locale.ROOT);
+                    return n.contains("GENERAL") || n.contains("DEFAULT");
+                })
+                .findFirst()
+                .orElse(null);
+
+        int assigned = 0;
+        for (Document d : documentRepository.findByRetentionPolicyIdIsNullAndDeletedFalse()) {
+            RetentionPolicy policy = matchPolicy(d, policies).orElse(fallback);
+            if (policy == null) {
+                continue; // No name match and no GENERAL/DEFAULT catch-all: leave unassigned.
+            }
+            d.setRetentionPolicyId(policy.getId());
+            d.setRetentionExpiresAt(retentionExpiryFor(d, policy));
+            documentRepository.save(d);
+            assigned++;
+        }
+
+        // Backfill: a document may carry a policy id from an earlier run that
+        // predates the expiry column, or from a direct SQL assignment.
+        for (Document d : documentRepository
+                .findByRetentionPolicyIdIsNotNullAndRetentionExpiresAtIsNullAndDeletedFalse()) {
+            retentionPolicyRepository.findById(d.getRetentionPolicyId()).ifPresent(p -> {
+                if (p.getRetentionPeriodDays() != null) {
+                    d.setRetentionExpiresAt(retentionExpiryFor(d, p));
+                    documentRepository.save(d);
+                }
+            });
+        }
+
+        log.info("Retention check: assigned a retention policy to {} document(s).", assigned);
+        generateAlerts();
+        return assigned;
+    }
+
+    /**
+     * Closes out visitors who were registered or checked in but never checked
+     * out. A visit is stale once its arrival time (actual if recorded, otherwise
+     * expected) is more than {@value #VISITOR_STALE_HOURS} hours old and no
+     * departure has been recorded.
+     *
+     * <p>Only {@code status} is changed - {@code actualDeparture} is deliberately
+     * left null rather than fabricating a departure timestamp the system never
+     * observed.
+     *
+     * @return the number of visitors auto-checked-out
+     */
+    @Transactional
+    public int autoCheckoutStaleVisitors() {
+        LocalDateTime staleBefore = LocalDateTime.now().minusHours(VISITOR_STALE_HOURS);
+        int closed = 0;
+        for (VisitorStatus status : List.of(VisitorStatus.REGISTERED, VisitorStatus.CHECKED_IN)) {
+            for (Visitor v : visitorRepository.findByStatus(status)) {
+                if (v.getActualDeparture() != null) {
+                    continue;
+                }
+                LocalDateTime arrival = v.getActualArrival() != null ? v.getActualArrival() : v.getExpectedArrival();
+                if (arrival == null || !arrival.isBefore(staleBefore)) {
+                    continue;
+                }
+                v.setStatus(VisitorStatus.CHECKED_OUT);
+                visitorRepository.save(v);
+                auditService.log(null, "AUTO_CHECKOUT_VISITOR", VISITOR_MODULE, "Visitor",
+                        v.getId().toString(),
+                        "Auto-checked-out stale visitor '" + v.getFullName() + "' (was " + status
+                                + ", arrival " + arrival + ", no departure recorded after "
+                                + VISITOR_STALE_HOURS + "h).", null);
+                closed++;
+            }
+        }
+        log.info("Visitor cleanup: auto-checked-out {} stale visitor(s).", closed);
+        return closed;
+    }
+
+    /** Case-insensitive match of the document's category names against policy names. */
+    private Optional<RetentionPolicy> matchPolicy(Document d, List<RetentionPolicy> policies) {
+        List<String> candidates = new ArrayList<>();
+        if (d.getCategory() != null && d.getCategory().getName() != null) {
+            candidates.add(d.getCategory().getName());
+        }
+        if (d.getAiPredictedCategory() != null) {
+            candidates.add(d.getAiPredictedCategory());
+        }
+        for (String candidate : candidates) {
+            String needle = candidate.trim();
+            Optional<RetentionPolicy> hit = policies.stream()
+                    .filter(p -> p.getName().trim().equalsIgnoreCase(needle))
+                    .findFirst();
+            if (hit.isPresent()) {
+                return hit;
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static LocalDateTime retentionExpiryFor(Document d, RetentionPolicy policy) {
+        // Documents created before BaseEntity auditing was in place can have a
+        // null createdAt; date the retention window from now in that case.
+        LocalDateTime base = d.getCreatedAt() != null ? d.getCreatedAt() : LocalDateTime.now();
+        return base.plusDays(policy.getRetentionPeriodDays());
     }
 
     // --- helpers ---

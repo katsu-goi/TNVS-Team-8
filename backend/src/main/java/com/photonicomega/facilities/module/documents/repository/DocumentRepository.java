@@ -21,6 +21,15 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
     List<Document> findByClassificationLevel(ClassificationLevel level);
     List<Document> findByCreatedByAndDeletedFalseOrderByCreatedAtDesc(String createdBy);
 
+    /** Candidates for retention auto-assignment (nightly retention job). */
+    List<Document> findByRetentionPolicyIdIsNullAndDeletedFalse();
+
+    /** Documents already under a retention schedule, for expiry alert scanning. */
+    List<Document> findByRetentionExpiresAtIsNotNullAndDeletedFalse();
+
+    /** Retention assigned but the expiry date was never computed - backfill target. */
+    List<Document> findByRetentionPolicyIdIsNotNullAndRetentionExpiresAtIsNullAndDeletedFalse();
+
     @Query("""
         SELECT d FROM Document d
         WHERE LOWER(d.title) LIKE LOWER(CONCAT('%', :query, '%'))

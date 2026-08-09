@@ -1,9 +1,15 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   AlertCircle, RefreshCw, Calendar, FileText, Bell, User, Eye,
-  Building2, Settings,
+  Building2, Settings, ShieldCheck, ShieldAlert, Plus, Loader2,
 } from 'lucide-react';
 import { safeFetchJson } from '../../api/client';
+import { DocumentUploadPanel } from '../documents/DocumentUploadPanel';
+import { visitorService } from '../../api/visitorService';
+import { ID_TYPES } from '../../types/visitors';
+import type {
+  IdType, VisitorVerification, VisitorWatchlistEntry,
+} from '../../types/visitors';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -113,6 +119,331 @@ export const FoReservationsPage: React.FC = () => {
   );
 };
 
+const scoreTone = (score: number | null) => {
+  if (score === null || score === undefined) return 'bg-slate-100 text-slate-500';
+  if (score >= 0.9) return 'bg-rose-50 text-rose-600';
+  if (score >= 0.7) return 'bg-amber-50 text-amber-600';
+  return 'bg-emerald-50 text-emerald-600';
+};
+
+/**
+ * Per-visitor ID verification. Reads the real visitor list from
+ * `/v1/visitors` (the endpoint the read-only table above targets does not
+ * exist yet) so each row carries the UUID `POST /v1/visitors/{id}/verify` needs.
+ */
+const VisitorVerificationSection: React.FC = () => {
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [idType, setIdType] = useState<Record<string, IdType>>({});
+  const [idNumber, setIdNumber] = useState<Record<string, string>>({});
+  const [result, setResult] = useState<VisitorVerification | null>(null);
+  const [history, setHistory] = useState<VisitorVerification[]>([]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setRows(await visitorService.listVisitors());
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load visitors');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const runVerify = async (id: string) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      const verification = await visitorService.verifyVisitor(
+        id, idType[id] || 'DRIVERS_LICENSE', idNumber[id]?.trim() || undefined,
+      );
+      setResult(verification);
+      setHistory(await visitorService.listVerifications(id));
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Verification failed');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className="card-stat p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-2">
+          <ShieldCheck className="w-4 h-4 text-emerald-600" />
+          <h3 className="text-sm font-bold text-slate-900">ID Verification &amp; Watchlist Screening</h3>
+        </div>
+        <button onClick={load} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition">
+          <RefreshCw className="w-4 h-4 text-slate-400" />
+        </button>
+      </div>
+
+      {error && <p className="text-xs text-rose-600">{error}</p>}
+
+      {loading ? (
+        <p className="text-xs text-slate-400">Loading visitors…</p>
+      ) : rows.length === 0 ? (
+        <p className="text-xs text-slate-400">No registered visitors to verify.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 text-left">
+                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Visitor</th>
+                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">ID Type</th>
+                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">ID Number</th>
+                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((v: any) => (
+                <tr key={v.id} className="border-b border-slate-50">
+                  <td className="p-2">
+                    <p className="font-medium text-slate-900">{v.fullName}</p>
+                    <p className="text-[10px] text-slate-400">{v.company || '—'} · {v.status}</p>
+                  </td>
+                  <td className="p-2">
+                    <select
+                      value={idType[v.id] || 'DRIVERS_LICENSE'}
+                      onChange={e => setIdType(s => ({ ...s, [v.id]: e.target.value as IdType }))}
+                      className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white"
+                    >
+                      {ID_TYPES.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
+                    </select>
+                  </td>
+                  <td className="p-2">
+                    <input
+                      value={idNumber[v.id] ?? (v.idNumber || '')}
+                      onChange={e => setIdNumber(s => ({ ...s, [v.id]: e.target.value }))}
+                      placeholder="N02-18-998412"
+                      className="text-xs border border-slate-200 rounded-lg px-2 py-1 w-40 font-mono"
+                    />
+                  </td>
+                  <td className="p-2">
+                    <button
+                      onClick={() => runVerify(v.id)}
+                      disabled={busyId === v.id}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-semibold inline-flex items-center space-x-1 disabled:opacity-50"
+                    >
+                      {busyId === v.id
+                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                        : <ShieldCheck className="w-3 h-3" />}
+                      <span>Verify</span>
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {result && (
+        <div className={`rounded-xl border p-4 space-y-3 ${
+          result.watchlistStatus === 'FLAGGED'
+            ? 'border-rose-200 bg-rose-50/50'
+            : 'border-emerald-200 bg-emerald-50/50'
+        }`}>
+          <div className="flex items-center space-x-2">
+            {result.watchlistStatus === 'FLAGGED'
+              ? <ShieldAlert className="w-4 h-4 text-rose-600" />
+              : <ShieldCheck className="w-4 h-4 text-emerald-600" />}
+            <p className="text-sm font-bold text-slate-900">
+              {result.watchlistStatus === 'FLAGGED' ? 'Watchlist match — escalate' : 'Cleared'}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+            <div><p className="text-slate-400 text-[10px] uppercase">Verification</p><p className="font-mono">{result.verificationStatus}</p></div>
+            <div><p className="text-slate-400 text-[10px] uppercase">Watchlist</p><p className="font-mono">{result.watchlistStatus}</p></div>
+            <div>
+              <p className="text-slate-400 text-[10px] uppercase">Match Score</p>
+              <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${scoreTone(result.matchScore)}`}>
+                {result.matchScore ?? '—'}
+              </span>
+            </div>
+            <div><p className="text-slate-400 text-[10px] uppercase">Verified By</p><p className="font-mono truncate">{result.verifiedBy || '—'}</p></div>
+          </div>
+
+          {result.notes && <p className="text-xs text-slate-600">{result.notes}</p>}
+
+          <div>
+            <p className="text-[10px] uppercase text-slate-400 mb-1">Extracted Fields</p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1 text-[11px] font-mono text-slate-600">
+              {Object.entries(result.extractedFields || {}).map(([k, val]) => (
+                <div key={k} className="truncate">
+                  <span className="text-slate-400">{k}: </span>{String(val ?? '—')}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {history.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase text-slate-400 mb-1">History (newest first)</p>
+              <ul className="space-y-1">
+                {history.map(h => (
+                  <li key={h.id} className="text-[11px] text-slate-600 flex items-center space-x-2">
+                    <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                      h.watchlistStatus === 'FLAGGED' ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'
+                    }`}>{h.watchlistStatus}</span>
+                    <span className="font-mono">{h.matchScore ?? '—'}</span>
+                    <span className="text-slate-400">{h.verifiedAt ? new Date(h.verifiedAt).toLocaleString() : '—'}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/** Watchlist management: list entries, add a new one, activate/deactivate. */
+const VisitorWatchlistSection: React.FC = () => {
+  const [entries, setEntries] = useState<VisitorWatchlistEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [form, setForm] = useState({ fullName: '', idNumber: '', reason: '' });
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setEntries(await visitorService.listWatchlist());
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load watchlist');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const add = async () => {
+    if (!form.fullName.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await visitorService.addWatchlistEntry(
+        form.fullName.trim(), form.idNumber.trim() || undefined, form.reason.trim() || undefined,
+      );
+      setForm({ fullName: '', idNumber: '', reason: '' });
+      await load();
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to add entry');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggle = async (entry: VisitorWatchlistEntry) => {
+    setError(null);
+    try {
+      await visitorService.updateWatchlistStatus(
+        entry.id, entry.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE',
+      );
+      await load();
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to update entry');
+    }
+  };
+
+  return (
+    <div className="card-stat p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-2">
+          <ShieldAlert className="w-4 h-4 text-rose-500" />
+          <h3 className="text-sm font-bold text-slate-900">Visitor Watchlist</h3>
+        </div>
+        <button onClick={load} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition">
+          <RefreshCw className="w-4 h-4 text-slate-400" />
+        </button>
+      </div>
+
+      {error && <p className="text-xs text-rose-600">{error}</p>}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          value={form.fullName}
+          onChange={e => setForm(f => ({ ...f, fullName: e.target.value }))}
+          placeholder="Full name *"
+          className="text-xs border border-slate-200 rounded-lg px-3 py-2 flex-1 min-w-[160px]"
+        />
+        <input
+          value={form.idNumber}
+          onChange={e => setForm(f => ({ ...f, idNumber: e.target.value }))}
+          placeholder="ID number"
+          className="text-xs border border-slate-200 rounded-lg px-3 py-2 w-40 font-mono"
+        />
+        <input
+          value={form.reason}
+          onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}
+          placeholder="Reason"
+          className="text-xs border border-slate-200 rounded-lg px-3 py-2 flex-1 min-w-[160px]"
+        />
+        <button
+          onClick={add}
+          disabled={saving || !form.fullName.trim()}
+          className="px-3 py-2 rounded-lg bg-slate-900 text-white text-[11px] font-semibold inline-flex items-center space-x-1 disabled:opacity-40"
+        >
+          {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+          <span>Add</span>
+        </button>
+      </div>
+
+      {loading ? (
+        <p className="text-xs text-slate-400">Loading watchlist…</p>
+      ) : entries.length === 0 ? (
+        <p className="text-xs text-slate-400">The watchlist is empty.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 text-left">
+                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Name</th>
+                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">ID Number</th>
+                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Reason</th>
+                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
+                <th className="p-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map(e => (
+                <tr key={e.id} className="border-b border-slate-50">
+                  <td className="p-2 font-medium text-slate-900">{e.fullName}</td>
+                  <td className="p-2 text-slate-600 font-mono text-xs">{e.idNumber || '—'}</td>
+                  <td className="p-2 text-slate-600 text-xs">{e.reason || '—'}</td>
+                  <td className="p-2">
+                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
+                      e.status === 'ACTIVE' ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-500'
+                    }`}>{e.status}</span>
+                  </td>
+                  <td className="p-2 text-right">
+                    <button
+                      onClick={() => toggle(e)}
+                      className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] font-semibold text-slate-600 hover:bg-slate-50"
+                    >
+                      {e.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const FoVisitorManagementPage: React.FC = () => {
   const [visitors, setVisitors] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -189,6 +520,10 @@ export const FoVisitorManagementPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Task 4 additions - verification and watchlist screening. */}
+      <VisitorVerificationSection />
+      <VisitorWatchlistSection />
     </div>
   );
 };
@@ -226,6 +561,8 @@ export const FoDocumentsPage: React.FC = () => {
         </div>
         <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
       </div>
+
+      <DocumentUploadPanel onUploaded={() => setRetry(r => r + 1)} />
 
       {documents.length === 0 ? (
         <EmptyState icon={FileText} title="No Documents" desc="No facility-related documents have been uploaded." />
