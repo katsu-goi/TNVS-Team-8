@@ -9,6 +9,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { logout as apiLogout } from '../../api/authService';
 import { useUserHeartbeat } from '../../hooks/useUserHeartbeat';
+import { NotificationBell } from '../ui/NotificationBell';
 
 export const EmployeeLayout: React.FC = () => {
   const { user, logout } = useAuthStore();
@@ -71,15 +72,15 @@ export const EmployeeLayout: React.FC = () => {
                   onClick={() => navigate(item.path)}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-full font-medium text-sm transition-all duration-200 ${
                     navIsActive
-                      ? 'bg-[#00E676] text-white font-semibold shadow-[0_0_16px_rgba(0,230,118,0.35)]'
+                      ? 'bg-[#00E676] text-black font-semibold shadow-[0_0_16px_rgba(0,230,118,0.35)]'
                       : 'text-white hover:bg-white/10'
                   }`}
                 >
                   <div className="flex items-center space-x-2.5 min-w-0">
-                    <Icon className={`w-[18px] h-[18px] shrink-0 ${navIsActive ? 'text-white' : 'text-white/60'}`} />
+                    <Icon className={`w-[18px] h-[18px] shrink-0 ${navIsActive ? 'text-black' : 'text-white/60'}`} />
                     <span className="truncate">{item.label}</span>
                   </div>
-                  {navIsActive && <ChevronRight className="w-3.5 h-3.5 shrink-0 text-white" />}
+                  {navIsActive && <ChevronRight className="w-3.5 h-3.5 shrink-0 text-black" />}
                 </button>
               );
             })}
@@ -145,6 +146,7 @@ export const EmployeeLayout: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center space-x-3">
+            <NotificationBell />
             <span className="text-xs text-slate-400 font-mono">Self-Service Portal</span>
           </div>
         </header>

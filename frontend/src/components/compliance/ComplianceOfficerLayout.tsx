@@ -10,6 +10,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { logout as apiLogout } from '../../api/authService';
 import { useUserHeartbeat } from '../../hooks/useUserHeartbeat';
+import { NotificationBell } from '../ui/NotificationBell';
 
 export const ComplianceOfficerLayout: React.FC = () => {
   const { user, logout } = useAuthStore();
@@ -150,6 +151,7 @@ export const ComplianceOfficerLayout: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center space-x-3">
+            <NotificationBell />
             <span className="text-xs text-slate-400 font-mono">Records &amp; Compliance</span>
           </div>
         </header>
