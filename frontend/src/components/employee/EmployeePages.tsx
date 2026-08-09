@@ -6,6 +6,7 @@ import {
   Building2, MapPin, Users as UsersIcon, Upload, Download, Trash2, Check,
 } from 'lucide-react';
 import { employeeService } from '../../api/employeeService';
+import { DocumentUploadPanel } from '../documents/DocumentUploadPanel';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -487,6 +488,12 @@ export const EmpDocumentsPage: React.FC = () => {
     <div className="space-y-5">
       <PageHeader title="Documents" subtitle="Upload documents and track approval status"
         action={<ActionButton onClick={openNew} icon={Upload} variant="primary">Upload Document</ActionButton>} />
+
+      <DocumentUploadPanel
+        title="Upload a Real File"
+        subtitle="Attach an actual file — it is stored on the file server, OCR-scanned, classified by AI, then queued for compliance review."
+        onUploaded={() => setRetry(r => r + 1)}
+      />
 
       {rows.length === 0 ? (
         <EmptyState icon={FileText} title="No documents yet" desc="Upload document metadata to submit it for review. Approved documents can be downloaded." />

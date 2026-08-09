@@ -4,5 +4,7 @@ public enum NotificationType {
     APPROVAL,
     REJECTION,
     REMINDER,
-    INFO
+    INFO,
+    /** A registered visitor has checked in and their host is being told. */
+    VISITOR_ARRIVAL
 }

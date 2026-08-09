@@ -10,7 +10,7 @@ spring:
   application:
     name: facilities-management-service
   profiles:
-    active: ${SPRING_PROFILES_ACTIVE:default}
+    active: ${SPRING_PROFILES_ACTIVE:supabase}
 
   # Primary PostgreSQL Database
   datasource:
@@ -103,6 +103,11 @@ app:
       type: local
       path: ${FILE_STORAGE_PATH:/mnt/fileserver/facilities}
       base-url: ${FILE_STORAGE_URL:http://localhost:8080/api/files}
+    # Used only when the primary path cannot be written to (e.g. a dev
+    # machine with no /mnt/fileserver mount). Upload logs a warning and
+    # keeps working instead of failing.
+    fallback:
+      path: ${FILE_STORAGE_FALLBACK_PATH:${java.io.tmpdir}/facilities-documents}
     backup:
       type: supabase
       url: ${SUPABASE_URL:https://your-project.supabase.co}
@@ -133,7 +138,13 @@ app:
 
   # CORS
   cors:
-    allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
+    # Treated as origin *patterns* (see SecurityConfig), so the localhost
+    # entries cover whichever port Vite lands on - it auto-increments to
+    # 5174, 5175, ... when an earlier dev server is still running, and a
+    # non-listed origin is rejected with "403 Invalid CORS request" before
+    # the request ever reaches the login handler.
+    # Override with the CORS_ORIGINS env var in non-local environments.
+    allowed-origins: ${CORS_ORIGINS:http://localhost:[*],http://127.0.0.1:[*]}
     allowed-methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
     allowed-headers: "*"
     allow-credentials: true
