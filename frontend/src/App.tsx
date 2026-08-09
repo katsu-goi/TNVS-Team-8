@@ -116,7 +116,11 @@ class ErrorBoundary extends React.Component<
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const accessToken = useAuthStore((s) => s.accessToken);
-  if (!accessToken) {
+  const user = useAuthStore((s) => s.user);
+  // Fail-closed: both a bearer token AND a rehydrated user session are required.
+  // A token without a user (or vice-versa) means a corrupt/partial session, so we
+  // never render the authenticated layout from half a session.
+  if (!accessToken || !user || !Object.keys(user).length) {
     return <Navigate to="/login" replace />;
   }
   return <>{children}</>;

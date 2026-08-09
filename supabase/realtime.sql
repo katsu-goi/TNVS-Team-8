@@ -1,6 +1,6 @@
 -- =============================================================
 -- Photonic Omega — Supabase Realtime schema
--- Project: dunijfrvfozwlykpkfhy
+-- Project: local-development-supabase
 --
 -- HOW TO RUN: Open the Supabase Dashboard -> SQL Editor -> New query,
 -- paste this whole file, and click "Run".
