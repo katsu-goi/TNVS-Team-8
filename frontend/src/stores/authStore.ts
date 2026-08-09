@@ -21,6 +21,38 @@ export function getDashboardPath(user: User | null): string {
   return '/';
 }
 
+export function isSuperAdmin(user: User | null): boolean {
+  if (!user?.roles) return false;
+  const roles = user.roles.map(r => r.toUpperCase());
+  return roles.includes('SUPER_ADMIN') || roles.includes('ROLE_SUPER_ADMIN');
+}
+
+/**
+ * Decodes the JWT `roles` claim (a comma-joined list of authorities) and
+ * returns the role names only - ROLE_* entries have the prefix stripped and
+ * permission names (which never carry the ROLE_ prefix) are dropped.
+ *
+ * The backend puts the actual authorities in the token, so this is the ground
+ * truth for what a client can do. LocalStorage can be edited by hand, so the
+ * stored `user.roles` is overridden by these token claims on boot.
+ */
+function decodeTokenRoles(token: string | null): string[] | null {
+  if (!token) return null;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    const raw = payload?.roles;
+    if (typeof raw !== 'string' || !raw) return null;
+    const roles = raw
+      .split(',')
+      .map((r: string) => r.trim())
+      .filter((r: string) => r.startsWith('ROLE_'))
+      .map((r: string) => r.slice('ROLE_'.length));
+    return roles.length > 0 ? roles : null;
+  } catch {
+    return null;
+  }
+}
+
 const savedToken = localStorage.getItem('accessToken');
 const savedRefreshToken = localStorage.getItem('refreshToken');
 
@@ -28,7 +60,13 @@ function loadSavedUser(): User | null {
   const raw = localStorage.getItem('user');
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as User;
+    const stored = JSON.parse(raw) as User;
+    // The token's roles are authoritative; never trust roles from localStorage.
+    const tokenRoles = decodeTokenRoles(savedToken);
+    if (tokenRoles) {
+      return { ...stored, roles: tokenRoles };
+    }
+    return stored;
   } catch {
     localStorage.removeItem('user');
     return null;

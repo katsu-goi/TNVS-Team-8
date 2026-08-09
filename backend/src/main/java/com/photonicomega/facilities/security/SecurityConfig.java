@@ -53,7 +53,12 @@ public class SecurityConfig {
             "/actuator/health",
             "/actuator/info",
             "/files/**",
-            "/ws-endpoint/**"
+            "/ws-endpoint/**",
+            // Container error dispatch must not be re-secured: AccessDeniedHandler
+            // sends a 403 via sendError(), which forwards to /error. If /error is
+            // still behind authentication, that anonymous dispatch overwrites the
+            // 403 with a 401 before the error controller can render it.
+            "/error"
     };
 
     @Bean
@@ -68,7 +73,8 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                     .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                     .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
-                    .requestMatchers("/v1/admin/**").hasAnyRole("ADMIN", "SUPER_ADMIN")
+                    .requestMatchers("/v1/admin/**").hasRole("SUPER_ADMIN")
+                    .requestMatchers("/v1/security/**").hasRole("SUPER_ADMIN")
                     .requestMatchers("/v1/facilities-manager/**").hasRole("FACILITIES_MANAGER")
                     .requestMatchers("/v1/facilities-officer/**").hasRole("FACILITIES_OFFICER")
                     .requestMatchers("/v1/compliance/**").hasRole("COMPLIANCE_OFFICER")

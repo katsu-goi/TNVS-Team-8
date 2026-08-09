@@ -18,6 +18,7 @@ import com.photonicomega.facilities.module.contracts.repository.ContractReposito
 import com.photonicomega.facilities.module.documents.domain.Document;
 import com.photonicomega.facilities.module.documents.domain.DocumentStatus;
 import com.photonicomega.facilities.module.documents.repository.DocumentRepository;
+import com.photonicomega.facilities.module.documents.service.DocumentAccessPolicy;
 import com.photonicomega.facilities.module.records.domain.RetentionPolicy;
 import com.photonicomega.facilities.module.records.repository.RetentionPolicyRepository;
 import io.swagger.v3.oas.annotations.Operation;
@@ -55,6 +56,7 @@ public class ComplianceController {
     private final ComplianceAlertRepository complianceAlertRepository;
     private final UserRepository userRepository;
     private final ComplianceService complianceService;
+    private final DocumentAccessPolicy documentAccessPolicy;
 
     @GetMapping("/dashboard/summary")
     @Operation(summary = "Compliance dashboard KPIs, distributions, and recent activity")
@@ -122,11 +124,13 @@ public class ComplianceController {
     @Operation(summary = "List documents (optional status filter)")
     @Transactional(readOnly = true)
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getDocuments(
-            @RequestParam(required = false) DocumentStatus status) {
+            @RequestParam(required = false) DocumentStatus status,
+            @AuthenticationPrincipal UserDetails userDetails) {
         List<Document> docs = status == null
                 ? documentRepository.findAll()
                 : documentRepository.findByStatus(status);
-        List<Map<String, Object>> result = docs.stream().map(this::toDocumentDto).collect(Collectors.toList());
+        List<Document> visible = documentAccessPolicy.filterViewable(resolveUser(userDetails), docs);
+        List<Map<String, Object>> result = visible.stream().map(this::toDocumentDto).collect(Collectors.toList());
         return ResponseEntity.ok(ApiResponse.success(result, "Documents retrieved"));
     }
 

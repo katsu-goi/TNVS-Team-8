@@ -1,5 +1,7 @@
 package com.photonicomega.facilities.module.security.filter;
 
+import com.photonicomega.facilities.module.auth.domain.User;
+import com.photonicomega.facilities.module.auth.repository.UserRepository;
 import com.photonicomega.facilities.module.security.domain.RiskLevel;
 import com.photonicomega.facilities.module.security.domain.SecurityLog;
 import com.photonicomega.facilities.module.security.domain.SecurityModule;
@@ -8,11 +10,16 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.time.Instant;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Component
 @RequiredArgsConstructor
@@ -20,6 +27,7 @@ import java.util.UUID;
 public class SecurityAuditInterceptor implements HandlerInterceptor {
 
     private final SecurityAuditService securityAuditService;
+    private final UserRepository userRepository;
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
@@ -45,19 +53,9 @@ public class SecurityAuditInterceptor implements HandlerInterceptor {
             String os = parseOS(userAgent);
             String browser = parseBrowser(userAgent);
 
-            // Mocked session user details for audit logs
-            String username = "anonymous";
-            String userId = "anonymous";
-            String role = "GUEST";
-            String department = "EXTERNAL";
-
-            String authHeader = request.getHeader("Authorization");
-            if (authHeader != null && authHeader.startsWith("Bearer ")) {
-                username = "admin";
-                userId = "usr-admin-01";
-                role = "ROLE_ADMIN";
-                department = "IT Security Group";
-            }
+            // Resolve the real authenticated identity from Spring Security,
+            // never a fabricated/session-stamped admin.
+            SecurityAuditSubject subject = resolveSubject(request);
 
             // Decide Module, Action, and Risk Level dynamically
             SecurityModule module = resolveModule(url);
@@ -66,10 +64,11 @@ public class SecurityAuditInterceptor implements HandlerInterceptor {
 
             SecurityLog logEntry = SecurityLog.builder()
                     .timestamp(Instant.now())
-                    .userId(userId)
-                    .fullName("admin".equals(username) ? "System Administrator" : "Anonymous User")
-                    .role(role)
-                    .department(department)
+                    .userId(subject.userId())
+                    .username(subject.username())
+                    .fullName(subject.fullName())
+                    .role(subject.role())
+                    .department(subject.department())
                     .ipAddress(ip)
                     .deviceName(userAgent != null && userAgent.length() > 80 ? userAgent.substring(0, 80) : userAgent)
                     .browser(browser)
@@ -92,17 +91,63 @@ public class SecurityAuditInterceptor implements HandlerInterceptor {
             if (risk == RiskLevel.CRITICAL || risk == RiskLevel.HIGH) {
                 securityAuditService.createSecurityAlert(
                         "High/Critical Operation Logged",
-                        action + " performed by " + username + " on " + url + " - Status: " + status,
+                        action + " performed by " + subject.username() + " on " + url + " - Status: " + status,
                         risk,
                         "AUDIT_ALERT",
                         ip,
-                        userId
+                        subject.userId()
                 );
             }
 
         } catch (Exception e) {
             log.error("Failed to intercept security audit log", e);
         }
+    }
+
+    /**
+     * Resolves the authenticated caller from the Spring Security context,
+     * enriched with the matching {@code users} row for full name + department.
+     * Falls back to an anonymous subject when no authentication is present.
+     */
+    private SecurityAuditSubject resolveSubject(HttpServletRequest request) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()
+                || "anonymousUser".equals(authentication.getPrincipal())) {
+            return new SecurityAuditSubject("anonymous", "anonymous", "Anonymous User", "GUEST", "EXTERNAL");
+        }
+
+        String username = authentication.getName();
+        Set<String> roles = authentication.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .filter(authority -> authority.startsWith("ROLE_"))
+                .map(authority -> authority.substring("ROLE_".length()))
+                .collect(Collectors.toSet());
+
+        String role = roles.isEmpty() ? "AUTHENTICATED" : String.join(",", roles);
+
+        User user = userRepository.findByEmailAndDeletedFalse(username).orElse(null);
+        if (user != null) {
+            String fullName = user.getFirstName() + " " + user.getLastName();
+            return new SecurityAuditSubject(
+                    user.getEmail(),
+                    user.getId().toString(),
+                    fullName.trim(),
+                    role,
+                    user.getDepartment() != null ? user.getDepartment() : "NOT_SET");
+        }
+
+        return new SecurityAuditSubject(username, username, username, role, "NOT_SET");
+    }
+
+    /**
+     * Immutable snapshot of the audit subject resolved from the security context.
+     */
+    private record SecurityAuditSubject(
+            String username,
+            String userId,
+            String fullName,
+            String role,
+            String department) {
     }
 
     private String getClientIp(HttpServletRequest request) {

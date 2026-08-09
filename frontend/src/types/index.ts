@@ -155,6 +155,7 @@ export interface SecurityMetrics {
 export interface SecurityLog {
   id: string;
   userId?: string;
+  username?: string;
   fullName?: string;
   role?: string;
   module: string;
