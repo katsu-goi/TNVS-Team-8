@@ -9,6 +9,7 @@ export interface SecurityOverview {
 export interface SecurityLog {
   id: number;
   userId: string;
+  username?: string;
   fullName: string;
   role: string;
   module: string;

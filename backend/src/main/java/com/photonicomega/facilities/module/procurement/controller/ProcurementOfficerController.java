@@ -14,6 +14,7 @@ import com.photonicomega.facilities.module.contracts.repository.ContractReposito
 import com.photonicomega.facilities.module.documents.domain.Document;
 import com.photonicomega.facilities.module.documents.domain.DocumentStatus;
 import com.photonicomega.facilities.module.documents.repository.DocumentRepository;
+import com.photonicomega.facilities.module.documents.service.DocumentAccessPolicy;
 import com.photonicomega.facilities.module.legal.domain.LegalCase;
 import com.photonicomega.facilities.module.legal.repository.LegalCaseRepository;
 import com.photonicomega.facilities.module.procurement.domain.*;
@@ -63,6 +64,7 @@ public class ProcurementOfficerController {
     private final AuditLogRepository auditLogRepository;
     private final UserRepository userRepository;
     private final ProcurementService procurementService;
+    private final DocumentAccessPolicy documentAccessPolicy;
 
     // --- Dashboard ---
 
@@ -423,11 +425,13 @@ public class ProcurementOfficerController {
     @Operation(summary = "List documents (optional status filter)")
     @Transactional(readOnly = true)
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getDocuments(
-            @RequestParam(required = false) DocumentStatus status) {
+            @RequestParam(required = false) DocumentStatus status,
+            @AuthenticationPrincipal UserDetails userDetails) {
         List<Document> docs = status == null
                 ? documentRepository.findAll()
                 : documentRepository.findByStatus(status);
-        List<Map<String, Object>> result = docs.stream().map(this::toDocumentDto).collect(Collectors.toList());
+        List<Document> visible = documentAccessPolicy.filterViewable(resolveUser(userDetails), docs);
+        List<Map<String, Object>> result = visible.stream().map(this::toDocumentDto).collect(Collectors.toList());
         return ResponseEntity.ok(ApiResponse.success(result, "Documents retrieved"));
     }
 

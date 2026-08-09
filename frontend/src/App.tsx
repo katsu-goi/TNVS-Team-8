@@ -86,7 +86,7 @@ import {
   EmpProfilePage,
   EmpSettingsPage,
 } from './components/employee/EmployeePages';
-import { useAuthStore } from './stores/authStore';
+import { useAuthStore, getDashboardPath, isSuperAdmin } from './stores/authStore';
 
 class ErrorBoundary extends React.Component<
   { fallback: React.ReactNode; children: React.ReactNode },
@@ -116,12 +116,26 @@ class ErrorBoundary extends React.Component<
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const accessToken = useAuthStore((s) => s.accessToken);
+  if (!accessToken) {
+    return <Navigate to="/login" replace />;
+  }
+  return <>{children}</>;
+};
+
+/**
+ * Guards system-administrator surfaces (`/`, `/admin/*`, `/security*`).
+ * Requires the SUPER_ADMIN role (the only system-administrator role the
+ * backend defines); any other role is redirected to its own dashboard.
+ */
+const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) {
     return <Navigate to="/login" replace />;
   }
-  if (user?.roles && !user.roles.includes('FACILITIES_MANAGER')) {
-    return <>{children}</>;
+  if (!isSuperAdmin(user)) {
+    const destination = getDashboardPath(user);
+    return <Navigate to={destination === '/' ? '/login' : destination} replace />;
   }
   return <>{children}</>;
 };
@@ -190,25 +204,27 @@ export const App: React.FC = () => {
             <AppLayout />
           </ProtectedRoute>
         }>
-          <Route index element={<SysAdminDashboard />} />
+          <Route index element={<AdminRoute><SysAdminDashboard /></AdminRoute>} />
 
           {/* System Administrator modules only */}
-          <Route path="admin/integrations" element={<IntegrationsPage />} />
-          <Route path="admin/ai-services" element={<AiServicesPage />} />
-          <Route path="admin/backup" element={<BackupPage />} />
-          <Route path="admin/settings" element={<SettingsPage />} />
-          <Route path="admin/notifications" element={<NotificationsPage />} />
-          <Route path="admin/reports" element={<ReportsPage />} />
-          <Route path="admin/system-health" element={<SystemHealthPage />} />
-          <Route path="admin/sessions" element={<SessionsPage />} />
+          <Route path="admin/integrations" element={<AdminRoute><IntegrationsPage /></AdminRoute>} />
+          <Route path="admin/ai-services" element={<AdminRoute><AiServicesPage /></AdminRoute>} />
+          <Route path="admin/backup" element={<AdminRoute><BackupPage /></AdminRoute>} />
+          <Route path="admin/settings" element={<AdminRoute><SettingsPage /></AdminRoute>} />
+          <Route path="admin/notifications" element={<AdminRoute><NotificationsPage /></AdminRoute>} />
+          <Route path="admin/reports" element={<AdminRoute><ReportsPage /></AdminRoute>} />
+          <Route path="admin/system-health" element={<AdminRoute><SystemHealthPage /></AdminRoute>} />
+          <Route path="admin/sessions" element={<AdminRoute><SessionsPage /></AdminRoute>} />
 
           {/* Security Center */}
           <Route path="security" element={
-            <ErrorBoundary fallback={<div className="text-rose-400">Security Center failed to load.</div>}>
-              <SecurityCenterPage />
-            </ErrorBoundary>
+            <AdminRoute>
+              <ErrorBoundary fallback={<div className="text-rose-400">Security Center failed to load.</div>}>
+                <SecurityCenterPage />
+              </ErrorBoundary>
+            </AdminRoute>
           } />
-          <Route path="security/audit-logs" element={<AuditLogsPage />} />
+          <Route path="security/audit-logs" element={<AdminRoute><AuditLogsPage /></AdminRoute>} />
         </Route>
 
         {/* Facilities Manager routes */}

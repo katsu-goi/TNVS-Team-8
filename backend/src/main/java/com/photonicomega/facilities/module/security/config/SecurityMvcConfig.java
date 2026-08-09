@@ -15,6 +15,6 @@ public class SecurityMvcConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(securityAuditInterceptor)
-                .addPathPatterns("/api/v1/**");
+                .addPathPatterns("/v1/**");
     }
 }

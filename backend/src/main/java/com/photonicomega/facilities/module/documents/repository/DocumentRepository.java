@@ -30,8 +30,26 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
     /** Retention assigned but the expiry date was never computed - backfill target. */
     List<Document> findByRetentionPolicyIdIsNotNullAndRetentionExpiresAtIsNullAndDeletedFalse();
 
+    /**
+     * Fetch all documents with tags, category, and folder initialized, so the
+     * entities stay serializable after the persistence context closes
+     * (open-in-view: false). The {@code @BatchSize} on {@code Document.tags}
+     * otherwise defers the collection load until first access, which happens
+     * only during Jackson serialization - outside any live session.
+     */
     @Query("""
-        SELECT d FROM Document d
+        SELECT DISTINCT d FROM Document d
+        LEFT JOIN FETCH d.tags
+        LEFT JOIN FETCH d.category
+        LEFT JOIN FETCH d.folder
+    """)
+    List<Document> findAllWithAssociations();
+
+    @Query("""
+        SELECT DISTINCT d FROM Document d
+        LEFT JOIN FETCH d.tags
+        LEFT JOIN FETCH d.category
+        LEFT JOIN FETCH d.folder
         WHERE LOWER(d.title) LIKE LOWER(CONCAT('%', :query, '%'))
         OR LOWER(d.ocrExtractedText) LIKE LOWER(CONCAT('%', :query, '%'))
         OR LOWER(d.aiSummary) LIKE LOWER(CONCAT('%', :query, '%'))

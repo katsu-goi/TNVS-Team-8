@@ -9,6 +9,7 @@ import com.photonicomega.facilities.module.documents.domain.ClassificationLevel;
 import com.photonicomega.facilities.module.documents.domain.Document;
 import com.photonicomega.facilities.module.documents.domain.DocumentStatus;
 import com.photonicomega.facilities.module.documents.repository.DocumentRepository;
+import com.photonicomega.facilities.module.documents.service.DocumentAccessPolicy;
 import com.photonicomega.facilities.module.documents.service.DocumentUploadService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -45,23 +46,36 @@ public class DocumentController {
     private final OcrService ocrService;
     private final DocumentUploadService uploadService;
     private final UserRepository userRepository;
+    private final DocumentAccessPolicy accessPolicy;
 
     @GetMapping
-    @Operation(summary = "List all documents")
-    public ResponseEntity<ApiResponse<List<Document>>> getAllDocuments() {
-        return ResponseEntity.ok(ApiResponse.success(documentRepository.findAll(), "Documents retrieved"));
+    @Operation(summary = "List documents visible to the caller")
+    public ResponseEntity<ApiResponse<List<Document>>> getAllDocuments(
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User user = resolveUser(userDetails);
+        List<Document> visible = accessPolicy.filterViewable(user, documentRepository.findAllWithAssociations());
+        return ResponseEntity.ok(ApiResponse.success(visible, "Documents retrieved"));
     }
 
     @PostMapping
     @Operation(summary = "Upload and process document with AI OCR & Classification")
-    public ResponseEntity<ApiResponse<Document>> createDocument(@RequestBody Document doc) {
+    public ResponseEntity<ApiResponse<Document>> createDocument(
+            @RequestBody Document doc,
+            @AuthenticationPrincipal UserDetails userDetails) {
         if (doc.getClassificationLevel() == null) {
             doc.setClassificationLevel(ClassificationLevel.INTERNAL);
         }
         if (doc.getStatus() == null) {
             doc.setStatus(DocumentStatus.APPROVED);
         }
-        
+
+        // Bind the document to the authenticated caller for access control.
+        User user = resolveUser(userDetails);
+        if (user != null) {
+            doc.setOwnerEmail(user.getEmail());
+            doc.setDepartment(user.getDepartment());
+        }
+
         // AI OCR & Classification enrichment
         String extractedText = ocrService.extractTextFromImageOrPdf(new byte[0], doc.getFileName());
         doc.setOcrExtractedText(extractedText);
@@ -72,9 +86,13 @@ public class DocumentController {
     }
 
     @GetMapping("/search")
-    @Operation(summary = "Semantic & text search documents")
-    public ResponseEntity<ApiResponse<List<Document>>> searchDocuments(@RequestParam String query) {
-        return ResponseEntity.ok(ApiResponse.success(documentRepository.searchDocuments(query), "Search results retrieved"));
+    @Operation(summary = "Semantic & text search documents (scoped to the caller)")
+    public ResponseEntity<ApiResponse<List<Document>>> searchDocuments(
+            @RequestParam String query,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User user = resolveUser(userDetails);
+        List<Document> visible = accessPolicy.filterViewable(user, documentRepository.searchDocuments(query));
+        return ResponseEntity.ok(ApiResponse.success(visible, "Search results retrieved"));
     }
 
     // ------------------------------------------------------------------
@@ -119,6 +137,13 @@ public class DocumentController {
         }
 
         Document document = found.get();
+
+        User user = resolveUser(userDetails);
+        if (!accessPolicy.canDownload(user, document)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(ApiResponse.failure("You do not have permission to download this document.", "ACCESS_DENIED"));
+        }
+
         String filePath = document.getFilePath();
         if (filePath == null || filePath.isBlank()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.failure(

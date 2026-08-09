@@ -32,6 +32,23 @@ public class Document extends BaseEntity {
     private String filePath;
     private String supabaseStorageUrl;
 
+    /**
+     * Owner attribution for access control. Set from the authenticated caller
+     * on create/upload; drives the {@code owner-scoped} branch of
+     * {@code DocumentAccessPolicy}. Mirrors {@code created_by} but survives
+     * import/seed rows that bypass Spring Data auditing.
+     */
+    @Column(name = "owner_email")
+    private String ownerEmail;
+
+    /**
+     * Department that owns the document, copied from the creator's
+     * {@code users.department} on create/upload. Department comparison in
+     * {@code DocumentAccessPolicy} is case-insensitive.
+     */
+    @Column(name = "department")
+    private String department;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "folder_id")
     private Folder folder;
