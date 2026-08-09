@@ -2,6 +2,7 @@ package com.photonicomega.facilities.ai;
 
 import com.photonicomega.facilities.common.dto.ApiResponse;
 import lombok.Builder;
+import org.springframework.security.access.prepost.PreAuthorize;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +25,7 @@ import java.util.*;
 @RequiredArgsConstructor
 @Slf4j
 @CrossOrigin(origins = "*")
+@PreAuthorize("hasRole('SUPER_ADMIN')")
 public class AiController {
 
     private final DocumentClassificationAiService classificationAiService;

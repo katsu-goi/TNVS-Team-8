@@ -3,6 +3,7 @@ dist/
 build/
 target/
 *.class
+supabase/.temp/
 *.jar
 *.log
 .env

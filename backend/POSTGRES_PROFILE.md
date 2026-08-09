@@ -50,13 +50,14 @@ model. If you prefer migration-managed schema, `V5__room_availability_enhancemen
 
 ## Bootstrap users
 
-On first startup `BootstrapAdmin` creates the seed accounts (idempotent):
+On first startup `BootstrapAdmin` creates the seed accounts (idempotent). Passwords are bootstrap
+defaults only - rotate them in any non-local environment:
 
-| Email                     | Password    | Role                |
-|---------------------------|-------------|---------------------|
-| `admin@photonicomega.com` | `Admin2026!`| ADMIN               |
-| `fm@photonicomega.com`    | `Fm2026!`   | FACILITIES_MANAGER  |
-| `fo@photonicomega.com`    | `Fo2026!`   | FACILITIES_OFFICER  |
+| Email                     | Password  | Role                |
+|---------------------------|-----------|---------------------|
+| `admin@photonicomega.com` | `<see BootstrapAdmin source>` | ADMIN               |
+| `fm@photonicomega.com`    | `<see BootstrapAdmin source>` | FACILITIES_MANAGER  |
+| `fo@photonicomega.com`    | `<see BootstrapAdmin source>` | FACILITIES_OFFICER  |
 
 ## Profile summary
 

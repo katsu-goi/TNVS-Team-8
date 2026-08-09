@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -17,6 +18,7 @@ import java.util.UUID;
 @RequestMapping("/v1/legal-cases")
 @RequiredArgsConstructor
 @Tag(name = "Legal Case Management", description = "Endpoints for tracking legal cases, hearings, and evidence")
+@PreAuthorize("hasRole('LEGAL_OFFICER')")
 public class LegalCaseController {
 
     private final LegalCaseRepository legalCaseRepository;

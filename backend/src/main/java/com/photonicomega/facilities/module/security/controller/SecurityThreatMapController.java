@@ -23,7 +23,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 @RestController
-@RequestMapping
+@RequestMapping("/v1/security/ip-threats")
 @Tag(name = "IP Threat Vector Map", description = "Endpoints for Geographic IP Threat Visualization & Real-time Telemetry.")
 public class SecurityThreatMapController {
 
@@ -91,7 +91,7 @@ public class SecurityThreatMapController {
         private long failedLoginAttempts;
     }
 
-    @GetMapping({"/api/security/ip-threats/vector-map", "/api/v1/security/ip-threats/vector-map"})
+    @GetMapping("/vector-map")
     @Operation(summary = "Get Geographic IP Threat Vector Map locations from security database")
     public ResponseEntity<List<IpThreatEntry>> getVectorMapData() {
         List<IpThreatEntry> list = new ArrayList<>();
@@ -118,7 +118,7 @@ public class SecurityThreatMapController {
         return ResponseEntity.ok(list);
     }
 
-    @GetMapping({"/api/security/ip-threats/stats", "/api/v1/security/ip-threats/stats"})
+    @GetMapping("/stats")
     @Operation(summary = "Get Geographic IP Threat Map summary statistics from database")
     public ResponseEntity<ThreatMapStats> getMapStats() {
         long blocked = blockedIpRepository.findByStatus("ACTIVE").size();
@@ -138,7 +138,7 @@ public class SecurityThreatMapController {
         return ResponseEntity.ok(stats);
     }
 
-    @GetMapping(value = "/api/v1/security/ip-threats/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "SSE real-time stream of security threat events")
     public SseEmitter streamThreatEvents() {
         SseEmitter emitter = new SseEmitter(600_000L);

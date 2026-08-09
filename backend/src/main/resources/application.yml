@@ -92,7 +92,9 @@ app:
 
   # JWT Settings
   jwt:
-    secret: ${JWT_SECRET:PhotonicOmega2026SuperSecretKeyForJWTTokenGenerationMustBe256BitsLong!!}
+    # Never commit a real signing secret. Override JWT_SECRET in every
+    # non-local environment (must be at least 256 bits for HS256).
+    secret: ${JWT_SECRET:CHANGE-ME-IN-PRODUCTION-PhotonicOmega-2026-jwt-signing-secret-placeholder}
     access-token-expiration: ${JWT_ACCESS_EXPIRY:900000}        # 15 minutes in ms
     refresh-token-expiration: ${JWT_REFRESH_EXPIRY:604800000}   # 7 days in ms
     issuer: photonic-omega-facilities
@@ -116,8 +118,8 @@ app:
 
   # Supabase Realtime (live user activity / online users)
   supabase:
-    url: ${SUPABASE_URL:https://dunijfrvfozwlykpkfhy.supabase.co}
-    anon-key: ${SUPABASE_ANON_KEY:sb_publishable_UWaHC31yeIQCKgSN20oPEg_qY-iJsQE}
+    url: ${SUPABASE_URL:https://your-project.supabase.co}
+    anon-key: ${SUPABASE_ANON_KEY:}
     activity-table: ${SUPABASE_ACTIVITY_TABLE:user_activity_events}
     online-table: ${SUPABASE_ONLINE_TABLE:online_users}
 
@@ -233,10 +235,12 @@ spring:
   config:
     activate:
       on-profile: supabase
+  # Production cloud database. Never commit credentials - supply them via
+  # SUPABASE_DB_URL / SUPABASE_DB_USERNAME / SUPABASE_DB_PASSWORD.
   datasource:
-    url: jdbc:postgresql://aws-1-ap-south-1.pooler.supabase.com:5432/postgres?sslmode=require&prepareThreshold=0&preparedStatementCacheQueries=0
-    username: postgres.hffwvffqwjppecharqsd
-    password: 2ivs0XvJ2wyaDwsf
+    url: ${SUPABASE_DB_URL:jdbc:postgresql://your-project.supabase.co:5432/postgres?sslmode=require&prepareThreshold=0&preparedStatementCacheQueries=0}
+    username: ${SUPABASE_DB_USERNAME:}
+    password: ${SUPABASE_DB_PASSWORD:}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:

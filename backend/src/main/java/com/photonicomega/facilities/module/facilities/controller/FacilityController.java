@@ -9,6 +9,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -25,6 +26,7 @@ public class FacilityController {
     private final ReservationRepository reservationRepository;
 
     @GetMapping
+    @PreAuthorize("hasAnyRole('FACILITIES_MANAGER','FACILITIES_OFFICER')")
     @Operation(summary = "Get all facilities")
     public ResponseEntity<ApiResponse<List<FacilityDto>>> getAllFacilities() {
         List<FacilityDto> facilities = facilityRepository.findAll().stream()
@@ -34,6 +36,7 @@ public class FacilityController {
     }
 
     @PostMapping
+    @PreAuthorize("hasRole('FACILITIES_MANAGER')")
     @Operation(summary = "Create a new facility")
     public ResponseEntity<ApiResponse<FacilityDto>> createFacility(@RequestBody Facility facility) {
         Facility saved = facilityRepository.save(facility);
@@ -73,24 +76,28 @@ public class FacilityController {
     }
 
     @GetMapping("/{facilityId}/rooms")
+    @PreAuthorize("hasAnyRole('FACILITIES_MANAGER','FACILITIES_OFFICER')")
     @Operation(summary = "Get rooms by facility ID")
     public ResponseEntity<ApiResponse<List<Room>>> getRoomsByFacility(@PathVariable UUID facilityId) {
         return ResponseEntity.ok(ApiResponse.success(roomRepository.findByFacilityId(facilityId), "Rooms fetched successfully"));
     }
 
     @PostMapping("/rooms")
+    @PreAuthorize("hasRole('FACILITIES_MANAGER')")
     @Operation(summary = "Create a new room")
     public ResponseEntity<ApiResponse<Room>> createRoom(@RequestBody Room room) {
         return ResponseEntity.ok(ApiResponse.success(roomRepository.save(room), "Room created successfully"));
     }
 
     @GetMapping("/reservations")
+    @PreAuthorize("hasAnyRole('FACILITIES_MANAGER','FACILITIES_OFFICER')")
     @Operation(summary = "Get all room reservations")
     public ResponseEntity<ApiResponse<List<Reservation>>> getAllReservations() {
         return ResponseEntity.ok(ApiResponse.success(reservationRepository.findAll(), "Reservations fetched successfully"));
     }
 
     @PostMapping("/reservations")
+    @PreAuthorize("hasAnyRole('FACILITIES_MANAGER','FACILITIES_OFFICER')")
     @Operation(summary = "Book a room / Create reservation with conflict check")
     public ResponseEntity<ApiResponse<Reservation>> createReservation(@RequestBody Reservation reservation) {
         List<Reservation> conflicts = reservationRepository.findConflictingReservations(

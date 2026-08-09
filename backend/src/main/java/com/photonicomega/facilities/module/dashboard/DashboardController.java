@@ -13,6 +13,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -42,6 +43,7 @@ public class DashboardController {
     }
 
     @GetMapping("/summary")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     @Operation(summary = "Get high-level aggregated statistics for executive dashboard")
     public ResponseEntity<ApiResponse<ExecutiveDashboardStats>> getDashboardSummary() {
         ExecutiveDashboardStats stats = ExecutiveDashboardStats.builder()

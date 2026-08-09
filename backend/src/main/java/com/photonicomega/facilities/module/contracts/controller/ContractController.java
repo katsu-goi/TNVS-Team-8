@@ -9,6 +9,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -18,6 +19,7 @@ import java.util.UUID;
 @RequestMapping("/v1/contracts")
 @RequiredArgsConstructor
 @Tag(name = "Contract Management & AI Analytics", description = "Endpoints for contract management and AI clause risk extraction")
+@PreAuthorize("hasAnyRole('CONTRACT_OFFICER','LEGAL_OFFICER')")
 public class ContractController {
 
     private final ContractRepository contractRepository;
