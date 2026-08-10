@@ -5,6 +5,7 @@ target/
 *.class
 *.jar
 *.log
+*.log.*.gz
 .env
 .env.local
 .DS_Store
