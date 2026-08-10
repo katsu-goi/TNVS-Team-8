@@ -16,9 +16,3 @@ Thumbs.db
 *.iml
 .vscode/
 .history/
-
-backend/src/main/java/com/photonicomega/facilities/module/ai/domain/AiHealthStatus.java
-backend/src/main/java/com/photonicomega/facilities/module/ai/domain/AiHumanOutcome.java
-backend/src/main/java/com/photonicomega/facilities/module/ai/domain/AiProviderStatus.java
-backend/src/main/java/com/photonicomega/facilities/module/ai/domain/AiProviderType.java
-backend/src/main/java/com/photonicomega/facilities/module/ai/domain/AiRequestStatus.java
