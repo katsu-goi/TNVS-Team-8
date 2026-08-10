@@ -73,7 +73,7 @@ const useToast = () => {
   return { show, node };
 };
 
-const inputCls = 'mt-1 w-full text-sm border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-200';
+const inputCls = 'mt-1 w-full text-sm bg-white text-slate-900 placeholder-slate-400 border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-200';
 const labelCls = 'text-[11px] font-semibold text-slate-500 uppercase';
 
 const reservationStatusBadge = (status?: string) => {
@@ -529,7 +529,7 @@ export const EmpDocumentsPage: React.FC = () => {
               <div>
                 <label className={labelCls}>Classification</label>
                 <select value={form.classificationLevel} onChange={e => setForm({ ...form, classificationLevel: e.target.value })} className={inputCls}>
-                  {['PUBLIC', 'INTERNAL', 'CONFIDENTIAL', 'RESTRICTED'].map(c => <option key={c} value={c}>{c}</option>)}
+                  {['PUBLIC', 'INTERNAL', 'CONFIDENTIAL', 'RESTRICTED'].map(c => <option key={c} value={c} className="bg-white text-slate-900">{c}</option>)}
                 </select>
               </div>
             </div>
@@ -628,8 +628,8 @@ export const EmpRequestsPage: React.FC = () => {
             <div>
               <label className={labelCls}>Type</label>
               <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} className={inputCls}>
-                <option value="CONTRACT">Contract</option>
-                <option value="LEGAL">Legal</option>
+                <option value="CONTRACT" className="bg-white text-slate-900">Contract</option>
+                <option value="LEGAL" className="bg-white text-slate-900">Legal</option>
               </select>
             </div>
             <div><label className={labelCls}>Title</label><input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} className={inputCls} /></div>

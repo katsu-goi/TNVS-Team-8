@@ -3,12 +3,15 @@ import {
   Calendar, Clock, Building2,
   PlusCircle, FileText, Download, Edit3,
   Send, X, Eye, Wrench, BarChart2,
-  CheckSquare, ArrowUpRight, FileSpreadsheet, FileCode, Activity, DoorOpen, Loader2, Sparkles
+  CheckSquare, ArrowUpRight, FileSpreadsheet, FileCode, Activity, DoorOpen, Loader2, Sparkles,
+  Mail, CalendarClock, Inbox
 } from 'lucide-react';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { safeFetchJson, extractErrorMessage } from '../../api/client';
 import { facilitiesService } from '../../api/facilitiesService';
 import { RoomPicker, RoomPickerSelection } from './RoomPicker';
+import { DatePicker } from '../ui/DatePicker';
+import { TimePicker } from '../ui/TimePicker';
 
 export interface ReservationItem {
   id: string;
@@ -38,6 +41,68 @@ export interface MaintenanceNotice {
   endDate: string;
   availabilityStatus: 'OUT_OF_SERVICE' | 'LIMITED_ACCESS' | 'SCHEDULED_MAINTENANCE';
 }
+
+/** Status → label + badge classes for the approval queue cards. */
+const STATUS_META: Record<ReservationItem['status'], { label: string; badge: string }> = {
+  PENDING:   { label: 'Pending',      badge: 'bg-amber-50 text-amber-700 border-amber-200' },
+  ESCALATED: { label: 'Under Review', badge: 'bg-purple-50 text-purple-700 border-purple-200' },
+  APPROVED:  { label: 'Approved',     badge: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  REJECTED:  { label: 'Rejected',     badge: 'bg-rose-50 text-rose-700 border-rose-200' },
+  CANCELLED: { label: 'Cancelled',    badge: 'bg-slate-100 text-slate-500 border-slate-200' },
+};
+
+const TYPE_LABEL: Record<ReservationItem['facilityCategory'], string> = {
+  ROOM: 'Room Booking',
+  VEHICLE_BAY: 'Vehicle Bay',
+  EQUIPMENT: 'Equipment',
+};
+
+const PRIORITY_BADGE: Record<ReservationItem['priorityLevel'], string> = {
+  URGENT: 'bg-rose-100 text-rose-700',
+  HIGH:   'bg-amber-100 text-amber-700',
+  MEDIUM: 'bg-slate-100 text-slate-600',
+  LOW:    'bg-slate-100 text-slate-500',
+};
+
+/** Two initials for the requester avatar. */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '?';
+}
+
+/** Format a date-ish string as "12 Dec 2023"; falls back to the raw value. */
+function formatSubmitted(raw: string): string {
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return raw;
+  return d.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/** Format the booking schedule as "7 Jan 2023 · 10:30". */
+function formatSchedule(date: string, start: string): string {
+  const d = new Date(date);
+  const datePart = isNaN(d.getTime())
+    ? date
+    : d.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+  return start ? `${datePart} · ${start}` : datePart || '—';
+}
+
+/** One labeled field inside an approval card. */
+const QueueField: React.FC<{
+  label: string;
+  value: string;
+  icon?: React.ReactNode;
+  mono?: boolean;
+}> = ({ label, value, icon, mono }) => (
+  <div className="flex items-start gap-2 min-w-0">
+    {icon && <div className="mt-0.5 shrink-0">{icon}</div>}
+    <div className="min-w-0">
+      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{label}</p>
+      <p className={`text-xs font-semibold text-slate-800 truncate ${mono ? 'font-mono' : ''}`} title={value}>
+        {value || '—'}
+      </p>
+    </div>
+  </div>
+);
 
 export const FoReservationsPage: React.FC = () => {
   const syncData = useRealtimeSyncStore(s => s.syncData);
@@ -485,54 +550,73 @@ export const FoReservationsPage: React.FC = () => {
 
       {/* Component 3: Pending Requests Queue */}
       {activeTab === 'pending' && (
-        <div className="card-stat overflow-hidden space-y-4 p-4">
-          <div className="flex items-center justify-between mb-2">
+        <div className="card-stat space-y-4 p-4 sm:p-5">
+          <div className="flex items-start justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-slate-900">Pending Requests Queue</h3>
-              <p className="text-xs text-slate-500">Facilities Officer can modify, cancel, or escalate requests to the Facilities Manager.</p>
+              <p className="mt-1 text-xs text-slate-500">Review each request, make adjustments, or forward it to the Facilities Manager.</p>
             </div>
+            <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600">
+              {pendingCount} {pendingCount === 1 ? 'request' : 'requests'}
+            </span>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left">
-              <thead>
-                <tr className="border-b border-slate-200 text-slate-500 uppercase tracking-wider">
-                  <th className="py-3 px-3">Request Date</th>
-                  <th className="py-3 px-3">Facility</th>
-                  <th className="py-3 px-3">Requester</th>
-                  <th className="py-3 px-3">Duration</th>
-                  <th className="py-3 px-3 text-center">Priority Level</th>
-                  <th className="py-3 px-3 text-center">Current Status</th>
-                  <th className="py-3 px-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {reservations.filter(r => r.status === 'PENDING' || r.status === 'ESCALATED').map((r) => (
-                  <tr key={r.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="py-3 px-3 font-mono text-slate-600">{r.updatedAt}</td>
-                    <td className="py-3 px-3 font-medium text-slate-900">{r.facilityName}</td>
-                    <td className="py-3 px-3 text-slate-700">{r.requesterName}</td>
-                    <td className="py-3 px-3 font-mono text-slate-600">{r.startTime} - {r.endTime} ({r.durationHours}h)</td>
-                    <td className="py-3 px-3 text-center">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        r.priorityLevel === 'URGENT' ? 'bg-rose-100 text-rose-700' :
-                        r.priorityLevel === 'HIGH' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'
-                      }`}>
-                        {r.priorityLevel}
-                      </span>
-                    </td>
-                    <td className="py-3 px-3 text-center">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                        r.status === 'ESCALATED' ? 'bg-purple-50 text-purple-700 border border-purple-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
-                      }`}>
-                        {r.status === 'ESCALATED' ? 'Escalated to Manager' : 'Pending Review'}
-                      </span>
-                    </td>
-                    <td className="py-3 px-3 text-right space-x-1.5">
-                      <button onClick={() => setEditModal(r)} className="px-2 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 font-semibold transition" title="Modify Details">
-                        Modify
+          {reservations.filter(r => r.status === 'PENDING' || r.status === 'ESCALATED').length === 0 ? (
+            <div className="flex min-h-40 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 text-center">
+              <Inbox className="mb-2 h-7 w-7 text-slate-300" />
+              <p className="text-sm font-semibold text-slate-600">No requests awaiting review</p>
+              <p className="mt-1 text-xs text-slate-400">New reservation requests will appear here.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              {reservations.filter(r => r.status === 'PENDING' || r.status === 'ESCALATED').map(r => {
+                const status = STATUS_META[r.status];
+                return (
+                  <article key={r.id} className="flex min-w-0 flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+                          {r.facilityCategory === 'EQUIPMENT' ? <Wrench className="h-4 w-4" /> :
+                            r.facilityCategory === 'VEHICLE_BAY' ? <DoorOpen className="h-4 w-4" /> :
+                              <Building2 className="h-4 w-4" />}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Reservation number</p>
+                          <p className="truncate font-mono text-sm font-bold text-slate-900">#{r.reservationId.replace(/^RES-/, '')}</p>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        <span className={`rounded-full border px-2 py-1 text-[10px] font-bold ${status.badge}`}>{status.label}</span>
+                        <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${PRIORITY_BADGE[r.priorityLevel]}`}>{r.priorityLevel}</span>
+                      </div>
+                    </div>
+
+                    <div className="my-3 border-t border-slate-100" />
+
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                      <QueueField
+                        label="Requester"
+                        value={r.requesterName}
+                        icon={<span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100 text-[9px] font-bold text-emerald-700">{initials(r.requesterName)}</span>}
+                      />
+                      <QueueField label="Date submitted" value={formatSubmitted(r.updatedAt)} icon={<Calendar className="h-4 w-4 text-slate-400" />} />
+                      <QueueField label="E-mail" value={r.requesterEmail} icon={<Mail className="h-4 w-4 text-slate-400" />} />
+                      <QueueField label="Reservation type" value={TYPE_LABEL[r.facilityCategory]} icon={<FileText className="h-4 w-4 text-slate-400" />} />
+                      <QueueField label="Facility" value={r.facilityName} icon={<Building2 className="h-4 w-4 text-slate-400" />} />
+                      <QueueField label="Schedule" value={formatSchedule(r.reservationDate, r.startTime)} icon={<CalendarClock className="h-4 w-4 text-slate-400" />} mono />
+                    </div>
+
+                    <div className="mt-4 flex items-center gap-2 border-t border-slate-100 pt-3">
+                      <button
+                        type="button"
+                        onClick={() => setEditModal(r)}
+                        className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50"
+                        title="Modify details"
+                      >
+                        <Edit3 className="mr-1.5 inline-block h-3.5 w-3.5" />Modify
                       </button>
                       <button
+                        type="button"
                         onClick={() => setReservations(reservations.map(item => item.id === r.id ? {
                           ...item,
                           status: 'CANCELLED',
@@ -540,25 +624,26 @@ export const FoReservationsPage: React.FC = () => {
                           updatedBy: 'Facilities Officer',
                           modificationNotes: 'Cancelled reservation request by Facilities Officer.'
                         } : item))}
-                        className="px-2 py-1 rounded bg-rose-50 text-rose-600 hover:bg-rose-100 font-semibold transition"
-                        title="Cancel Request"
+                        className="rounded-lg border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-600 transition-colors hover:bg-rose-50"
+                        title="Cancel request"
                       >
-                        Cancel
+                        <X className="mr-1.5 inline-block h-3.5 w-3.5" />Cancel
                       </button>
                       <button
+                        type="button"
                         onClick={() => { setEscalateModal(r); setEscalateNotes(r.modificationNotes || ''); }}
-                        className="px-2.5 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700 font-semibold shadow-sm transition inline-flex items-center space-x-1"
+                        className="ml-auto inline-flex items-center rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700"
                         title="Forward to Manager for final approval"
                       >
-                        <Send className="w-3 h-3" />
-                        <span>{r.status === 'ESCALATED' ? 'Update Escalation' : 'Forward to Manager'}</span>
+                        <Send className="mr-1.5 h-3.5 w-3.5" />
+                        {r.status === 'ESCALATED' ? 'Update Review' : 'Forward to Manager'}
                       </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -917,26 +1002,42 @@ export const FoReservationsPage: React.FC = () => {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="font-bold text-slate-700">Reservation Date</label>
-                  <input
-                    type="date" required value={createForm.date}
-                    onChange={e => setCreateForm({ ...createForm, date: e.target.value })}
-                    className="w-full mt-1 bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                  <DatePicker
+                    required
+                    value={createForm.date}
+                    onChange={date => setCreateForm({ ...createForm, date })}
                   />
                 </div>
                 <div>
                   <label className="font-bold text-slate-700">Start Time</label>
-                  <input
-                    type="time" required value={createForm.startTime}
-                    onChange={e => setCreateForm({ ...createForm, startTime: e.target.value })}
-                    className="w-full mt-1 bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                  <TimePicker
+                    required
+                    value={createForm.startTime}
+                    onChange={start => {
+                      // Auto-suggest End = Start + 1h when End is empty or now <= Start.
+                      const toMin = (s: string) => {
+                        const m = /^(\d{1,2}):(\d{2})$/.exec(s);
+                        return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+                      };
+                      const startMin = toMin(start);
+                      const endMin = toMin(createForm.endTime);
+                      let end = createForm.endTime;
+                      if (startMin !== null && (endMin === null || endMin <= startMin)) {
+                        const e = Math.min(startMin + 60, 23 * 60 + 55);
+                        end = `${String(Math.floor(e / 60)).padStart(2, '0')}:${String(e % 60).padStart(2, '0')}`;
+                      }
+                      setCreateForm({ ...createForm, startTime: start, endTime: end });
+                    }}
                   />
                 </div>
                 <div>
                   <label className="font-bold text-slate-700">End Time</label>
-                  <input
-                    type="time" required value={createForm.endTime}
-                    onChange={e => setCreateForm({ ...createForm, endTime: e.target.value })}
-                    className="w-full mt-1 bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                  <TimePicker
+                    required
+                    align="right"
+                    value={createForm.endTime}
+                    minTime={createForm.startTime}
+                    onChange={end => setCreateForm({ ...createForm, endTime: end })}
                   />
                 </div>
               </div>
