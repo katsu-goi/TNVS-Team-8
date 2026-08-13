@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore, getDashboardPath } from '../../stores/authStore';
-import { login } from '../../api/authService';
+import { login, extractLoginLockout } from '../../api/authService';
 import { extractErrorMessage } from '../../api/client';
-import { Eye, EyeOff, Loader2 } from 'lucide-react';
+import { AlertTriangle, Eye, EyeOff, HelpCircle, Loader2 } from 'lucide-react';
+import { validateCorporateEmail } from '../../utils/emailValidation';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
@@ -16,10 +17,38 @@ export const LoginPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Server-authoritative lockout state (mirrored from LoginLockoutInfo).
+  const [attempts, setAttempts] = useState(0);
+  const [maxAttempts, setMaxAttempts] = useState(3);
+  const [countdown, setCountdown] = useState(0);
+  const [permanentlyLocked, setPermanentlyLocked] = useState(false);
+
+  const locked = countdown > 0 || permanentlyLocked;
+
+  useEffect(() => {
+    if (countdown <= 0) return;
+    const timer = setTimeout(() => {
+      const next = Math.max(0, countdown - 1);
+      if (next === 0) {
+        // Cooldown finished: drop the stale "Please wait..." message so the
+        // alert and its spacing fully disappear and the form looks normal.
+        setError('');
+      }
+      setCountdown(next);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [countdown]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (locked) return;
     if (!email.trim() || !password.trim()) {
       setError('Please enter both email and password.');
+      return;
+    }
+    const emailValidation = validateCorporateEmail(email);
+    if (emailValidation) {
+      setError(emailValidation);
       return;
     }
     setLoading(true);
@@ -31,9 +60,31 @@ export const LoginPage: React.FC = () => {
       if (rememberMe) {
         localStorage.setItem('accessToken', res.accessToken);
       }
+      setAttempts(0);
+      setCountdown(0);
+      setPermanentlyLocked(false);
       navigate(getDashboardPath(res.user), { replace: true });
     } catch (err) {
-      setError(extractErrorMessage(err));
+      const info = extractLoginLockout(err);
+      if (info) {
+        setAttempts(info.failedAttempts);
+        setMaxAttempts(info.maxAttempts > 0 ? info.maxAttempts : 3);
+        if (info.permanentlyLocked) {
+          setPermanentlyLocked(true);
+          setCountdown(0);
+          setError('Too many failed login attempts. Please contact the HR Department for assistance.');
+        } else if (info.lockSecondsRemaining > 0) {
+          setPermanentlyLocked(false);
+          setCountdown(info.lockSecondsRemaining);
+          setError(`Please wait ${info.lockSecondsRemaining} seconds before trying again.`);
+        } else {
+          setPermanentlyLocked(false);
+          setCountdown(0);
+          setError(extractErrorMessage(err));
+        }
+      } else {
+        setError(extractErrorMessage(err));
+      }
     } finally {
       setLoading(false);
     }
@@ -47,11 +98,8 @@ export const LoginPage: React.FC = () => {
         <div className="w-full max-h-[90vh] overflow-y-auto" style={{ maxWidth: '445px' }}>
           <div className="rounded-[28px] p-8" style={{ background: 'rgba(255,255,255,0.15)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', border: '1px solid rgba(255,255,255,0.25)', boxShadow: '0 25px 70px rgba(0,0,0,0.35)' }}>
             <div className="flex flex-col items-center text-center mb-5">
-              <div className="w-12 h-12 rounded-2xl bg-[#00E676]/25 flex items-center justify-center shadow-[0_0_20px_rgba(0,230,118,0.25)] mb-3">
-                <svg className="w-6 h-6 text-[#00E676]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                  <polyline points="22 4 12 14.01 9 11.01" />
-                </svg>
+              <div className="w-12 h-12 rounded-2xl bg-[#00E676]/25 flex items-center justify-center shadow-[0_0_20px_rgba(0,230,118,0.25)] mb-3 overflow-hidden">
+                <img src="/greengsmlogo.png" alt="Green GSM Logo" className="w-full h-full object-contain" draggable={false} />
               </div>
               <h1 className="text-lg font-bold text-white tracking-tight">Green GSM</h1>
               <p className="text-[10px] text-[#00E676] font-medium tracking-widest uppercase">Enterprise</p>
@@ -59,8 +107,56 @@ export const LoginPage: React.FC = () => {
               <p className="text-sm text-white/50 leading-relaxed mt-2 max-w-xs">Sign in to your account to continue.</p>
             </div>
 
-            {error && (
+            {permanentlyLocked ? (
+              <div className="mb-5 px-4 py-4 rounded-xl bg-rose-500/15 border border-rose-400/40 space-y-3">
+                <div className="flex items-start space-x-2">
+                  <AlertTriangle className="w-5 h-5 text-rose-300 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="text-rose-200 text-sm font-semibold">
+                      Your account has been temporarily locked due to multiple failed login attempts.
+                    </p>
+                    <p className="text-rose-200/90 text-sm">
+                      Too many failed login attempts. Please contact the HR Department for assistance.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => navigate('/hr-assistance')}
+                  className="w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-400 text-white font-semibold text-sm transition-colors"
+                >
+                  <HelpCircle className="w-4 h-4" />
+                  <span>Contact HR Department</span>
+                </button>
+              </div>
+            ) : locked ? (
+              <div className="mb-5 px-4 py-3 rounded-xl bg-amber-500/15 border border-amber-400/30 text-amber-200 text-sm">
+                <div className="flex items-center justify-between">
+                  <span>Please wait {countdown} seconds before trying again.</span>
+                  <span className="font-mono text-lg font-bold tabular-nums">{countdown}s</span>
+                </div>
+              </div>
+            ) : error ? (
               <div className="mb-5 px-4 py-3 rounded-xl bg-rose-500/15 border border-rose-400/30 text-rose-200 text-sm">{error}</div>
+            ) : null}
+
+            {attempts > 0 && !permanentlyLocked && (
+              <div className="mb-5 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-white/60">Failed login attempts</span>
+                  <span className="text-white/90 font-semibold tabular-nums">
+                    {Math.min(attempts, maxAttempts)}/{maxAttempts}
+                  </span>
+                </div>
+                <div className="mt-1.5 flex space-x-1">
+                  {Array.from({ length: maxAttempts }).map((_, i) => (
+                    <div
+                      key={i}
+                      className={`h-1.5 flex-1 rounded-full ${i < Math.min(attempts, maxAttempts) ? 'bg-rose-400' : 'bg-white/15'}`}
+                    />
+                  ))}
+                </div>
+              </div>
             )}
 
             <form onSubmit={handleLogin} className="space-y-3">
@@ -90,82 +186,19 @@ export const LoginPage: React.FC = () => {
                   <span className="text-sm text-white/70">Remember me</span>
                 </label>
               </div>
-              <button type="submit" disabled={loading} className="w-full flex items-center justify-center space-x-2 py-3 rounded-full bg-[#00E676] hover:bg-[#00c853] text-[#042F24] font-bold text-sm shadow-[0_0_15px_rgba(0,230,118,0.3)] hover:shadow-[0_0_24px_rgba(0,230,118,0.45)] transition-all duration-200 disabled:opacity-60">
+              <button type="submit" disabled={loading || locked} className="w-full flex items-center justify-center space-x-2 py-3 rounded-full bg-[#00E676] hover:bg-[#00c853] text-[#042F24] font-bold text-sm shadow-[0_0_15px_rgba(0,230,118,0.3)] hover:shadow-[0_0_24px_rgba(0,230,118,0.45)] transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                 <span>{loading ? 'Signing in...' : 'Sign In'}</span>
               </button>
             </form>
 
-              <div className="mt-4 pt-4 border-t border-white/10 space-y-2">
+              <div className="mt-4 pt-4 border-t border-white/10">
                 <button
                   type="button"
-                  onClick={() => {
-                    setEmail('admin@photonicomega.com');
-                    setPassword('Admin2026!');
-                  }}
+                  onClick={() => navigate('/hr-assistance')}
                   className="w-full text-center text-xs text-white/40 hover:text-[#00E676] transition-colors"
                 >
-                  Quick Admin Login
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEmail('fm@photonicomega.com');
-                    setPassword('Fm2026!');
-                  }}
-                  className="w-full text-center text-xs text-white/40 hover:text-[#00E676] transition-colors"
-                >
-                  Quick Facilities Manager Login
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEmail('fo@photonicomega.com');
-                    setPassword('Fo2026!');
-                  }}
-                  className="w-full text-center text-xs text-white/40 hover:text-[#00E676] transition-colors"
-                >
-                  Quick Facilities Officer Login
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEmail('co@photonicomega.com');
-                    setPassword('Co2026!');
-                  }}
-                  className="w-full text-center text-xs text-white/40 hover:text-[#00E676] transition-colors"
-                >
-                  Quick Compliance Officer Login
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEmail('legal@photonicomega.com');
-                    setPassword('Legal2026!');
-                  }}
-                  className="w-full text-center text-xs text-white/40 hover:text-[#00E676] transition-colors"
-                >
-                  Quick Legal Officer Login
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEmail('contract@photonicomega.com');
-                    setPassword('Contract2026!');
-                  }}
-                  className="w-full text-center text-xs text-white/40 hover:text-[#00E676] transition-colors"
-                >
-                  Quick Contract Officer Login
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEmail('employee@photonicomega.com');
-                    setPassword('Employee2026!');
-                  }}
-                  className="w-full text-center text-xs text-white/40 hover:text-[#00E676] transition-colors"
-                >
-                  Quick Employee Login
+                  Contact HR Department
                 </button>
               </div>
           </div>

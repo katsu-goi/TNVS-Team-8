@@ -1,13 +1,13 @@
 package com.photonicomega.facilities.module.auth.dto;
 
-import jakarta.validation.constraints.Email;
+import com.photonicomega.facilities.common.validation.CorporateEmail;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
 @Data
 public class LoginRequest {
     @NotBlank(message = "Email is required")
-    @Email(message = "Invalid email format")
+    @CorporateEmail
     private String email;
 
     @NotBlank(message = "Password is required")

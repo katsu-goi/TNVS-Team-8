@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppLayout } from './components/layout/AppLayout';
 import { LoginPage } from './components/auth/LoginPage';
+import { HRAssistancePage } from './components/auth/HRAssistancePage';
 import { SysAdminDashboard } from './components/sysadmin/SysAdminDashboard';
 import {
   IntegrationsPage,
@@ -203,6 +204,7 @@ export const App: React.FC = () => {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/hr-assistance" element={<HRAssistancePage />} />
         <Route element={
           <ProtectedRoute>
             <AppLayout />

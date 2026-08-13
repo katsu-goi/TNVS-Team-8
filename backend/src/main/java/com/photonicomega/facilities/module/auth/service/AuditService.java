@@ -20,6 +20,15 @@ public class AuditService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void log(User user, String action, String module, String entityType,
                     String entityId, String description, String ipAddress) {
+        logWithSeverity(user, action, module, entityType, entityId, description,
+                ipAddress, AuditSeverity.INFO);
+    }
+
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logWithSeverity(User user, String action, String module, String entityType,
+                                String entityId, String description, String ipAddress,
+                                AuditSeverity severity) {
         try {
             AuditLog auditLog = AuditLog.builder()
                     .userId(user != null ? user.getId() : null)
@@ -31,7 +40,7 @@ public class AuditService {
                     .entityId(entityId)
                     .description(description)
                     .ipAddress(ipAddress)
-                    .severity(AuditSeverity.INFO)
+                    .severity(severity != null ? severity : AuditSeverity.INFO)
                     .status("SUCCESS")
                     .build();
             auditLogRepository.save(auditLog);

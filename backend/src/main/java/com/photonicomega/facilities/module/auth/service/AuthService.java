@@ -2,6 +2,7 @@ package com.photonicomega.facilities.module.auth.service;
 
 import com.photonicomega.facilities.exception.AuthenticationException;
 import com.photonicomega.facilities.exception.BusinessRuleViolationException;
+import com.photonicomega.facilities.exception.LoginFailedException;
 import com.photonicomega.facilities.exception.ResourceNotFoundException;
 import com.photonicomega.facilities.module.auth.domain.*;
 import com.photonicomega.facilities.module.auth.dto.*;
@@ -37,6 +38,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JavaMailSender mailSender;
     private final AuditService auditService;
+    private final LoginAttemptService loginAttemptService;
     private final com.photonicomega.facilities.module.security.service.UserActivityService userActivityService;
 
     @Value("${app.security.password-reset-expiry-minutes:30}")
@@ -46,16 +48,32 @@ public class AuthService {
     private String fromEmail;
 
     public AuthTokenResponse login(LoginRequest request, String ipAddress, String userAgent) {
-        try {
-            authenticationManager.authenticate(
-                    new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword()));
-        } catch (org.springframework.security.core.AuthenticationException ex) {
-            handleFailedLogin(request.getEmail());
-            throw ex;
+        String email = normalizeEmail(request.getEmail());
+
+        // Server-side lockout gate: a locked account is rejected before any
+        // password is checked, so the progressive/permanent lock cannot be
+        // bypassed by refreshing the page, opening another browser, or
+        // clearing browser storage.
+        LoginLockoutInfo lockout = loginAttemptService.getCurrentLockoutInfo(email);
+        if (lockout != null) {
+            throw lockoutException(lockout);
         }
 
-        User user = userRepository.findByEmailAndDeletedFalse(request.getEmail())
-                .orElseThrow(() -> new ResourceNotFoundException("User", "email", request.getEmail()));
+        try {
+            authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(email, request.getPassword()));
+        } catch (org.springframework.security.core.AuthenticationException ex) {
+            LoginLockoutInfo info = loginAttemptService.recordFailedAttempt(email, ipAddress, userAgent);
+            if (info == null) {
+                // Unknown account: keep the response generic so account existence
+                // is never revealed.
+                throw ex;
+            }
+            throw lockoutException(info);
+        }
+
+        User user = userRepository.findByEmailAndDeletedFalse(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User", "email", email));
 
         if (!user.isAccountActive()) {
             throw new BusinessRuleViolationException("Account is not active. Contact administrator.");
@@ -195,13 +213,22 @@ public class AuthService {
         }
     }
 
-    private void handleFailedLogin(String email) {
-        userRepository.findByEmailAndDeletedFalse(email).ifPresent(user -> {
-            user.incrementFailedAttempts();
-            if (user.getFailedLoginAttempts() >= 5) {
-                user.lockAccount(15);
-            }
-            userRepository.save(user);
-        });
+    private String normalizeEmail(String email) {
+        return email == null ? null : email.trim().toLowerCase();
+    }
+
+    private LoginFailedException lockoutException(LoginLockoutInfo info) {
+        if (info.isPermanentlyLocked()) {
+            return new LoginFailedException(
+                    "Your account has been temporarily locked due to multiple failed login attempts.",
+                    "ACCOUNT_LOCKED", info);
+        }
+        if (info.getLockSecondsRemaining() > 0) {
+            return new LoginFailedException(
+                    "Too many failed login attempts. Please wait " + info.getLockSecondsRemaining()
+                            + " seconds before trying again.",
+                    "ACCOUNT_TEMP_LOCKED", info);
+        }
+        return new LoginFailedException("Invalid email or password", "INVALID_CREDENTIALS", info);
     }
 }
