@@ -6,6 +6,7 @@ target/
 supabase/.temp/
 *.jar
 *.log
+*.gz
 .env
 .env.local
 .DS_Store
