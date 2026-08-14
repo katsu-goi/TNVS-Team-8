@@ -400,6 +400,10 @@ public class FacilitiesManagerController {
 
     @GetMapping("/assets/list")
     @Operation(summary = "List all equipment/assets")
+    // Equipment.room is LAZY and open-in-view is disabled, so mapping
+    // e.getRoom().getName() below needs an open session (same reason as
+    // /calendar and /analytics).
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listAssets() {
         List<Map<String, Object>> assets = equipmentRepository.findAll().stream().map(e -> {
             Map<String, Object> m = new LinkedHashMap<>();

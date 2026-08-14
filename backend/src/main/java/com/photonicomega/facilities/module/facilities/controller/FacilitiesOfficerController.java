@@ -18,10 +18,12 @@ import org.springframework.web.bind.annotation.*;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/v1/facilities-officer")
@@ -33,6 +35,7 @@ public class FacilitiesOfficerController {
     private final ReservationRepository reservationRepository;
     private final RoomRepository roomRepository;
     private final MaintenanceScheduleRepository maintenanceScheduleRepository;
+    private final EquipmentRepository equipmentRepository;
     private final UserRepository userRepository;
     private final ReservationAiService reservationAiService;
 
@@ -64,6 +67,99 @@ public class FacilitiesOfficerController {
     @Operation(summary = "Room search filter options")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getFilterOptions() {
         return ResponseEntity.ok(ApiResponse.success(roomAvailabilityService.getFilterOptions(), "Filters fetched successfully"));
+    }
+
+    @GetMapping("/dashboard/summary")
+    @Operation(summary = "Facilities officer dashboard KPIs, charts and tables")
+    // Touches Reservation.room / .reservedBy, Room.facility, MaintenanceSchedule.room
+    // and Equipment.room, all LAZY, with open-in-view disabled - same reason
+    // the manager /calendar endpoint needs a read-only transaction.
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getDashboardSummary() {
+        LocalDate today = LocalDate.now();
+        LocalDateTime todayStart = today.atStartOfDay();
+        LocalDateTime todayEnd = today.atTime(LocalTime.MAX);
+
+        List<Reservation> todayReservations = reservationRepository.findByStartTimeBetween(todayStart, todayEnd);
+
+        Map<String, Object> kpi = new LinkedHashMap<>();
+        kpi.put("todaysReservations", todayReservations.size());
+        kpi.put("pendingRequests", reservationRepository.countByStatus(ReservationStatus.PENDING));
+        kpi.put("facilitiesUnderMaintenance", roomRepository.findAll().stream()
+                .filter(r -> r.getStatus() == RoomStatus.MAINTENANCE || r.getStatus() == RoomStatus.OUT_OF_SERVICE)
+                .count());
+        kpi.put("tasksDueToday", maintenanceScheduleRepository.findByStartTimeBetween(todayStart, todayEnd).stream()
+                .filter(m -> m.getStatus() == MaintenanceStatus.SCHEDULED || m.getStatus() == MaintenanceStatus.IN_PROGRESS)
+                .count());
+
+        List<Map<String, Object>> dailyReservationLoad = new ArrayList<>();
+        for (int i = 6; i >= 0; i--) {
+            LocalDate day = today.minusDays(i);
+            long count = reservationRepository.countByDateRange(day.atStartOfDay(), day.atTime(LocalTime.MAX));
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("day", day.getDayOfWeek().name());
+            m.put("count", count);
+            dailyReservationLoad.add(m);
+        }
+
+        Map<RoomStatus, Long> roomStatusCounts = roomRepository.findAll().stream()
+                .map(Room::getStatus)
+                .filter(s -> s != null)
+                .collect(Collectors.groupingBy(s -> s, Collectors.counting()));
+        List<Map<String, Object>> facilityStatusBreakdown = roomStatusCounts.entrySet().stream()
+                .map(e -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("name", e.getKey().name());
+                    m.put("value", e.getValue());
+                    return m;
+                }).collect(Collectors.toList());
+
+        List<Map<String, Object>> todayBookings = todayReservations.stream()
+                .map(r -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("title", r.getTitle());
+                    m.put("status", r.getStatus().name());
+                    m.put("room", r.getRoom() != null ? r.getRoom().getName() : "Unknown");
+                    m.put("time", r.getStartTime().toLocalTime() + " - " + r.getEndTime().toLocalTime());
+                    return m;
+                }).collect(Collectors.toList());
+
+        List<Map<String, Object>> maintenanceTasks = maintenanceScheduleRepository
+                .findByStartTimeBetween(todayStart, todayEnd).stream()
+                .map(m -> {
+                    Map<String, Object> t = new LinkedHashMap<>();
+                    t.put("task", m.getTitle());
+                    t.put("priority", m.getStatus() == MaintenanceStatus.IN_PROGRESS ? "HIGH"
+                            : m.getStatus() == MaintenanceStatus.SCHEDULED ? "MEDIUM" : "LOW");
+                    t.put("location", m.getRoom() != null ? m.getRoom().getName() : "Unknown");
+                    t.put("dueDate", m.getStartTime().toLocalDate().toString());
+                    return t;
+                }).collect(Collectors.toList());
+
+        List<Map<String, Object>> facilityInventory = equipmentRepository.findAll().stream()
+                .map(e -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("name", e.getName());
+                    item.put("status", e.getStatus().name());
+                    item.put("quantity", 1);
+                    item.put("location", e.getRoom() != null ? e.getRoom().getName() : "Unassigned");
+                    return item;
+                }).collect(Collectors.toList());
+
+        Map<String, Object> charts = new LinkedHashMap<>();
+        charts.put("dailyReservationLoad", dailyReservationLoad);
+        charts.put("facilityStatusBreakdown", facilityStatusBreakdown);
+
+        Map<String, Object> tables = new LinkedHashMap<>();
+        tables.put("todayBookings", todayBookings);
+        tables.put("maintenanceTasks", maintenanceTasks);
+        tables.put("facilityInventory", facilityInventory);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("kpi", kpi);
+        result.put("charts", charts);
+        result.put("tables", tables);
+        return ResponseEntity.ok(ApiResponse.success(result, "Dashboard summary fetched successfully"));
     }
 
     @GetMapping("/reservations")

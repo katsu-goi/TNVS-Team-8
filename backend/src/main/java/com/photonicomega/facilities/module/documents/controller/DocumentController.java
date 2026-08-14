@@ -24,6 +24,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -125,6 +126,9 @@ public class DocumentController {
 
     @GetMapping("/{id}/download")
     @Operation(summary = "Download the stored file for a document")
+    // DocumentAccessPolicy.canDownload reads Document.category (LAZY) and
+    // open-in-view is disabled, so this must run inside a session.
+    @Transactional(readOnly = true)
     public ResponseEntity<?> downloadDocument(
             @PathVariable UUID id,
             @AuthenticationPrincipal UserDetails userDetails,
