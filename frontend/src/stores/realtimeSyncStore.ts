@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
+import type { SubsystemHealthSnapshot } from '../types/systemMonitoring';
 
 export interface FacilitiesSyncData {
   pendingReservations: number;
@@ -18,6 +19,7 @@ export interface FacilitiesSyncData {
 
 interface RealtimeSyncState {
   syncData: FacilitiesSyncData | null;
+  subsystemHealth: SubsystemHealthSnapshot | null;
   connected: boolean;
   lastSyncAt: number | null;
   revision: number;
@@ -28,6 +30,7 @@ interface RealtimeSyncState {
 
 export const useRealtimeSyncStore = create<RealtimeSyncState>((set, get) => ({
   syncData: null,
+  subsystemHealth: null,
   connected: false,
   lastSyncAt: null,
   revision: 0,
@@ -54,6 +57,19 @@ export const useRealtimeSyncStore = create<RealtimeSyncState>((set, get) => ({
             set((state) => ({
               syncData: data,
               lastSyncAt: data.timestamp || Date.now(),
+              revision: state.revision + 1,
+            }));
+          } catch { /* ignore parse errors */ }
+        }
+      });
+
+      client.subscribe('/topic/system-monitoring/subsystems', (message) => {
+        if (message.body) {
+          try {
+            const data = JSON.parse(message.body) as SubsystemHealthSnapshot;
+            set((state) => ({
+              subsystemHealth: data,
+              lastSyncAt: Date.now(),
               revision: state.revision + 1,
             }));
           } catch { /* ignore parse errors */ }

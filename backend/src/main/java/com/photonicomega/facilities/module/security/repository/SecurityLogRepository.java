@@ -24,6 +24,12 @@ public interface SecurityLogRepository extends JpaRepository<SecurityLog, UUID>,
 
     Page<SecurityLog> findByUserId(String userId, Pageable pageable);
 
+    long countByModuleAndStatusAndTimestampAfter(SecurityModule module, String status, Instant after);
+
+    long countByModuleAndTimestampAfter(SecurityModule module, Instant after);
+
+    long countByModuleAndStatusAndTimestampBetween(SecurityModule module, String status, Instant from, Instant to);
+
     default Page<SecurityLog> filterLogs(
             String userId,
             String role,

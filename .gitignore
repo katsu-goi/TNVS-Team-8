@@ -6,6 +6,7 @@ target/
 supabase/.temp/
 *.jar
 *.log
+*.err
 *.gz
 .env
 .env.local
