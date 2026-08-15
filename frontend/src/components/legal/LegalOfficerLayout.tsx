@@ -40,6 +40,7 @@ export const LegalOfficerLayout: React.FC = () => {
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', path: '/legal', icon: LayoutDashboard },
+    { id: 'requests', label: 'Request Review', path: '/legal/requests-review', icon: FileSignature },
     { id: 'contracts', label: 'Contracts', path: '/legal/contracts', icon: FileSignature },
     { id: 'cases', label: 'Legal Cases', path: '/legal/cases', icon: Gavel },
     { id: 'notices', label: 'Legal Notices', path: '/legal/notices', icon: BellRing },

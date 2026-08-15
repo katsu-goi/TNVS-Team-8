@@ -40,6 +40,7 @@ export const ProcurementOfficerLayout: React.FC = () => {
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', path: '/procurement', icon: LayoutDashboard },
+    { id: 'requests', label: 'Request Review', path: '/procurement/requests-review', icon: FileSignature },
     { id: 'contracts', label: 'Contracts', path: '/procurement/contracts', icon: FileSignature },
     { id: 'vendors', label: 'Vendors', path: '/procurement/vendors', icon: Building2 },
     { id: 'notices', label: 'Alerts & Notices', path: '/procurement/notices', icon: BellRing },

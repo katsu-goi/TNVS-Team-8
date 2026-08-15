@@ -21,11 +21,9 @@ export const AppLayout: React.FC = () => {
  const navigate = useNavigate();
  useUserHeartbeat();
  const [searchQuery, setSearchQuery] = useState('');
- const [showNotifications, setShowNotifications] = useState(false);
  const [showLogoutModal, setShowLogoutModal] = useState(false);
  const [expandedMenus, setExpandedMenus] = useState<Set<string>>(new Set());
  const [clock, setClock] = useState(new Date());
- const notifications = useDashboardStore(s => s.notifications);
  useEffect(() => {
  const seg = location.pathname.split('/')[1];
  if (seg && parentIds.includes(seg)) {
@@ -44,8 +42,6 @@ export const AppLayout: React.FC = () => {
  connectSync();
  return () => { clearInterval(id); disconnectRealtime(); disconnectSync(); };
  }, [connectRealtime, disconnectRealtime, connectSync, disconnectSync]);
-
- const unreadCount = notifications.length;
 
  const toggleMenu = (id: string) => {
  setExpandedMenus(prev => {
@@ -69,7 +65,7 @@ export const AppLayout: React.FC = () => {
   { id: 'backup', label: 'Backup & DR', path: '/admin/backup', icon: Download, exact: true },
   { id: 'settings', label: 'System Config', path: '/admin/settings', icon: Settings, exact: true },
   { id: 'notifications', label: 'Notifications', path: '/admin/notifications', icon: Bell, exact: true },
-  { id: 'reports', label: 'Reports', path: '/admin/reports', icon: BarChart3, exact: true },
+  { id: 'analytics', label: 'Analytics', path: '/admin/analytics', icon: BarChart3, exact: true },
   {
   id: 'security', label: 'Security Center', path: '/security', icon: ShieldCheck,
   children: [
@@ -226,52 +222,10 @@ export const AppLayout: React.FC = () => {
   className="w-full bg-white border border-slate-300 text-sm rounded-xl pl-9 pr-4 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-[#00E676] focus:ring-1 focus:ring-[#00E676]/30 transition-all" />
   </div>
   </div>
-  <div className="flex items-center space-x-3 relative">
-  <NotificationBell />
-  <button onClick={() => setShowNotifications(o => !o)}
-  className="relative p-2.5 rounded-xl bg-slate-100 text-slate-500 hover:text-slate-900 transition-colors" title="Notifications">
-  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
-  {unreadCount > 0 && (
-  <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-600 text-[9px] font-bold text-white">{unreadCount > 9 ? '9+' : unreadCount}</span>
-  )}
-  </button>
-  {showNotifications && (
-  <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl shadow-lg border border-slate-200 z-50 overflow-hidden">
-  <div className="p-4 flex items-center justify-between border-b border-slate-100">
-  <div className="flex items-center space-x-2">
-  <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
-  <span className="font-heading font-bold text-sm text-slate-900">Notifications</span>
-  {unreadCount > 0 && <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[10px] font-bold">{unreadCount} new</span>}
-  </div>
-  <button onClick={() => setShowNotifications(false)} className="text-[11px] text-slate-400 hover:text-slate-700">&times;</button>
-  </div>
-  <div className="max-h-72 overflow-y-auto">
-  {notifications.length === 0 ? (
-  <div className="p-6 text-center text-xs text-slate-400">No WebSocket notifications yet.</div>
-  ) : (
-  notifications.map(n => (
-  <div key={n.id} className="p-3.5 text-xs space-y-1 hover:bg-slate-50 transition-colors">
-  <div className="flex items-start space-x-2">
-  <span className={`mt-0.5 w-5 h-5 rounded flex items-center justify-center text-[10px] shrink-0 ${
-  n.type === 'SECURITY' ? 'bg-red-50 text-red-600' :
-  n.type === 'USER' ? 'bg-green-50 text-green-600' :
-  'bg-amber-50 text-amber-600'
-  }`}>
-  {n.type === 'SECURITY' ? '!' : n.type === 'USER' ? 'U' : 'R'}
-  </span>
-  <div className="flex-1 min-w-0">
-  <p className="text-slate-600 leading-snug">{n.message}</p>
-  <p className="text-[10px] text-slate-400 mt-1 font-mono">{new Date(n.timestamp).toLocaleTimeString()}</p>
-  </div>
-  </div>
-  </div>
-  ))
-  )}
-  </div>
-  </div>
-  )}
-  </div>
-  </header>
+<div className="flex items-center space-x-3 relative">
+   <NotificationBell />
+   </div>
+   </header>
 
  <div className="p-8">
  <Outlet />

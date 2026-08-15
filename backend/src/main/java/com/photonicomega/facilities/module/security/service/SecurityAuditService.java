@@ -2,6 +2,7 @@ package com.photonicomega.facilities.module.security.service;
 
 import com.photonicomega.facilities.module.security.domain.*;
 import com.photonicomega.facilities.module.security.repository.*;
+import com.photonicomega.facilities.module.admin.service.AdminNotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -23,6 +24,7 @@ public class SecurityAuditService {
     private final SecurityAlertRepository securityAlertRepository;
     private final LoginHistoryRepository loginHistoryRepository;
     private final ApiRequestLogRepository apiRequestLogRepository;
+    private final AdminNotificationService adminNotificationService;
 
     @Async
     @Transactional
@@ -90,5 +92,11 @@ public class SecurityAuditService {
                 .build();
         securityAlertRepository.save(alert);
         log.error("SECURITY ALERT TRIGGERED [{}]: {} - {}", severity, title, description);
+        if (severity == RiskLevel.HIGH || severity == RiskLevel.CRITICAL) {
+            adminNotificationService.notifyAdmins("SECURITY", severity.name(),
+                    "Security alert: " + title,
+                    "A " + severity.name() + " security alert was triggered: " + description,
+                    "SecurityAlert", alert.getId().toString());
+        }
     }
 }

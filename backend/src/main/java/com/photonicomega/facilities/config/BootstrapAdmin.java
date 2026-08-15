@@ -759,24 +759,8 @@ public class BootstrapAdmin implements CommandLineRunner {
                         .build()
         ));
 
-        employeeNotificationRepository.saveAll(List.of(
-                com.photonicomega.facilities.module.employee.domain.EmployeeNotification.builder()
-                        .recipient(employee).type(NotificationType.APPROVAL)
-                        .title("Reservation approved")
-                        .message("Your reservation \"Team Sync\" has been approved.")
-                        .relatedEntityType("Reservation").read(false).build(),
-                com.photonicomega.facilities.module.employee.domain.EmployeeNotification.builder()
-                        .recipient(employee).type(NotificationType.REJECTION)
-                        .title("Reservation rejected")
-                        .message("Your reservation \"1:1 Review\" was rejected: room unavailable at requested time.")
-                        .relatedEntityType("Reservation").read(false).build(),
-                com.photonicomega.facilities.module.employee.domain.EmployeeNotification.builder()
-                        .recipient(employee).type(NotificationType.REMINDER)
-                        .title("Upcoming visitor")
-                        .message("Reminder: Ama Serwaa is expected tomorrow at 11:00.")
-                        .relatedEntityType("Visitor").read(false).build()
-        ));
-
         log.info("Employee sample data seeded.");
+        // NOTE: No notifications are seeded here. Notifications are created only
+        // by real business events (request submission/review, visitor check-in, etc.).
     }
 }

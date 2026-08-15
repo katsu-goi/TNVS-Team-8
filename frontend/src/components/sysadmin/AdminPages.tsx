@@ -3,9 +3,9 @@ import {
   Activity, Users, Shield,
   AlertTriangle, AlertCircle, Cpu,
   BarChart3, Download, FileText, Bell, Settings, Layers, BookOpen,
-  CheckCircle, RefreshCw, Wifi, WifiOff,
+  RefreshCw, Wifi, WifiOff,
   Search, ChevronLeft, ChevronRight,} from 'lucide-react';
-import { loadAdminData, loadConfigs, updateConfig, loadIntegrations, loadBackups, loadNotifications, markNotificationRead } from '../../api/adminService';
+import { loadAdminData, loadConfigs, updateConfig, loadIntegrations, loadNotifications, markNotificationRead } from '../../api/adminService';
 import { securityService } from '../../api/securityService';
 import { SubsystemHealthGrid } from './SubsystemHealthGrid';
 import type {
@@ -275,54 +275,7 @@ export const AuditLogsPage: React.FC = () => {
   );
 };
 
-export const BackupPage: React.FC = () => {
-  const { data, loading, error, retry } = useQuery(loadBackups);
-  if (loading) return <LoadingSkeleton />;
-  if (error) return <ErrorState message={error} onRetry={retry} />;
-  if (!data || data.length === 0) return (
-    <div><PageHeader icon={Download} title="Backup & Disaster Recovery" subtitle="Primary database backup" />
-    <EmptyState icon={Download} title="No Backups" desc="No backup records found. Backups will appear here once created." /></div>
-  );
-
-  const latest = data[0];
-
-  return (
-    <div>
-      <PageHeader icon={Download} title="Backup & Disaster Recovery" subtitle="Primary database backup & replication" />
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        <div className="card-stat p-5">
-          <div className="flex items-center space-x-3 mb-3">
-            <CheckCircle className={`w-5 h-5 ${latest.status === 'COMPLETED' ? 'text-emerald-600' : 'text-amber-500'}`} />
-            <div><p className="text-sm font-bold text-slate-900">Latest Backup</p><p className="text-xs text-slate-500">{latest.backupType} · {latest.status}</p></div>
-          </div>
-          <div className="text-xs text-slate-500 space-y-1">
-            <p>Started: {latest.startedAt ? new Date(latest.startedAt).toLocaleString() : 'N/A'}</p>
-            <p>Completed: {latest.completedAt ? new Date(latest.completedAt).toLocaleString() : 'In progress'}</p>
-            <p>Size: {latest.fileSize ? `${(latest.fileSize / 1024 / 1024).toFixed(1)} MB` : 'N/A'}</p>
-            <p>Integrity: <span className={`font-semibold ${latest.integrityCheck === 'PASSED' ? 'text-emerald-600' : 'text-amber-600'}`}>{latest.integrityCheck || 'PENDING'}</span></p>
-            <p>Triggered by: {latest.triggeredBy || 'system'}</p>
-          </div>
-        </div>
-        <div className="card-stat p-5">
-          <p className="text-sm font-bold text-slate-900 mb-3">Backup History ({data.length})</p>
-          <div className="space-y-2 max-h-60 overflow-y-auto">
-            {data.map((b) => (
-              <div key={b.id} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0 text-xs">
-                <div>
-                  <span className={`font-medium ${b.status === 'COMPLETED' ? 'text-slate-900' : 'text-amber-600'}`}>{b.backupType}</span>
-                  <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                    b.status === 'COMPLETED' ? 'bg-emerald-50 text-emerald-700' : b.status === 'RUNNING' ? 'bg-blue-50 text-blue-700' : 'bg-rose-50 text-rose-700'
-                  }`}>{b.status}</span>
-                </div>
-                <span className="text-slate-400 font-mono">{b.startedAt ? new Date(b.startedAt).toLocaleDateString() : ''}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
+export { BackupPage } from './BackupPage';
 
 export const SettingsPage: React.FC = () => {
   const { data: configs, loading, error, retry } = useQuery(loadConfigs);
@@ -446,7 +399,7 @@ export const NotificationsPage: React.FC = () => {
   );
 };
 
-export const ReportsPage: React.FC = () => {
+export const AnalyticsPage: React.FC = () => {
   const { data, loading, error, retry } = useQuery(async () => {
     const m = await loadAdminData();
     const [logs, alerts] = await Promise.all([
@@ -462,11 +415,11 @@ export const ReportsPage: React.FC = () => {
 
   const { metrics, logs, alerts } = data;
 
-  const reportItems = [
-    { label: 'Security Report', icon: Shield, desc: `${alerts.length} alerts, ${metrics.activeAlertsCount} open`, color: 'text-rose-500', value: alerts.length },
-    { label: 'Audit Report', icon: FileText, desc: `${logs.length} audit events tracked`, color: 'text-blue-500', value: logs.length },
+  const analyticsItems = [
+    { label: 'Security Analytics', icon: Shield, desc: `${alerts.length} alerts, ${metrics.activeAlertsCount} open`, color: 'text-rose-500', value: alerts.length },
+    { label: 'Audit Analytics', icon: FileText, desc: `${logs.length} audit events tracked`, color: 'text-blue-500', value: logs.length },
     { label: 'AI Performance', icon: Cpu, desc: `${metrics.totalDocuments} docs, ${metrics.totalContracts} contracts`, color: 'text-emerald-600', value: metrics.totalDocuments + metrics.totalContracts },
-    { label: 'Backup Report', icon: Download, desc: `${metrics.totalBackups} backup records`, color: 'text-amber-500', value: metrics.totalBackups },
+    { label: 'Backup Analytics', icon: Download, desc: `${metrics.totalBackups} backup records`, color: 'text-amber-500', value: metrics.totalBackups },
     { label: 'System Health', icon: Activity, desc: `${metrics.activeSessions} active sessions`, color: 'text-emerald-600', value: metrics.activeSessions },
     { label: 'Document Activity', icon: FileText, desc: `${metrics.totalDocuments} documents in system`, color: 'text-blue-500', value: metrics.totalDocuments },
     { label: 'Contract Status', icon: BookOpen, desc: `${metrics.totalContracts} contracts on record`, color: 'text-slate-500', value: metrics.totalContracts },
@@ -474,9 +427,9 @@ export const ReportsPage: React.FC = () => {
 
   return (
     <div>
-      <PageHeader icon={BarChart3} title="Reports" subtitle="Live analytics from database records" />
+      <PageHeader icon={BarChart3} title="Analytics" subtitle="Real-time insights and performance analytics across the system" />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {reportItems.map((r) => (
+        {analyticsItems.map((r) => (
           <div key={r.label} className="card-stat p-5">
             <div className="flex items-center space-x-3 mb-3">
               <div className="p-2 rounded-lg bg-slate-100"><r.icon className={`w-5 h-5 ${r.color}`} /></div>
