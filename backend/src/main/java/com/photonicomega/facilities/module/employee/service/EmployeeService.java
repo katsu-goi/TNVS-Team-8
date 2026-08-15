@@ -24,6 +24,7 @@ import com.photonicomega.facilities.module.facilities.service.RoomAvailabilitySe
 import com.photonicomega.facilities.module.visitor.domain.Visitor;
 import com.photonicomega.facilities.module.visitor.domain.VisitorStatus;
 import com.photonicomega.facilities.module.visitor.repository.VisitorRepository;
+import com.photonicomega.facilities.notification.RealtimeNotificationPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -60,6 +61,7 @@ public class EmployeeService {
     private final EmployeeNotificationRepository employeeNotificationRepository;
     private final UserRepository userRepository;
     private final AuditService auditService;
+    private final RealtimeNotificationPublisher realtimeNotificationPublisher;
 
     // --- Dashboard ---
 
@@ -447,6 +449,9 @@ public class EmployeeService {
         EmployeeRequest saved = employeeRequestRepository.save(r);
         auditService.log(user, "CANCEL_REQUEST", MODULE, "EmployeeRequest", id.toString(),
                 "Cancelled request: " + saved.getTitle(), null);
+        notify(user, NotificationType.CANCELLED, "Request Cancelled",
+                "Your " + saved.getType().name().toLowerCase() + " request \"" + saved.getTitle() + "\" has been cancelled.",
+                "EmployeeRequest", saved.getId().toString());
         return toRequestDto(saved);
     }
 
@@ -488,11 +493,13 @@ public class EmployeeService {
         employeeNotificationRepository.save(n);
     }
 
-    /** Persists a per-user notification for the given recipient. */
+    /** Persists a per-user notification for the given recipient, then pushes it
+     *  to the recipient's realtime queue. Persistence happens first; the push is
+     *  best-effort and never fails the surrounding business transaction. */
     @Transactional
     public void notify(User recipient, NotificationType type, String title, String message,
                        String entityType, String entityId) {
-        employeeNotificationRepository.save(EmployeeNotification.builder()
+        EmployeeNotification saved = employeeNotificationRepository.save(EmployeeNotification.builder()
                 .recipient(recipient)
                 .type(type)
                 .title(title)
@@ -501,6 +508,9 @@ public class EmployeeService {
                 .relatedEntityId(entityId)
                 .read(false)
                 .build());
+        log.info("Notification created: type={} recipient={} title={}", type, recipient.getId(), title);
+        log.debug("Notification persisted for user {}", recipient.getId());
+        realtimeNotificationPublisher.publishToUser(recipient.getEmail(), toNotificationDto(saved));
     }
 
     // --- Profile ---

@@ -1,11 +1,15 @@
 package com.photonicomega.facilities.ai;
 
+import com.photonicomega.facilities.module.admin.service.AdminNotificationService;
 import com.photonicomega.facilities.module.contracts.domain.RiskLevel;
 import lombok.Builder;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -32,6 +36,7 @@ public class AiStateManagementService {
         private String baseUrl;
         private String endpoint;
         private String apiKey;
+        private List<String> capabilities;
     }
 
     @Data
@@ -90,7 +95,18 @@ public class AiStateManagementService {
     private final AtomicLong visitorsVerifiedCounter = new AtomicLong(0);
     private final AtomicLong totalTokensCounter = new AtomicLong(0);
 
-    public AiStateManagementService() {
+    private final AdminNotificationService adminNotificationService;
+
+    public AiStateManagementService(AdminNotificationService adminNotificationService) {
+        this.adminNotificationService = adminNotificationService;
+        initDefaults();
+    }
+
+    /** Reloads the default providers/modules (used by tests to reset state). */
+    public synchronized void reset() {
+        providers.clear();
+        modules.clear();
+        logs.clear();
         initDefaults();
     }
 
@@ -108,6 +124,8 @@ public class AiStateManagementService {
                 .baseUrl("https://api.openai.com/v1")
                 .endpoint("/chat/completions")
                 .apiKey("sk-proj-default")
+                .capabilities(List.of("documentClassification", "ocrExtraction", "contractAnalysis",
+                        "legalReview", "visitorVerification", "recordsCompliance", "aiSummarization", "smartSearch"))
                 .build());
 
         // Default Modules
@@ -156,23 +174,41 @@ public class AiStateManagementService {
                 .features(List.of("Semantic Contextual Search", "Entity Auto-Tagging", "Cross-Module Indexing"))
                 .build());
 
-        // Default System Prompt
-        systemPrompt = """
-                # TNVS Facilities & Administrative AI System Prompt
-                Version: 2.4.0-Enterprise
+        // Default System Prompt - loaded from the global ai/system_prompt.md
+        // resource, falling back to the legacy enterprise default.
+        systemPrompt = loadDefaultSystemPrompt();
+    }
 
-                You are Photonic Omega AI, the core intelligent assistant for the TNVS Facilities & Administrative Management System.
-                You operate with strict adherence to Philippine government administrative standards, transport security protocols, and enterprise governance compliance.
+    private static final String LEGACY_SYSTEM_PROMPT = """
+            # TNVS Facilities & Administrative AI System Prompt
+            Version: 2.4.0-Enterprise
 
-                ## Operational Directives:
-                1. Prioritize data security, user privacy, and strict RBAC enforcement.
-                2. In Document & Contract Analysis: Identify risk scores (LOW, MEDIUM, HIGH, CRITICAL), highlight missing mandatory clauses, and auto-tag metadata.
-                3. In Facility Reservations: Detect schedule overlaps, optimize occupancy allocations, and flag unapproved high-capacity bookings.
-                4. In Visitor Management: Perform OCR parsing on Philippine valid IDs (Drivers License, UMID, Passport) and match security watchlists.
-                5. In Legal & Records: Apply automated retention rules under National Archives guidelines and flag legal compliance risks immediately.
+            You are Photonic Omega AI, the core intelligent assistant for the TNVS Facilities & Administrative Management System.
+            You operate with strict adherence to Philippine government administrative standards, transport security protocols, and enterprise governance compliance.
 
-                Output must be concise, structured in valid JSON when requested, and formatted cleanly in markdown.
-                """.trim();
+            ## Operational Directives:
+            1. Prioritize data security, user privacy, and strict RBAC enforcement.
+            2. In Document & Contract Analysis: Identify risk scores (LOW, MEDIUM, HIGH, CRITICAL), highlight missing mandatory clauses, and auto-tag metadata.
+            3. In Facility Reservations: Detect schedule overlaps, optimize occupancy allocations, and flag unapproved high-capacity bookings.
+            4. In Visitor Management: Perform OCR parsing on Philippine valid IDs (Drivers License, UMID, Passport) and match security watchlists.
+            5. In Legal & Records: Apply automated retention rules under National Archives guidelines and flag legal compliance risks immediately.
+
+            Output must be concise, structured in valid JSON when requested, and formatted cleanly in markdown.
+            """.trim();
+
+    private String loadDefaultSystemPrompt() {
+        try {
+            ClassPathResource resource = new ClassPathResource("ai/system_prompt.md");
+            if (resource.exists()) {
+                String content = new String(resource.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+                if (!content.isBlank()) {
+                    return content;
+                }
+            }
+        } catch (IOException e) {
+            log.warn("Failed to load ai/system_prompt.md, using legacy default: {}", e.getMessage());
+        }
+        return LEGACY_SYSTEM_PROMPT;
     }
 
     public List<ProviderDto> getProviders() {
@@ -200,6 +236,31 @@ public class AiStateManagementService {
         for (ProviderDto p : providers) {
             p.setDefault(p.getId().equals(id));
         }
+    }
+
+    /**
+     * Records real provider health from a live check so the UI never shows a
+     * fabricated connection status. Sets status/responseTime/lastSync.
+     */
+    public ProviderDto updateProviderHealth(String id, boolean connected, long latencyMs, String message) {
+        for (ProviderDto p : providers) {
+            if (p.getId().equals(id)) {
+                boolean wasOffline = "OFFLINE".equals(p.getStatus());
+                p.setStatus(connected ? "CONNECTED" : "OFFLINE");
+                p.setResponseTime(latencyMs + "ms");
+                p.setLastSync("Just now");
+                log.info("AI provider '{}' health update: {}", p.getName(), connected ? "CONNECTED" : "OFFLINE");
+                if (!connected && !wasOffline) {
+                    adminNotificationService.notifyAdmins("AI_PROVIDER", "HIGH",
+                            "AI provider offline: " + p.getName(),
+                            "AI provider \"" + p.getName() + "\" (id " + p.getId() + ") is unreachable."
+                                    + (message != null && !message.isBlank() ? " " + message : ""),
+                            "AIProvider", p.getId());
+                }
+                return p;
+            }
+        }
+        return null;
     }
 
     public boolean deleteProvider(String id) {

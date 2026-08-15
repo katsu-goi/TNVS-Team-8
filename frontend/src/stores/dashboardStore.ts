@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
+import { useAuthStore } from './authStore';
 
 export interface SystemStats {
   cpuUsage: number;
@@ -10,17 +11,9 @@ export interface SystemStats {
   apiRequests: number;
 }
 
-export interface NotificationMsg {
-  id: string;
-  message: string;
-  type: string;
-  timestamp: string;
-}
-
 interface DashboardState {
   metrics: any | null;
   systemStats: SystemStats | null;
-  notifications: NotificationMsg[];
   chartData: any[];
   aiInsights: any | null;
   connected: boolean;
@@ -29,14 +22,12 @@ interface DashboardState {
   error: string | null;
   connectWebSocket: () => void;
   disconnectWebSocket: () => void;
-  removeNotification: (id: string) => void;
   setMetrics: (metrics: any) => void;
 }
 
 export const useDashboardStore = create<DashboardState>((set, get) => ({
   metrics: null,
   systemStats: null,
-  notifications: [],
   chartData: [],
   aiInsights: null,
   connected: false,
@@ -51,8 +42,10 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
     const socketUrl = '/ws-endpoint';
 
+    const token = useAuthStore.getState().accessToken;
     const client = new Client({
       webSocketFactory: () => new SockJS(socketUrl),
+      connectHeaders: token ? { Authorization: `Bearer ${token}` } : {},
       reconnectDelay: 5000,
       heartbeatIncoming: 4000,
       heartbeatOutgoing: 4000,
@@ -64,18 +57,6 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       client.subscribe('/topic/dashboard/metrics', (message) => {
         if (message.body) {
           try { set({ metrics: JSON.parse(message.body) }); } catch { }
-        }
-      });
-
-      client.subscribe('/topic/dashboard/notifications', (message) => {
-        if (message.body) {
-          try {
-            const notif = JSON.parse(message.body);
-            notif.id = Date.now().toString() + Math.random().toString();
-            set((state: DashboardState) => ({
-              notifications: [notif, ...state.notifications].slice(0, 50),
-            }));
-          } catch { }
         }
       });
     };
@@ -93,11 +74,5 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       stompClient.deactivate();
       set({ connected: false, stompClient: null });
     }
-  },
-
-  removeNotification: (id: string) => {
-    set((state: DashboardState) => ({
-      notifications: state.notifications.filter(n => n.id !== id),
-    }));
   },
 }));

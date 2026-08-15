@@ -1,5 +1,6 @@
 package com.photonicomega.facilities.module.admin.domain;
 
+import com.photonicomega.facilities.module.auth.domain.User;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -28,6 +29,21 @@ public class AdminNotification {
 
     @Column(nullable = false, length = 20)
     private String severity;
+
+    /**
+     * The administrator this notification is addressed to. Nullable so a
+     * notification may be a global announcement, but system alerts created by
+     * {@code AdminNotificationService} always target a specific SUPER_ADMIN so
+     * read state is per-admin.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "recipient_id")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private User recipient;
+
+    private String relatedEntityType;
+
+    private String relatedEntityId;
 
     private boolean read;
 

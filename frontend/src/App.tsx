@@ -12,7 +12,7 @@ import {
   BackupPage,
   SettingsPage,
   NotificationsPage,
-  ReportsPage,
+  AnalyticsPage,
   SystemHealthPage,
   SessionsPage,
 } from './components/sysadmin/AdminPages';
@@ -25,7 +25,7 @@ import {
   CalendarPage,
   AssetsPage,
   ReportsPage as FacilitiesReportsPage,
-  AnalyticsPage,
+  AnalyticsPage as FacilitiesAnalyticsPage,
   FacilitiesNotificationsPage,
   ProfilePage,
   FacilitiesSettingsPage,
@@ -54,6 +54,7 @@ import {
 } from './components/compliance/ComplianceOfficerPages';
 import { LegalOfficerLayout } from './components/legal/LegalOfficerLayout';
 import { LegalOfficerDashboard } from './components/legal/LegalOfficerDashboard';
+import { RequestReviewPage } from './components/requests/RequestReviewPage';
 import {
   LoContractsPage,
   LoLegalCasesPage,
@@ -218,7 +219,9 @@ export const App: React.FC = () => {
           <Route path="admin/backup" element={<AdminRoute><BackupPage /></AdminRoute>} />
           <Route path="admin/settings" element={<AdminRoute><SettingsPage /></AdminRoute>} />
           <Route path="admin/notifications" element={<AdminRoute><NotificationsPage /></AdminRoute>} />
-          <Route path="admin/reports" element={<AdminRoute><ReportsPage /></AdminRoute>} />
+          <Route path="admin/analytics" element={<AdminRoute><AnalyticsPage /></AdminRoute>} />
+          {/* Legacy path preserved for bookmarks/links to the renamed Analytics page */}
+          <Route path="admin/reports" element={<AdminRoute><Navigate to="/admin/analytics" replace /></AdminRoute>} />
           <Route path="admin/system-health" element={<AdminRoute><SystemHealthPage /></AdminRoute>} />
           <Route path="admin/sessions" element={<AdminRoute><SessionsPage /></AdminRoute>} />
 
@@ -246,7 +249,7 @@ export const App: React.FC = () => {
           <Route path="facilities/calendar" element={<CalendarPage />} />
           <Route path="facilities/assets" element={<AssetsPage />} />
           <Route path="facilities/reports" element={<FacilitiesReportsPage />} />
-          <Route path="facilities/analytics" element={<AnalyticsPage />} />
+          <Route path="facilities/analytics" element={<FacilitiesAnalyticsPage />} />
           <Route path="facilities/notifications" element={<FacilitiesNotificationsPage />} />
           <Route path="facilities/profile" element={<ProfilePage />} />
           <Route path="facilities/settings" element={<FacilitiesSettingsPage />} />
@@ -291,6 +294,7 @@ export const App: React.FC = () => {
           </LegalOfficerRoute>
         }>
           <Route path="legal" element={<LegalOfficerDashboard />} />
+          <Route path="legal/requests-review" element={<RequestReviewPage />} />
           <Route path="legal/contracts" element={<LoContractsPage />} />
           <Route path="legal/cases" element={<LoLegalCasesPage />} />
           <Route path="legal/notices" element={<LoLegalNoticesPage />} />
@@ -308,6 +312,7 @@ export const App: React.FC = () => {
           </ContractOfficerRoute>
         }>
           <Route path="procurement" element={<ProcurementOfficerDashboard />} />
+          <Route path="procurement/requests-review" element={<RequestReviewPage />} />
           <Route path="procurement/contracts" element={<PoContractsPage />} />
           <Route path="procurement/vendors" element={<PoVendorsPage />} />
           <Route path="procurement/notices" element={<PoNoticesPage />} />

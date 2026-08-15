@@ -13,6 +13,7 @@ import com.photonicomega.facilities.module.visitor.domain.*;
 import com.photonicomega.facilities.module.visitor.repository.VisitorRepository;
 import com.photonicomega.facilities.module.visitor.repository.VisitorVerificationRepository;
 import com.photonicomega.facilities.module.visitor.repository.VisitorWatchlistRepository;
+import com.photonicomega.facilities.notification.RealtimeNotificationPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -66,6 +67,7 @@ public class VisitorVerificationService {
     private final VisitorWatchlistRepository watchlistRepository;
     private final SecurityAlertRepository securityAlertRepository;
     private final EmployeeNotificationRepository employeeNotificationRepository;
+    private final RealtimeNotificationPublisher realtimeNotificationPublisher;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
 
@@ -247,7 +249,7 @@ public class VisitorVerificationService {
                    .append(" Purpose: ").append(Objects.toString(visitor.getPurposeOfVisit(), "not stated"))
                    .append(".");
 
-            employeeNotificationRepository.save(EmployeeNotification.builder()
+            EmployeeNotification saved = employeeNotificationRepository.save(EmployeeNotification.builder()
                     .recipient(host)
                     .title("Visitor arrived: " + visitor.getFullName())
                     .message(message.toString())
@@ -255,6 +257,16 @@ public class VisitorVerificationService {
                     .relatedEntityType("Visitor")
                     .relatedEntityId(visitor.getId().toString())
                     .build());
+            log.info("Notification created: type=VISITOR_ARRIVAL recipient={} title={}", host.getId(), saved.getTitle());
+            realtimeNotificationPublisher.publishToUser(host.getEmail(), Map.of(
+                    "id", saved.getId(),
+                    "title", saved.getTitle(),
+                    "message", saved.getMessage(),
+                    "type", saved.getType(),
+                    "read", saved.isRead(),
+                    "relatedEntityType", saved.getRelatedEntityType(),
+                    "relatedEntityId", saved.getRelatedEntityId(),
+                    "createdAt", saved.getCreatedAt()));
             return true;
         } catch (Exception e) {
             log.error("Failed to notify host of visitor arrival ({}): {}",

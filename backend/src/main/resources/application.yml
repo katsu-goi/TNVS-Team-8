@@ -116,6 +116,10 @@ app:
       key: ${SUPABASE_SERVICE_KEY:your-service-key}
       bucket: ${SUPABASE_BUCKET:facilities-documents}
 
+  # Backup & Disaster Recovery - directory where real database dumps are written
+  backup:
+    storage-path: ${BACKUP_STORAGE_PATH:${java.io.tmpdir}/facilities-backups}
+
   # Supabase Realtime (live user activity / online users)
   supabase:
     url: ${SUPABASE_URL:https://your-project.supabase.co}
