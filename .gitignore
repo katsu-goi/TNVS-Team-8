@@ -3,9 +3,12 @@ dist/
 build/
 target/
 *.class
+supabase/.temp/
 *.jar
 *.log
 *.log.*.gz
+*.err
+*.gz
 .env
 .env.local
 .DS_Store

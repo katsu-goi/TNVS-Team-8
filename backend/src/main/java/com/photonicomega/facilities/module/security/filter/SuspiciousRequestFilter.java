@@ -1,6 +1,7 @@
 package com.photonicomega.facilities.module.security.filter;
 
-import com.photonicomega.facilities.module.security.domain.RiskLevel;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.photonicomega.facilities.common.dto.ApiResponse;
 import com.photonicomega.facilities.module.security.service.SecurityAuditService;
 import jakarta.servlet.*;
 import jakarta.servlet.http.HttpServletRequest;
@@ -8,6 +9,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -23,6 +26,7 @@ import java.util.regex.Pattern;
 public class SuspiciousRequestFilter implements Filter {
 
     private final SecurityAuditService securityAuditService;
+    private final ObjectMapper objectMapper;
 
     // OWASP Threat Regex Patterns
     private static final Pattern SQL_INJECTION_PATTERN = Pattern.compile(
@@ -40,8 +44,14 @@ public class SuspiciousRequestFilter implements Filter {
             Pattern.CASE_INSENSITIVE
     );
 
+    /**
+     * Command injection signatures. Note: the previous generic {@code ;\s*\w+}
+     * and {@code &&\s*\w+} alternatives matched harmless content (e.g. the
+     * Windows User-Agent "Windows NT 10.0; Win64; x64") and flagged nearly every
+     * request. Only shell metacharacters in a command-execution context are kept.
+     */
     private static final Pattern COMMAND_INJECTION_PATTERN = Pattern.compile(
-            "(?i)(\\|\\|\\s*\\w+|;\\s*\\w+|&&\\s*\\w+|chmod\\s+|chown\\s+)",
+            "(?i)(\\|\\|\\s*(ls|cat|curl|wget|rm|mv|cp|id|whoami)\\b|;\\s*(ls|cat|curl|wget|rm|mv|cp|id|whoami)\\b|&&\\s*(ls|cat|curl|wget|rm|mv|cp|id|whoami)\\b|chmod\\s+|chown\\s+)",
             Pattern.CASE_INSENSITIVE
     );
 
@@ -57,7 +67,11 @@ public class SuspiciousRequestFilter implements Filter {
         // Check query strings and headers
         if (isSuspicious(httpRequest)) {
             log.error("ATTACK DETECTED: Blocked suspicious request from IP: {} on URL: {}", ip, url);
-            chain.doFilter(request, response);
+            httpResponse.setStatus(HttpStatus.FORBIDDEN.value());
+            httpResponse.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            ApiResponse<Void> apiResponse = ApiResponse.failure(
+                    "Request blocked: suspicious content detected.", "BLOCKED_SUSPICIOUS_REQUEST");
+            httpResponse.getWriter().write(objectMapper.writeValueAsString(apiResponse));
             return;
         }
 

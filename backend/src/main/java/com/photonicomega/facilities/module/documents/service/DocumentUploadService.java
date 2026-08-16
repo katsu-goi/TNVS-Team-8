@@ -139,6 +139,12 @@ public class DocumentUploadService {
                 classificationLevel != null ? classificationLevel : ClassificationLevel.INTERNAL);
         document.setVersionNumber(1);
 
+        // Owner attribution drives DocumentAccessPolicy scoping.
+        if (user != null) {
+            document.setOwnerEmail(user.getEmail());
+            document.setDepartment(user.getDepartment());
+        }
+
         if (categoryId != null) {
             categoryRepository.findById(categoryId).ifPresent(document::setCategory);
         }

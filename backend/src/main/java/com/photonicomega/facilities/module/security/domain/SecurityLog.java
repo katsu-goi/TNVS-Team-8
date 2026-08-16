@@ -23,6 +23,7 @@ public class SecurityLog {
     private Instant timestamp;
 
     private String userId;
+    private String username;
     private String fullName;
     private String role;
     private String department;

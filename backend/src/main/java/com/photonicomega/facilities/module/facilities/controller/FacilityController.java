@@ -9,9 +9,14 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -25,6 +30,7 @@ public class FacilityController {
     private final ReservationRepository reservationRepository;
 
     @GetMapping
+    @PreAuthorize("hasAnyRole('FACILITIES_MANAGER','FACILITIES_OFFICER')")
     @Operation(summary = "Get all facilities")
     public ResponseEntity<ApiResponse<List<FacilityDto>>> getAllFacilities() {
         List<FacilityDto> facilities = facilityRepository.findAll().stream()
@@ -34,6 +40,7 @@ public class FacilityController {
     }
 
     @PostMapping
+    @PreAuthorize("hasRole('FACILITIES_MANAGER')")
     @Operation(summary = "Create a new facility")
     public ResponseEntity<ApiResponse<FacilityDto>> createFacility(@RequestBody Facility facility) {
         Facility saved = facilityRepository.save(facility);
@@ -73,24 +80,74 @@ public class FacilityController {
     }
 
     @GetMapping("/{facilityId}/rooms")
+    @PreAuthorize("hasAnyRole('FACILITIES_MANAGER','FACILITIES_OFFICER')")
     @Operation(summary = "Get rooms by facility ID")
-    public ResponseEntity<ApiResponse<List<Room>>> getRoomsByFacility(@PathVariable UUID facilityId) {
-        return ResponseEntity.ok(ApiResponse.success(roomRepository.findByFacilityId(facilityId), "Rooms fetched successfully"));
+    // Room.facility and Room.amenities are LAZY and open-in-view is disabled,
+    // so the data is flattened to DTO maps inside a session.
+    @Transactional(readOnly = true)
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getRoomsByFacility(@PathVariable UUID facilityId) {
+        List<Map<String, Object>> rooms = roomRepository.findByFacilityId(facilityId).stream()
+                .map(r -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("id", r.getId());
+                    m.put("roomNumber", r.getRoomNumber());
+                    m.put("name", r.getName());
+                    m.put("type", r.getType() != null ? r.getType().name() : null);
+                    m.put("floorNumber", r.getFloorNumber());
+                    m.put("building", r.getBuilding());
+                    m.put("capacity", r.getCapacity());
+                    m.put("openTime", r.getOpenTime());
+                    m.put("closeTime", r.getCloseTime());
+                    m.put("status", r.getStatus() != null ? r.getStatus().name() : null);
+                    m.put("hasProjector", r.getHasProjector());
+                    m.put("hasVideoConference", r.getHasVideoConference());
+                    m.put("hasWhiteboard", r.getHasWhiteboard());
+                    m.put("active", r.getActive());
+                    m.put("facilityId", r.getFacility() != null ? r.getFacility().getId() : null);
+                    m.put("facilityName", r.getFacility() != null ? r.getFacility().getName() : null);
+                    return m;
+                }).toList();
+        return ResponseEntity.ok(ApiResponse.success(rooms, "Rooms fetched successfully"));
     }
 
     @PostMapping("/rooms")
+    @PreAuthorize("hasRole('FACILITIES_MANAGER')")
     @Operation(summary = "Create a new room")
     public ResponseEntity<ApiResponse<Room>> createRoom(@RequestBody Room room) {
         return ResponseEntity.ok(ApiResponse.success(roomRepository.save(room), "Room created successfully"));
     }
 
     @GetMapping("/reservations")
+    @PreAuthorize("hasAnyRole('FACILITIES_MANAGER','FACILITIES_OFFICER')")
     @Operation(summary = "Get all room reservations")
-    public ResponseEntity<ApiResponse<List<Reservation>>> getAllReservations() {
-        return ResponseEntity.ok(ApiResponse.success(reservationRepository.findAll(), "Reservations fetched successfully"));
+    // Reservation.room and Reservation.reservedBy are LAZY and open-in-view is
+    // disabled, so the data is flattened to DTO maps inside a session.
+    @Transactional(readOnly = true)
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getAllReservations() {
+        List<Map<String, Object>> reservations = reservationRepository.findAll().stream()
+                .map(r -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("id", r.getId());
+                    m.put("title", r.getTitle());
+                    m.put("description", r.getDescription());
+                    m.put("startTime", r.getStartTime());
+                    m.put("endTime", r.getEndTime());
+                    m.put("status", r.getStatus() != null ? r.getStatus().name() : null);
+                    m.put("expectedAttendees", r.getExpectedAttendees());
+                    m.put("rejectionReason", r.getRejectionReason());
+                    m.put("roomId", r.getRoom() != null ? r.getRoom().getId() : null);
+                    m.put("roomName", r.getRoom() != null ? r.getRoom().getName() : null);
+                    m.put("roomNumber", r.getRoom() != null ? r.getRoom().getRoomNumber() : null);
+                    m.put("reservedById", r.getReservedBy() != null ? r.getReservedBy().getId() : null);
+                    m.put("reservedByName", r.getReservedBy() != null ? r.getReservedBy().getFullName() : null);
+                    m.put("createdAt", r.getCreatedAt());
+                    return m;
+                }).toList();
+        return ResponseEntity.ok(ApiResponse.success(reservations, "Reservations fetched successfully"));
     }
 
     @PostMapping("/reservations")
+    @PreAuthorize("hasAnyRole('FACILITIES_MANAGER','FACILITIES_OFFICER')")
     @Operation(summary = "Book a room / Create reservation with conflict check")
     public ResponseEntity<ApiResponse<Reservation>> createReservation(@RequestBody Reservation reservation) {
         List<Reservation> conflicts = reservationRepository.findConflictingReservations(

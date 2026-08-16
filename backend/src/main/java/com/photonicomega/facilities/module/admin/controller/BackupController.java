@@ -3,13 +3,13 @@ package com.photonicomega.facilities.module.admin.controller;
 import com.photonicomega.facilities.common.dto.ApiResponse;
 import com.photonicomega.facilities.module.admin.domain.BackupRecord;
 import com.photonicomega.facilities.module.admin.repository.BackupRecordRepository;
+import com.photonicomega.facilities.module.admin.service.BackupService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -20,6 +20,7 @@ import java.util.Map;
 public class BackupController {
 
     private final BackupRecordRepository repository;
+    private final BackupService backupService;
 
     @GetMapping
     @Operation(summary = "Get all backup records (most recent first)")
@@ -38,14 +39,11 @@ public class BackupController {
     }
 
     @PostMapping
-    @Operation(summary = "Create a new backup record")
+    @Operation(summary = "Start a new database backup")
     public ResponseEntity<ApiResponse<BackupRecord>> create(@RequestBody Map<String, String> body) {
-        BackupRecord record = BackupRecord.builder()
-                .backupType(body.getOrDefault("backupType", "FULL"))
-                .status(body.getOrDefault("status", "RUNNING"))
-                .startedAt(Instant.now())
-                .triggeredBy(body.getOrDefault("triggeredBy", "system"))
-                .build();
-        return ResponseEntity.ok(ApiResponse.success(repository.save(record)));
+        BackupRecord record = backupService.startBackup(
+                body.get("backupType"),
+                body.get("triggeredBy"));
+        return ResponseEntity.ok(ApiResponse.success(record));
     }
 }

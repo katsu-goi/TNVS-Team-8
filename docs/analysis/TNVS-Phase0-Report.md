@@ -149,12 +149,12 @@ The other three guards — `FacilitiesRoute` (:94), `FacilitiesOfficerRoute` (:1
 
 `.gitignore` covers `.env` but **not** `application.yml`, so the following are in git history:
 
-- Supabase pooler password `2ivs0XvJ2wyaDwsf` for user `postgres.hffwvffqwjppecharqsd`
-- Supabase anon key `sb_publishable_UWaHC31yeIQCKgSN20oPEg_qY-iJsQE`
-- Supabase project URL `dunijfrvfozwlykpkfhy.supabase.co`
-- Default JWT signing secret `PhotonicOmega2026SuperSecretKeyForJWTTokenGenerationMustBe256BitsLong!!`
+- Supabase pooler password `<redacted - rotated>` for user `postgres.<redacted - rotated>`
+- Supabase anon key `<redacted - rotated>`
+- Supabase project URL `<redacted - rotated>.supabase.co`
+- Default JWT signing secret `<redacted - rotated>`
 
-Seed credentials are additionally documented in plaintext in `backend/POSTGRES_PROFILE.md` (`admin@photonicomega.com` / `Admin2026!`, `fm@photonicomega.com` / `Fm2026!`, `fo@photonicomega.com` / `Fo2026!`).
+Seed credentials are additionally documented in plaintext in `backend/POSTGRES_PROFILE.md` (now redacted; bootstrap-only defaults, rotated in non-local environments).
 
 **These require credential rotation, which is an operational action outside the scope of a code PR.** Raised to the project lead in Open Questions.
 

@@ -3,7 +3,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, LogOut, FileText, FileSignature,
   ScrollText, User, Settings,
-  ChevronRight, AlertTriangle, Search, Handshake,
+  ChevronRight, AlertTriangle, Search,
   BellRing, Building2, Gavel,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
@@ -40,6 +40,7 @@ export const ProcurementOfficerLayout: React.FC = () => {
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', path: '/procurement', icon: LayoutDashboard },
+    { id: 'requests', label: 'Request Review', path: '/procurement/requests-review', icon: FileSignature },
     { id: 'contracts', label: 'Contracts', path: '/procurement/contracts', icon: FileSignature },
     { id: 'vendors', label: 'Vendors', path: '/procurement/vendors', icon: Building2 },
     { id: 'notices', label: 'Alerts & Notices', path: '/procurement/notices', icon: BellRing },
@@ -54,8 +55,8 @@ export const ProcurementOfficerLayout: React.FC = () => {
     <div className="min-h-screen bg-[#F8FAFC]">
       <aside className="fixed top-0 left-0 w-72 h-screen z-30 bg-[#042F24] flex flex-col overflow-hidden shadow-2xl">
         <div className="p-5 pb-4 flex items-center space-x-3 shrink-0 bg-[#011E17] border-b border-[#00E676]/20">
-          <div className="w-9 h-9 rounded-xl bg-[#00E676]/20 flex items-center justify-center shrink-0">
-            <Handshake className="w-5 h-5 text-[#00E676]" />
+          <div className="w-9 h-9 rounded-xl bg-[#00E676]/20 flex items-center justify-center shrink-0 overflow-hidden">
+            <img src="/greengsmlogo.png" alt="Green GSM Logo" className="w-full h-full object-contain" draggable={false} />
           </div>
           <div className="min-w-0">
             <h1 className="font-heading font-bold text-sm text-white leading-tight truncate">Green GSM</h1>

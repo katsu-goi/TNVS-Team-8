@@ -1,6 +1,7 @@
 package com.photonicomega.facilities.exception;
 
 import com.photonicomega.facilities.common.dto.ApiResponse;
+import com.photonicomega.facilities.module.auth.dto.LoginLockoutInfo;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
@@ -14,7 +15,9 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.List;
 
@@ -52,6 +55,20 @@ public class GlobalExceptionHandler {
         log.warn("Authentication error: {} at {}", ex.getMessage(), request.getRequestURI());
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                 .body(ApiResponse.failure(ex.getMessage(), ex.getErrorCode()));
+    }
+
+    @ExceptionHandler(LoginFailedException.class)
+    public ResponseEntity<ApiResponse<LoginLockoutInfo>> handleLoginFailed(LoginFailedException ex) {
+        LoginLockoutInfo info = ex.getInfo();
+        boolean locked = info.isPermanentlyLocked() || info.getLockSecondsRemaining() > 0;
+        HttpStatus status = locked ? HttpStatus.LOCKED : HttpStatus.UNAUTHORIZED;
+        return ResponseEntity.status(status)
+                .body(ApiResponse.<LoginLockoutInfo>builder()
+                        .success(false)
+                        .message(ex.getMessage())
+                        .errorCode(ex.getErrorCode())
+                        .data(info)
+                        .build());
     }
 
     @ExceptionHandler(BadCredentialsException.class)
@@ -101,6 +118,26 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleMaxUploadSize(MaxUploadSizeExceededException ex) {
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
                 .body(ApiResponse.failure("File size exceeds maximum allowed limit (100MB)", "FILE_TOO_LARGE"));
+    }
+
+    /** Unmatched routes must be a 404, not a 500. */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNoResourceFound(
+            NoResourceFoundException ex, HttpServletRequest request) {
+        log.warn("No handler for {} {}", request.getMethod(), request.getRequestURI());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.failure("Endpoint not found: "
+                        + request.getMethod() + " " + request.getRequestURI(), "ENDPOINT_NOT_FOUND"));
+    }
+
+    /** Known path called with an unsupported HTTP method (e.g. DELETE on a GET-only endpoint). */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMethodNotSupported(
+            HttpRequestMethodNotSupportedException ex, HttpServletRequest request) {
+        log.warn("Method {} not supported at {}", request.getMethod(), request.getRequestURI());
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(ApiResponse.failure("Method not allowed: "
+                        + request.getMethod() + " " + request.getRequestURI(), "METHOD_NOT_ALLOWED"));
     }
 
     @ExceptionHandler(FileStorageException.class)

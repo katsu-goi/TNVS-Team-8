@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppLayout } from './components/layout/AppLayout';
 import { LoginPage } from './components/auth/LoginPage';
+import { HRAssistancePage } from './components/auth/HRAssistancePage';
 import { SysAdminDashboard } from './components/sysadmin/SysAdminDashboard';
 import {
   IntegrationsPage,
@@ -11,7 +12,7 @@ import {
   BackupPage,
   SettingsPage,
   NotificationsPage,
-  ReportsPage,
+  AnalyticsPage,
   SystemHealthPage,
   SessionsPage,
 } from './components/sysadmin/AdminPages';
@@ -24,7 +25,7 @@ import {
   CalendarPage,
   AssetsPage,
   ReportsPage as FacilitiesReportsPage,
-  AnalyticsPage,
+  AnalyticsPage as FacilitiesAnalyticsPage,
   FacilitiesNotificationsPage,
   ProfilePage,
   FacilitiesSettingsPage,
@@ -53,6 +54,7 @@ import {
 } from './components/compliance/ComplianceOfficerPages';
 import { LegalOfficerLayout } from './components/legal/LegalOfficerLayout';
 import { LegalOfficerDashboard } from './components/legal/LegalOfficerDashboard';
+import { RequestReviewPage } from './components/requests/RequestReviewPage';
 import {
   LoContractsPage,
   LoLegalCasesPage,
@@ -86,7 +88,7 @@ import {
   EmpProfilePage,
   EmpSettingsPage,
 } from './components/employee/EmployeePages';
-import { useAuthStore } from './stores/authStore';
+import { useAuthStore, getDashboardPath, isSuperAdmin } from './stores/authStore';
 
 class ErrorBoundary extends React.Component<
   { fallback: React.ReactNode; children: React.ReactNode },
@@ -117,11 +119,29 @@ class ErrorBoundary extends React.Component<
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
+  // Fail-closed: both a bearer token AND a rehydrated user session are required.
+  // A token without a user (or vice-versa) means a corrupt/partial session, so we
+  // never render the authenticated layout from half a session.
+  if (!accessToken || !user || !Object.keys(user).length) {
+    return <Navigate to="/login" replace />;
+  }
+  return <>{children}</>;
+};
+
+/**
+ * Guards system-administrator surfaces (`/`, `/admin/*`, `/security*`).
+ * Requires the SUPER_ADMIN role (the only system-administrator role the
+ * backend defines); any other role is redirected to its own dashboard.
+ */
+const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const user = useAuthStore((s) => s.user);
   if (!accessToken) {
     return <Navigate to="/login" replace />;
   }
-  if (user?.roles && !user.roles.includes('FACILITIES_MANAGER')) {
-    return <>{children}</>;
+  if (!isSuperAdmin(user)) {
+    const destination = getDashboardPath(user);
+    return <Navigate to={destination === '/' ? '/login' : destination} replace />;
   }
   return <>{children}</>;
 };
@@ -185,30 +205,35 @@ export const App: React.FC = () => {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/hr-assistance" element={<HRAssistancePage />} />
         <Route element={
           <ProtectedRoute>
             <AppLayout />
           </ProtectedRoute>
         }>
-          <Route index element={<SysAdminDashboard />} />
+          <Route index element={<AdminRoute><SysAdminDashboard /></AdminRoute>} />
 
           {/* System Administrator modules only */}
-          <Route path="admin/integrations" element={<IntegrationsPage />} />
-          <Route path="admin/ai-services" element={<AiServicesPage />} />
-          <Route path="admin/backup" element={<BackupPage />} />
-          <Route path="admin/settings" element={<SettingsPage />} />
-          <Route path="admin/notifications" element={<NotificationsPage />} />
-          <Route path="admin/reports" element={<ReportsPage />} />
-          <Route path="admin/system-health" element={<SystemHealthPage />} />
-          <Route path="admin/sessions" element={<SessionsPage />} />
+          <Route path="admin/integrations" element={<AdminRoute><IntegrationsPage /></AdminRoute>} />
+          <Route path="admin/ai-services" element={<AdminRoute><AiServicesPage /></AdminRoute>} />
+          <Route path="admin/backup" element={<AdminRoute><BackupPage /></AdminRoute>} />
+          <Route path="admin/settings" element={<AdminRoute><SettingsPage /></AdminRoute>} />
+          <Route path="admin/notifications" element={<AdminRoute><NotificationsPage /></AdminRoute>} />
+          <Route path="admin/analytics" element={<AdminRoute><AnalyticsPage /></AdminRoute>} />
+          {/* Legacy path preserved for bookmarks/links to the renamed Analytics page */}
+          <Route path="admin/reports" element={<AdminRoute><Navigate to="/admin/analytics" replace /></AdminRoute>} />
+          <Route path="admin/system-health" element={<AdminRoute><SystemHealthPage /></AdminRoute>} />
+          <Route path="admin/sessions" element={<AdminRoute><SessionsPage /></AdminRoute>} />
 
           {/* Security Center */}
           <Route path="security" element={
-            <ErrorBoundary fallback={<div className="text-rose-400">Security Center failed to load.</div>}>
-              <SecurityCenterPage />
-            </ErrorBoundary>
+            <AdminRoute>
+              <ErrorBoundary fallback={<div className="text-rose-400">Security Center failed to load.</div>}>
+                <SecurityCenterPage />
+              </ErrorBoundary>
+            </AdminRoute>
           } />
-          <Route path="security/audit-logs" element={<AuditLogsPage />} />
+          <Route path="security/audit-logs" element={<AdminRoute><AuditLogsPage /></AdminRoute>} />
         </Route>
 
         {/* Facilities Manager routes */}
@@ -224,7 +249,7 @@ export const App: React.FC = () => {
           <Route path="facilities/calendar" element={<CalendarPage />} />
           <Route path="facilities/assets" element={<AssetsPage />} />
           <Route path="facilities/reports" element={<FacilitiesReportsPage />} />
-          <Route path="facilities/analytics" element={<AnalyticsPage />} />
+          <Route path="facilities/analytics" element={<FacilitiesAnalyticsPage />} />
           <Route path="facilities/notifications" element={<FacilitiesNotificationsPage />} />
           <Route path="facilities/profile" element={<ProfilePage />} />
           <Route path="facilities/settings" element={<FacilitiesSettingsPage />} />
@@ -269,6 +294,7 @@ export const App: React.FC = () => {
           </LegalOfficerRoute>
         }>
           <Route path="legal" element={<LegalOfficerDashboard />} />
+          <Route path="legal/requests-review" element={<RequestReviewPage />} />
           <Route path="legal/contracts" element={<LoContractsPage />} />
           <Route path="legal/cases" element={<LoLegalCasesPage />} />
           <Route path="legal/notices" element={<LoLegalNoticesPage />} />
@@ -286,6 +312,7 @@ export const App: React.FC = () => {
           </ContractOfficerRoute>
         }>
           <Route path="procurement" element={<ProcurementOfficerDashboard />} />
+          <Route path="procurement/requests-review" element={<RequestReviewPage />} />
           <Route path="procurement/contracts" element={<PoContractsPage />} />
           <Route path="procurement/vendors" element={<PoVendorsPage />} />
           <Route path="procurement/notices" element={<PoNoticesPage />} />

@@ -14,50 +14,31 @@ export interface AuthTokenResponse {
   user: User;
 }
 
+/**
+ * Server-side lockout state attached to a failed-login error response. The
+ * counters here are authoritative database state - the client uses them only
+ * to render the attempt progress and the progressive countdown, never as the
+ * security mechanism itself.
+ */
+export interface LoginLockoutInfo {
+  failedAttempts: number;
+  maxAttempts: number;
+  remainingAttempts: number;
+  lockSecondsRemaining: number;
+  permanentlyLocked: boolean;
+  lockedUntil?: string;
+}
+
+export interface HrAssistanceRequest {
+  name: string;
+  email: string;
+  subject: string;
+  message: string;
+}
+
 export async function login(req: LoginRequest): Promise<AuthTokenResponse> {
-  try {
-    const { data } = await apiClient.post('/auth/login', req);
-    if (data && data.data) {
-      return data.data;
-    }
-  } catch (err) {
-    const axiosErr = err as { response?: { status?: number } };
-    // Real backend rejected the credentials — surface the error instead of
-    // fabricating a session that the backend will reject on the next call.
-    if (axiosErr.response?.status && axiosErr.response.status !== 0) {
-      throw err;
-    }
-    console.warn('Backend authentication endpoint unreachable, using local auth session:', err);
-  }
-
-  // Graceful fallback authentication for local development when backend server is offline
-  const email = (req.email || '').toLowerCase();
-  let roles = ['SYSTEM_ADMINISTRATOR', 'ROLE_SYSTEM_ADMINISTRATOR'];
-  let name = 'System Administrator';
-
-  if (email.includes('fm') || email.includes('manager')) {
-    roles = ['FACILITIES_MANAGER', 'ROLE_FACILITIES_MANAGER'];
-    name = 'Facilities Manager';
-  } else if (email.includes('fo') || email.includes('officer')) {
-    roles = ['FACILITIES_OFFICER', 'ROLE_FACILITIES_OFFICER'];
-    name = 'Facilities Officer';
-  }
-
-  return {
-    accessToken: 'demo-jwt-access-token-' + Date.now(),
-    refreshToken: 'demo-jwt-refresh-token-' + Date.now(),
-    tokenType: 'Bearer',
-    expiresIn: 3600,
-    user: {
-      id: 'usr-admin-01',
-      firstName: name.split(' ')[0],
-      lastName: name.split(' ')[1] || 'Admin',
-      fullName: name,
-      email: req.email || 'admin@photonicomega.com',
-      roles: roles,
-      permissions: ['READ', 'WRITE', 'ADMIN', 'SYSTEM_CONFIG'],
-    },
-  };
+  const { data } = await apiClient.post('/auth/login', req);
+  return data.data;
 }
 
 export async function refreshToken(token: string): Promise<AuthTokenResponse> {
@@ -69,4 +50,17 @@ export async function logout(): Promise<void> {
   try {
     await apiClient.post('/auth/logout');
   } catch {}
+}
+
+export async function requestHrAssistance(req: HrAssistanceRequest): Promise<void> {
+  await apiClient.post('/auth/hr/assistance', req);
+}
+
+/** Extracts the server lockout payload from an axios login error, if present. */
+export function extractLoginLockout(error: unknown): LoginLockoutInfo | null {
+  if (!error || typeof error !== 'object') return null;
+  const errObj = error as Record<string, any>;
+  const payload = errObj?.response?.data?.data;
+  if (!payload || typeof payload !== 'object') return null;
+  return payload as LoginLockoutInfo;
 }

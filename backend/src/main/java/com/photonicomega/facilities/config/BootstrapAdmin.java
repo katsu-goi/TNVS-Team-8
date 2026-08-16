@@ -17,7 +17,11 @@ import com.photonicomega.facilities.module.compliance.repository.DisposalRequest
 import com.photonicomega.facilities.module.compliance.service.ComplianceService;
 import com.photonicomega.facilities.module.documents.domain.ClassificationLevel;
 import com.photonicomega.facilities.module.documents.domain.Document;
+import com.photonicomega.facilities.module.documents.domain.DocumentGrant;
+import com.photonicomega.facilities.module.documents.domain.DocumentGrantAccessLevel;
+import com.photonicomega.facilities.module.documents.domain.DocumentGranteeType;
 import com.photonicomega.facilities.module.documents.domain.DocumentStatus;
+import com.photonicomega.facilities.module.documents.repository.DocumentGrantRepository;
 import com.photonicomega.facilities.module.documents.repository.DocumentRepository;
 import com.photonicomega.facilities.module.employee.domain.NotificationType;
 import com.photonicomega.facilities.module.employee.domain.RequestType;
@@ -59,6 +63,7 @@ public class BootstrapAdmin implements CommandLineRunner {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final DocumentRepository documentRepository;
+    private final DocumentGrantRepository documentGrantRepository;
     private final ContractRepository contractRepository;
     private final RetentionPolicyRepository retentionPolicyRepository;
     private final DisposalRequestRepository disposalRequestRepository;
@@ -125,6 +130,9 @@ public class BootstrapAdmin implements CommandLineRunner {
                 .emailVerified(true)
                 .roles(Set.of(superAdminRole))
                 .build());
+
+        log.warn("Bootstrap admin user created with DEFAULT credentials (admin@photonicomega.com / Admin2026!). "
+                + "Change the password before deploying outside a dev/test environment.");
 
         log.info("Bootstrap admin user created.");
     }
@@ -263,30 +271,35 @@ public class BootstrapAdmin implements CommandLineRunner {
                         .title("Fire Safety Inspection Report 2026")
                         .fileName("fire-safety-2026.pdf").fileType("application/pdf").fileSize(482_112L)
                         .classificationLevel(ClassificationLevel.INTERNAL).status(DocumentStatus.PENDING_REVIEW)
+                        .ownerEmail("co@photonicomega.com").department("Facilities")
                         .aiSummary("Annual fire safety inspection; two minor findings pending remediation.")
                         .versionNumber(1).build(),
                 Document.builder()
                         .title("Data Processing Agreement - Acme Cloud")
                         .fileName("dpa-acme-cloud.pdf").fileType("application/pdf").fileSize(215_744L)
                         .classificationLevel(ClassificationLevel.CONFIDENTIAL).status(DocumentStatus.PENDING_REVIEW)
+                        .ownerEmail("co@photonicomega.com").department("Compliance")
                         .aiSummary("GDPR data processing agreement; sub-processor list requires review.")
                         .versionNumber(2).build(),
                 Document.builder()
                         .title("ISO 9001 Quality Manual")
                         .fileName("iso-9001-manual.pdf").fileType("application/pdf").fileSize(1_048_576L)
                         .classificationLevel(ClassificationLevel.INTERNAL).status(DocumentStatus.APPROVED)
+                        .ownerEmail("co@photonicomega.com").department("Compliance")
                         .aiSummary("Quality management system manual, current revision approved.")
                         .versionNumber(5).build(),
                 Document.builder()
                         .title("Employee Handbook")
                         .fileName("employee-handbook.pdf").fileType("application/pdf").fileSize(724_992L)
                         .classificationLevel(ClassificationLevel.PUBLIC).status(DocumentStatus.APPROVED)
+                        .ownerEmail("co@photonicomega.com").department("Compliance")
                         .aiSummary("Company-wide HR policies and code of conduct.")
                         .versionNumber(3).build(),
                 Document.builder()
                         .title("Legacy Vendor Records 2019")
                         .fileName("legacy-vendor-2019.zip").fileType("application/zip").fileSize(3_145_728L)
                         .classificationLevel(ClassificationLevel.RESTRICTED).status(DocumentStatus.ARCHIVED)
+                        .ownerEmail("co@photonicomega.com").department("Procurement")
                         .aiSummary("Archived vendor records retained for audit trail.")
                         .versionNumber(1).build()
         ));
@@ -355,6 +368,22 @@ public class BootstrapAdmin implements CommandLineRunner {
                         .build()));
 
         complianceService.generateAlerts();
+
+        // Explicit-exception grant for a role with NO default cross-department
+        // window: CONTRACT_OFFICER gains DOWNLOAD on the procurement-facing
+        // agreement. No grants are seeded for SUPER_ADMIN / COMPLIANCE_OFFICER /
+        // LEGAL_OFFICER - their cross-department access comes from policy.
+        savedDocs.stream()
+                .filter(d -> "Data Processing Agreement - Acme Cloud".equals(d.getTitle()))
+                .findFirst()
+                .ifPresent(doc -> documentGrantRepository.save(DocumentGrant.builder()
+                        .documentId(doc.getId())
+                        .granteeType(DocumentGranteeType.ROLE)
+                        .granteeKey("CONTRACT_OFFICER")
+                        .accessLevel(DocumentGrantAccessLevel.DOWNLOAD)
+                        .reason("Explicit contract-officer access to the procurement-facing agreement")
+                        .build()));
+
         log.info("Compliance disposal request and alerts seeded.");
     }
 
@@ -706,6 +735,8 @@ public class BootstrapAdmin implements CommandLineRunner {
                     .fileName("expense-june.pdf").fileType("application/pdf").fileSize(128_512L)
                     .classificationLevel(ClassificationLevel.INTERNAL)
                     .status(DocumentStatus.PENDING_REVIEW)
+                    .ownerEmail(employee.getEmail())
+                    .department(employee.getDepartment())
                     .versionNumber(1).build());
         } finally {
             org.springframework.security.core.context.SecurityContextHolder.setContext(previous);
@@ -728,24 +759,8 @@ public class BootstrapAdmin implements CommandLineRunner {
                         .build()
         ));
 
-        employeeNotificationRepository.saveAll(List.of(
-                com.photonicomega.facilities.module.employee.domain.EmployeeNotification.builder()
-                        .recipient(employee).type(NotificationType.APPROVAL)
-                        .title("Reservation approved")
-                        .message("Your reservation \"Team Sync\" has been approved.")
-                        .relatedEntityType("Reservation").read(false).build(),
-                com.photonicomega.facilities.module.employee.domain.EmployeeNotification.builder()
-                        .recipient(employee).type(NotificationType.REJECTION)
-                        .title("Reservation rejected")
-                        .message("Your reservation \"1:1 Review\" was rejected: room unavailable at requested time.")
-                        .relatedEntityType("Reservation").read(false).build(),
-                com.photonicomega.facilities.module.employee.domain.EmployeeNotification.builder()
-                        .recipient(employee).type(NotificationType.REMINDER)
-                        .title("Upcoming visitor")
-                        .message("Reminder: Ama Serwaa is expected tomorrow at 11:00.")
-                        .relatedEntityType("Visitor").read(false).build()
-        ));
-
         log.info("Employee sample data seeded.");
+        // NOTE: No notifications are seeded here. Notifications are created only
+        // by real business events (request submission/review, visitor check-in, etc.).
     }
 }

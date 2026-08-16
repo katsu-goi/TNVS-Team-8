@@ -78,6 +78,15 @@ export async function loadBackups(): Promise<BackupRecord[]> {
   }
 }
 
+export async function createBackup(backupType: string, triggeredBy?: string): Promise<BackupRecord | null> {
+  try {
+    const { data } = await apiClient.post('/admin/backups', { backupType, triggeredBy });
+    return data?.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function loadNotifications(): Promise<AdminNotification[]> {
   try {
     const { data } = await apiClient.get('/admin/notifications');

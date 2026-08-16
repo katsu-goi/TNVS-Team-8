@@ -10,7 +10,7 @@ const labelMap: Record<string, string> = {
  'maintenance': 'Maintenance Control',
  'equipment': 'Equipment Inventory',
  'calendar': 'Enterprise Calendar',
- 'analytics': 'Analytics & Reports',
+  'analytics': 'Analytics',
  'visitors': 'Visitor Pass & Security',
  'clearance': 'Security Clearance',
  'approval': 'Visitor Approval Queue',

@@ -454,7 +454,7 @@ export const FoVisitorManagementPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const json = await safeFetchJson('/api/v1/facilities-officer/visitors');
+      const json = await safeFetchJson('/api/v1/visitors');
       setVisitors(json?.data ?? []);
     } catch (err: any) {
       setError(err?.message || 'Failed to load');
@@ -501,10 +501,10 @@ export const FoVisitorManagementPage: React.FC = () => {
               <tbody>
                 {visitors.map((v: any) => (
                   <tr key={v.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                    <td className="p-3 font-medium text-slate-900">{v.name}</td>
+                    <td className="p-3 font-medium text-slate-900">{v.fullName || v.name}</td>
                     <td className="p-3 text-slate-600">{v.company || '-'}</td>
                     <td className="p-3 text-slate-600">{v.facilityName || v.facility || '-'}</td>
-                    <td className="p-3 text-xs text-slate-400 font-mono">{v.checkIn ? new Date(v.checkIn).toLocaleString() : '-'}</td>
+                    <td className="p-3 text-xs text-slate-400 font-mono">{v.actualArrival || v.expectedArrival ? new Date(v.actualArrival || v.expectedArrival).toLocaleString() : '-'}</td>
                     <td className="p-3">
                       <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
                         v.status === 'CHECKED_IN' ? 'bg-emerald-50 text-emerald-600' :
@@ -538,7 +538,7 @@ export const FoDocumentsPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const json = await safeFetchJson('/api/v1/facilities-officer/documents');
+      const json = await safeFetchJson('/api/v1/documents');
       setDocuments(json?.data ?? []);
     } catch (err: any) {
       setError(err?.message || 'Failed to load');
@@ -582,11 +582,11 @@ export const FoDocumentsPage: React.FC = () => {
               <tbody>
                 {documents.map((d: any) => (
                   <tr key={d.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                    <td className="p-3 font-medium text-slate-900">{d.name}</td>
-                    <td className="p-3 text-slate-600">{d.type || '-'}</td>
-                    <td className="p-3 text-slate-600">{d.uploadedBy || '-'}</td>
-                    <td className="p-3 text-xs text-slate-400 font-mono">{d.uploadedAt ? new Date(d.uploadedAt).toLocaleDateString() : '-'}</td>
-                    <td className="p-3 text-xs text-slate-400">{d.size || '-'}</td>
+                    <td className="p-3 font-medium text-slate-900">{d.title || d.name}</td>
+                    <td className="p-3 text-slate-600">{d.fileType || d.type || '-'}</td>
+                    <td className="p-3 text-slate-600">{d.ownerEmail || d.uploadedBy || '-'}</td>
+                    <td className="p-3 text-xs text-slate-400 font-mono">{d.createdAt || d.uploadedAt ? new Date(d.createdAt || d.uploadedAt).toLocaleDateString() : '-'}</td>
+                    <td className="p-3 text-xs text-slate-400">{d.fileSize || d.size ? `${(d.fileSize ?? d.size ?? 0)} bytes` : '-'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -606,7 +606,7 @@ export const FoNotificationsPage: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const json = await safeFetchJson('/api/v1/facilities-officer/notifications');
+      const json = await safeFetchJson('/api/v1/notifications');
       setNotifications(json?.data ?? []);
     } catch {} finally { setLoading(false); }
   }, [retry]);
@@ -640,9 +640,9 @@ export const FoNotificationsPage: React.FC = () => {
           {notifications.map((n: any) => (
             <div key={n.id} className={`card-stat p-3 flex items-start space-x-3 border-l-4 ${typeColors[n.type] || 'border-l-slate-300'}`}>
               <div className="flex-1">
-                <p className="text-sm text-slate-900">{n.message}</p>
-                <p className="text-xs text-slate-500 mt-0.5">{n.details || ''}</p>
-                <p className="text-[10px] text-slate-400 mt-1 font-mono">{n.timestamp ? new Date(n.timestamp).toLocaleString() : ''}</p>
+                <p className="text-sm text-slate-900">{n.message || n.title}</p>
+                <p className="text-xs text-slate-500 mt-0.5">{n.details || n.relatedEntityType || ''}</p>
+                <p className="text-[10px] text-slate-400 mt-1 font-mono">{n.timestamp || n.createdAt ? new Date(n.timestamp || n.createdAt).toLocaleString() : ''}</p>
               </div>
             </div>
           ))}

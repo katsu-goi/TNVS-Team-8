@@ -1,16 +1,25 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Bell, Check, CheckCheck, Trash2, Loader2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { notificationService, AppNotification } from '../../api/notificationService';
+import { isSuperAdmin, useAuthStore } from '../../stores/authStore';
+import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
 
 /** Colored dot by notification type — mirrors the employee Notifications page. */
 const dotColor = (type?: string) => {
   switch ((type || '').toUpperCase()) {
     case 'APPROVAL':
-    case 'SUCCESS': return 'bg-emerald-500';
+    case 'SUCCESS':
+    case 'COMPLETED':
+      return 'bg-emerald-500';
     case 'REJECTION':
-    case 'ERROR': return 'bg-rose-500';
+    case 'ERROR':
+      return 'bg-rose-500';
+    case 'CANCELLED':
+      return 'bg-slate-400';
     case 'REMINDER':
-    case 'WARNING': return 'bg-amber-500';
+    case 'WARNING':
+      return 'bg-amber-500';
     default: return 'bg-blue-500';
   }
 };
@@ -34,39 +43,83 @@ const relTime = (iso?: string) => {
 
 const POLL_MS = 30000;
 
+const byDateDesc = (a: AppNotification, b: AppNotification) =>
+  new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+
 /**
  * Role-agnostic notification bell for the header of every portal layout.
  *
- * Shows a live unread badge (polled every 30s), and on click opens a dropdown
- * that lazily loads the user's notifications with per-row "mark read" / "dismiss"
- * and a "mark all read" action. Backed by {@link notificationService} → the
- * shared `/v1/notifications` endpoint, so it works identically for admins,
- * managers, officers and employees.
+ * Shows a live unread badge (polled every 30s as a fallback) and, on click,
+ * opens a dropdown listing the user's notifications with per-row
+ * "mark read" / "dismiss" and a "mark all read" action. Backed by
+ * {@link notificationService} → the shared `/v1/notifications` endpoint.
+ *
+ * Realtime: subscribes to the authenticated user's private STOMP queue via
+ * {@link useNotificationRealtimeStore}, so new notifications appear instantly
+ * without a page refresh. SUPER_ADMINs also see their per-admin notifications
+ * from `/v1/admin/notifications` merged into the same list.
  */
 export const NotificationBell: React.FC<{ className?: string }> = ({ className = '' }) => {
+  const navigate = useNavigate();
+  const user = useAuthStore((s) => s.user);
+  const isAdmin = isSuperAdmin(user);
+
   const [open, setOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [rows, setRows] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const rowsRef = useRef<AppNotification[]>([]);
+
+  const realtime = useNotificationRealtimeStore();
+
+  useEffect(() => { rowsRef.current = rows; }, [rows]);
 
   const refreshCount = useCallback(async () => {
-    try { setUnread(await notificationService.getUnreadCount()); }
-    catch { /* silent — badge is best-effort */ }
-  }, []);
+    try {
+      const userCount = await notificationService.getUnreadCount();
+      const adminCount = isAdmin ? await notificationService.getAdminUnreadCount() : 0;
+      setUnread(userCount + adminCount);
+    } catch { /* silent — badge is best-effort */ }
+  }, [isAdmin]);
 
   const loadList = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await notificationService.getNotifications();
-      setRows(data);
-      setUnread(data.filter(n => !n.read).length);
+      const [userRows, adminRows] = await Promise.all([
+        notificationService.getNotifications(),
+        isAdmin ? notificationService.getAdminNotifications() : Promise.resolve([]),
+      ]);
+      const merged = [...adminRows, ...userRows].sort(byDateDesc);
+      setRows(merged);
+      setUnread(merged.filter(n => !n.read).length);
     } catch { /* keep prior rows */ }
     finally { setLoading(false); }
+  }, [isAdmin]);
+
+  // Open a realtime connection for the whole time the bell is mounted.
+  useEffect(() => {
+    realtime.connect();
+    return () => realtime.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Poll the unread count on mount and on an interval.
+  // Consume realtime events: prepend to the list and bump the unread badge.
+  useEffect(() => {
+    if (!realtime.revision) return;
+    const incoming = [realtime.lastNotification, realtime.lastAdminNotification]
+      .filter((n): n is AppNotification => Boolean(n));
+    if (incoming.length === 0) return;
+    const current = rowsRef.current;
+    const known = new Set(current.map(n => n.id));
+    const fresh = incoming.filter(n => !known.has(n.id));
+    if (fresh.length === 0) return;
+    setRows([...fresh, ...current].sort(byDateDesc));
+    setUnread(u => u + fresh.filter(n => !n.read).length);
+  }, [realtime.revision, realtime.lastNotification, realtime.lastAdminNotification]);
+
+  // Poll the unread count on mount and on an interval (fallback/reconciliation).
   useEffect(() => {
     refreshCount();
     const id = setInterval(refreshCount, POLL_MS);
@@ -114,9 +167,20 @@ export const NotificationBell: React.FC<{ className?: string }> = ({ className =
     setBusy('all');
     try {
       await notificationService.markAllNotificationsRead();
+      if (isAdmin) {
+        for (const r of rows) {
+          if (r.severity) await notificationService.markAdminNotificationRead(r.id);
+        }
+      }
       setRows(rs => rs.map(r => ({ ...r, read: true })));
       setUnread(0);
     } catch { /* ignore */ } finally { setBusy(null); }
+  };
+
+  const openNotification = (n: AppNotification) => {
+    if (!n.read) markRead(n);
+    if (n.relatedEntityType === 'EmployeeRequest') navigate('/employee/requests');
+    else if (n.relatedEntityType === 'Visitor') navigate('/employee/visitors');
   };
 
   const badge = unread > 99 ? '99+' : String(unread);
@@ -178,41 +242,45 @@ export const NotificationBell: React.FC<{ className?: string }> = ({ className =
               </div>
             ) : (
               <ul className="divide-y divide-slate-50">
-                {rows.map(n => (
-                  <li
-                    key={n.id}
-                    className={`px-4 py-3 flex items-start gap-3 transition-colors hover:bg-slate-50 ${n.read ? '' : 'bg-emerald-50/40'}`}
-                  >
-                    <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${dotColor(n.type)}`} />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-slate-900 leading-snug">{n.title}</p>
-                      {n.message && <p className="text-xs text-slate-500 mt-0.5 leading-snug">{n.message}</p>}
-                      <p className="text-[10px] text-slate-400 mt-1 font-mono">{relTime(n.createdAt)}</p>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {!n.read && (
+                {rows.map(n => {
+                  const clickable = n.relatedEntityType === 'EmployeeRequest' || n.relatedEntityType === 'Visitor';
+                  return (
+                    <li
+                      key={n.id}
+                      onClick={clickable ? () => openNotification(n) : undefined}
+                      className={`px-4 py-3 flex items-start gap-3 transition-colors hover:bg-slate-50 ${n.read ? '' : 'bg-emerald-50/40'} ${clickable ? 'cursor-pointer' : ''}`}
+                    >
+                      <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${dotColor(n.type)}`} />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-slate-900 leading-snug">{n.title}</p>
+                        {n.message && <p className="text-xs text-slate-500 mt-0.5 leading-snug">{n.message}</p>}
+                        <p className="text-[10px] text-slate-400 mt-1 font-mono">{relTime(n.createdAt)}</p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {!n.read && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); markRead(n); }}
+                            disabled={busy === n.id}
+                            title="Mark as read"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 disabled:opacity-50 transition-colors"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         <button
                           type="button"
-                          onClick={() => markRead(n)}
+                          onClick={(e) => { e.stopPropagation(); dismiss(n); }}
                           disabled={busy === n.id}
-                          title="Mark as read"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 disabled:opacity-50 transition-colors"
+                          title="Dismiss"
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-50 transition-colors"
                         >
-                          <Check className="w-3.5 h-3.5" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => dismiss(n)}
-                        disabled={busy === n.id}
-                        title="Dismiss"
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-50 transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </li>
-                ))}
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

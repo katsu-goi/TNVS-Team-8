@@ -74,6 +74,9 @@ public class User extends BaseEntity {
     @Builder.Default
     private int failedLoginAttempts = 0;
 
+    @Column(name = "last_failed_attempt_at")
+    private LocalDateTime lastFailedAttemptAt;
+
     @Column(name = "locked_until")
     private LocalDateTime lockedUntil;
 
@@ -113,9 +116,25 @@ public class User extends BaseEntity {
     public void resetFailedAttempts() {
         this.failedLoginAttempts = 0;
         this.lockedUntil = null;
+        this.lastFailedAttemptAt = null;
     }
 
     public void lockAccount(int durationMinutes) {
         this.lockedUntil = LocalDateTime.now().plusMinutes(durationMinutes);
+    }
+
+    public void lockAccountSeconds(long durationSeconds) {
+        this.lockedUntil = LocalDateTime.now().plusSeconds(durationSeconds);
+    }
+
+    public void lockAccountPermanently(long durationDays) {
+        this.lockedUntil = LocalDateTime.now().plusDays(durationDays);
+    }
+
+    public long remainingLockSeconds() {
+        if (lockedUntil == null) {
+            return 0;
+        }
+        return Math.max(0, java.time.Duration.between(LocalDateTime.now(), lockedUntil).getSeconds());
     }
 }
