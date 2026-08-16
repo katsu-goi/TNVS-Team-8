@@ -465,7 +465,7 @@ public class AiController {
             responseData.put("message", "This AI module is disabled. Enable it in AI Services to execute.");
             return ResponseEntity.ok(ApiResponse.success(responseData, "Module disabled"));
         }
-        String provider = target.getProviderName() != null ? target.getProviderName() : "OpenAI Production Gateway";
+        String provider = target.getProviderName() != null ? target.getProviderName() : "System Default";
         responseData.put("modelUsed", target.getModel());
         responseData.put("provider", provider);
         responseData.put("fallbackUsed", target.isFallbackUsed());

@@ -1,7 +1,14 @@
 package com.photonicomega.facilities.ai;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.photonicomega.facilities.ai.domain.AiProvider;
+import com.photonicomega.facilities.ai.repository.AiProviderRepository;
 import com.photonicomega.facilities.module.admin.service.AdminNotificationService;
 import com.photonicomega.facilities.module.contracts.domain.RiskLevel;
+import jakarta.annotation.PostConstruct;
 import lombok.Builder;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -35,6 +42,11 @@ public class AiStateManagementService {
         private String type; // openai, gemini, claude, local
         private String baseUrl;
         private String endpoint;
+        /**
+         * Accepted on write (provider save) but never serialized back to clients,
+         * so GET /v1/ai/providers can never leak a stored key.
+         */
+        @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
         private String apiKey;
         private List<String> capabilities;
     }
@@ -96,38 +108,37 @@ public class AiStateManagementService {
     private final AtomicLong totalTokensCounter = new AtomicLong(0);
 
     private final AdminNotificationService adminNotificationService;
+    private final AiProviderRepository aiProviderRepository;
+    private final ApiKeyEncryptionService encryptionService;
+    private final ObjectMapper objectMapper;
 
-    public AiStateManagementService(AdminNotificationService adminNotificationService) {
+    public AiStateManagementService(AdminNotificationService adminNotificationService,
+                                    AiProviderRepository aiProviderRepository,
+                                    ApiKeyEncryptionService encryptionService,
+                                    ObjectMapper objectMapper) {
         this.adminNotificationService = adminNotificationService;
+        this.aiProviderRepository = aiProviderRepository;
+        this.encryptionService = encryptionService;
+        this.objectMapper = objectMapper;
         initDefaults();
     }
 
-    /** Reloads the default providers/modules (used by tests to reset state). */
+    @PostConstruct
+    public void loadProviders() {
+        loadProvidersFromDb();
+    }
+
+    /** Reloads the default modules/prompt and the persisted provider registry (used by tests to reset state). */
     public synchronized void reset() {
         providers.clear();
         modules.clear();
         logs.clear();
         initDefaults();
+        loadProvidersFromDb();
     }
 
     private void initDefaults() {
-        // Default Provider
-        providers.add(ProviderDto.builder()
-                .id("p-openai-default")
-                .name("OpenAI Production Gateway")
-                .model("gpt-4o")
-                .status("CONNECTED")
-                .lastSync("Just now")
-                .responseTime("62ms")
-                .isDefault(true)
-                .type("openai")
-                .baseUrl("https://api.openai.com/v1")
-                .endpoint("/chat/completions")
-                .apiKey("sk-proj-default")
-                .capabilities(List.of("documentClassification", "ocrExtraction", "contractAnalysis",
-                        "legalReview", "visitorVerification", "recordsCompliance", "aiSummarization", "smartSearch"))
-                .build());
-
+        // No mock/seeded provider data: the registry is loaded from the database.
         // Default Modules
         modules.add(ModuleDto.builder()
                 .id("mod-1")
@@ -179,6 +190,13 @@ public class AiStateManagementService {
         systemPrompt = loadDefaultSystemPrompt();
     }
 
+    private void loadProvidersFromDb() {
+        for (AiProvider entity : aiProviderRepository.findAllByDeletedFalse()) {
+            providers.add(toDto(entity));
+        }
+        log.info("Loaded {} AI provider(s) from the ai_providers registry", providers.size());
+    }
+
     private static final String LEGACY_SYSTEM_PROMPT = """
             # TNVS Facilities & Administrative AI System Prompt
             Version: 2.4.0-Enterprise
@@ -222,25 +240,30 @@ public class AiStateManagementService {
         if (p.isDefault() || providers.isEmpty()) {
             for (ProviderDto existing : providers) {
                 existing.setDefault(false);
+                persistDefaultFlag(existing, false);
             }
             p.setDefault(true);
         }
         p.setStatus("CONNECTED");
         p.setLastSync("Just now");
         providers.add(p);
-        log.info("Added AI Provider: {}", p.getName());
+        persistProvider(p);
+        log.info("Added AI Provider: {} (id {})", p.getName(), p.getId());
         return p;
     }
 
     public void setDefaultProvider(String id) {
         for (ProviderDto p : providers) {
-            p.setDefault(p.getId().equals(id));
+            boolean isDefault = p.getId().equals(id);
+            p.setDefault(isDefault);
+            persistDefaultFlag(p, isDefault);
         }
     }
 
     /**
      * Records real provider health from a live check so the UI never shows a
-     * fabricated connection status. Sets status/responseTime/lastSync.
+     * fabricated connection status. Sets status/responseTime/lastSync and
+     * persists the status transition to the registry.
      */
     public ProviderDto updateProviderHealth(String id, boolean connected, long latencyMs, String message) {
         for (ProviderDto p : providers) {
@@ -249,6 +272,7 @@ public class AiStateManagementService {
                 p.setStatus(connected ? "CONNECTED" : "OFFLINE");
                 p.setResponseTime(latencyMs + "ms");
                 p.setLastSync("Just now");
+                persistStatus(p);
                 log.info("AI provider '{}' health update: {}", p.getName(), connected ? "CONNECTED" : "OFFLINE");
                 if (!connected && !wasOffline) {
                     adminNotificationService.notifyAdmins("AI_PROVIDER", "HIGH",
@@ -264,7 +288,15 @@ public class AiStateManagementService {
     }
 
     public boolean deleteProvider(String id) {
-        return providers.removeIf(p -> p.getId().equals(id));
+        boolean removed = providers.removeIf(p -> p.getId().equals(id));
+        if (removed) {
+            aiProviderRepository.findByIdAndDeletedFalse(id).ifPresent(entity -> {
+                entity.setDeleted(true);
+                entity.setDeletedAt(LocalDateTime.now());
+                aiProviderRepository.save(entity);
+            });
+        }
+        return removed;
     }
 
     public List<ModuleDto> getModules() {
@@ -332,7 +364,7 @@ public class AiStateManagementService {
                 .filter(ProviderDto::isDefault)
                 .map(ProviderDto::getName)
                 .findFirst()
-                .orElse("OpenAI Production Gateway");
+                .orElse("System Default");
     }
 
     public HealthAnalyticsDto getHealthAnalytics() {
@@ -396,5 +428,81 @@ public class AiStateManagementService {
                 .responseTimeTrend(responseTimeTrend)
                 .moduleUsageDistribution(moduleUsageDistribution)
                 .build();
+    }
+
+    // ------------------------------------------------------------------
+    // Persistence helpers
+    // ------------------------------------------------------------------
+
+    private ProviderDto toDto(AiProvider entity) {
+        return ProviderDto.builder()
+                .id(entity.getId())
+                .name(entity.getName())
+                .model(entity.getDefaultModel())
+                .status(entity.getStatus())
+                .lastSync("Just now")
+                .isDefault(entity.isDefault())
+                .type(entity.getProviderType())
+                .baseUrl(entity.getBaseUrl())
+                .endpoint(entity.getEndpoint())
+                .apiKey(encryptionService.decrypt(entity.getEncryptedApiKey()))
+                .capabilities(parseCapabilities(entity.getCapabilities()))
+                .build();
+    }
+
+    private void persistProvider(ProviderDto p) {
+        AiProvider entity = aiProviderRepository.findByIdAndDeletedFalse(p.getId()).orElseGet(AiProvider::new);
+        entity.setId(p.getId());
+        entity.setName(p.getName());
+        entity.setProviderType(p.getType());
+        entity.setDefaultModel(p.getModel());
+        entity.setEncryptedApiKey(encryptionService.encrypt(p.getApiKey()));
+        entity.setBaseUrl(p.getBaseUrl());
+        entity.setEndpoint(p.getEndpoint());
+        entity.setCapabilities(serializeCapabilities(p.getCapabilities()));
+        entity.setStatus(p.getStatus());
+        entity.setDefault(p.isDefault());
+        entity.setUpdatedAt(LocalDateTime.now());
+        aiProviderRepository.save(entity);
+    }
+
+    private void persistStatus(ProviderDto p) {
+        aiProviderRepository.findByIdAndDeletedFalse(p.getId()).ifPresent(entity -> {
+            entity.setStatus(p.getStatus());
+            entity.setUpdatedAt(LocalDateTime.now());
+            aiProviderRepository.save(entity);
+        });
+    }
+
+    private void persistDefaultFlag(ProviderDto p, boolean isDefault) {
+        aiProviderRepository.findByIdAndDeletedFalse(p.getId()).ifPresent(entity -> {
+            entity.setDefault(isDefault);
+            entity.setUpdatedAt(LocalDateTime.now());
+            aiProviderRepository.save(entity);
+        });
+    }
+
+    private String serializeCapabilities(List<String> capabilities) {
+        if (capabilities == null) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(capabilities);
+        } catch (JsonProcessingException e) {
+            log.warn("Failed to serialize provider capabilities: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private List<String> parseCapabilities(String serialized) {
+        if (serialized == null || serialized.isBlank()) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(serialized, new TypeReference<List<String>>() {});
+        } catch (JsonProcessingException e) {
+            log.warn("Failed to parse provider capabilities: {}", e.getMessage());
+            return List.of();
+        }
     }
 }

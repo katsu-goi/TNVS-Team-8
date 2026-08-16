@@ -227,7 +227,7 @@ class ModuleAiConfigTest {
     @Test
     @DisplayName("No usable provider => graceful null target (heuristic fallback), never an error")
     void noUsableProviderFallsBackGracefully() throws Exception {
-        // Only the seeded default (placeholder key) provider exists.
+        // No provider is configured at all -> graceful null target (heuristic fallback).
         updateConfig("mod-3", "{\"enabled\":true,\"providerId\":\"\",\"model\":\"some-model\",\"executionMode\":\"REALTIME\"}");
         assertNull(moduleAiConfigService.resolveExecution("mod-3"));
     }
@@ -342,10 +342,11 @@ class ModuleAiConfigTest {
     @Test
     @DisplayName("A module with no explicit assignment reports System Default with the default provider/model")
     void systemDefaultExposedInModuleList() throws Exception {
+        addUsableDefaultProvider("gpt-4o");
         mockMvc.perform(get("/v1/ai/modules").header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[?(@.id=='mod-1')].usesSystemDefault").value(true))
-                .andExpect(jsonPath("$.data[?(@.id=='mod-1')].defaultProviderName").value("OpenAI Production Gateway"))
+                .andExpect(jsonPath("$.data[?(@.id=='mod-1')].defaultProviderName").value("Test OpenAI Gateway"))
                 .andExpect(jsonPath("$.data[?(@.id=='mod-1')].defaultModel").value("gpt-4o"));
     }
 

@@ -130,6 +130,11 @@ app:
   # AI Services
   ai:
     enabled: ${AI_ENABLED:true}
+    # Master key for AES-256-GCM encryption of AI provider API keys before they
+    # are persisted (ai_providers.encrypted_api_key). Must be a base64-encoded
+    # 256-bit key. NEVER hardcode: supply AI_API_KEY_ENCRYPTION_KEY in every
+    # non-local environment. ApiKeyEncryptionService fails fast when unset.
+    encryption-key: ${AI_API_KEY_ENCRYPTION_KEY:}
     llama:
       base-url: ${LLAMA_API_URL:http://ollama:11434}
       model: ${LLAMA_MODEL:llama3.3}
@@ -248,6 +253,10 @@ spring:
 app:
   security:
     bcrypt-strength: 4
+  ai:
+    # TEST-ONLY encryption key for the H2-backed test profile. Never used in any
+    # non-test profile; production keys come exclusively from AI_API_KEY_ENCRYPTION_KEY.
+    encryption-key: u7C3tz495/FDo8wghmVAvVZKBPzWFIlejhyXfGa06qg=
 
 ---
 spring:
@@ -255,10 +264,12 @@ spring:
     activate:
       on-profile: supabase
   # Production cloud database. Never commit credentials - supply them via
-  # SUPABASE_DB_URL / SUPABASE_DB_USERNAME / SUPABASE_DB_PASSWORD.
+  # SUPABASE_DB_URL / SUPABASE_DB_USERNAME / SUPABASE_DB_PASSWORD. The default
+  # URL/username match the production Supabase project ref dunijfrvfozwlykpkfhy
+  # (pooler host aws-0-ap-southeast-1.pooler.supabase.com:6543, transaction pooler).
   datasource:
-    url: ${SUPABASE_DB_URL:jdbc:postgresql://your-project.supabase.co:5432/postgres?sslmode=require&prepareThreshold=0&preparedStatementCacheQueries=0}
-    username: ${SUPABASE_DB_USERNAME:}
+    url: ${SUPABASE_DB_URL:jdbc:postgresql://aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?sslmode=require&prepareThreshold=0&preparedStatementCacheQueries=0}
+    username: ${SUPABASE_DB_USERNAME:postgres.dunijfrvfozwlykpkfhy}
     password: ${SUPABASE_DB_PASSWORD:}
     driver-class-name: org.postgresql.Driver
   jpa:
