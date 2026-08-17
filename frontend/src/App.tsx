@@ -12,10 +12,10 @@ import {
   BackupPage,
   SettingsPage,
   NotificationsPage,
-  AnalyticsPage,
   SystemHealthPage,
   SessionsPage,
 } from './components/sysadmin/AdminPages';
+import { AnalyticsPage } from './components/sysadmin/AnalyticsDashboard';
 import { FacilitiesManagerLayout } from './components/facilities/FacilitiesManagerLayout';
 import { FacilitiesDashboard } from './components/facilities/FacilitiesDashboard';
 import {

@@ -218,3 +218,144 @@ export interface SecurityOverview {
   blockedIps: number;
   openAlerts: number;
 }
+
+/* ------------------------------------------------------------------ */
+/* Analytics (System Administrator)                                    */
+/* ------------------------------------------------------------------ */
+
+export interface AnalyticsPeriod {
+  from: string;
+  to: string;
+  label: string;
+}
+
+export interface AnalyticsKpi {
+  key: string;
+  label: string;
+  value: string;
+  description: string;
+  previous?: number | null;
+  deltaPct?: number | null;
+  trend?: 'up' | 'down' | 'flat' | null;
+  status?: 'good' | 'warning' | 'bad' | 'neutral' | null;
+  hasComparison: boolean;
+}
+
+export interface AnalyticsSeries {
+  key: string;
+  name: string;
+  color: string;
+  values: number[];
+}
+
+export interface AnalyticsActivity {
+  labels: string[];
+  series: AnalyticsSeries[];
+}
+
+export interface LabelValue {
+  label: string;
+  value: number;
+}
+
+export interface AnalyticsSecurity {
+  total: number;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  failedLogins: number;
+  blockedIps: number;
+  byRiskLevel: LabelValue[];
+  overTime: LabelValue[];
+}
+
+export interface AnalyticsAiProvider {
+  id: string;
+  name: string;
+  model?: string;
+  status?: string;
+  responseTime?: string;
+  isDefault: boolean;
+  type?: string;
+}
+
+export interface AnalyticsAi {
+  totalRequests: number;
+  successful: number;
+  failed: number;
+  successRate?: number | null;
+  avgResponseTimeMs?: number | null;
+  source: string;
+  providers: AnalyticsAiProvider[];
+  requestsByProvider: LabelValue[];
+}
+
+export interface AnalyticsHealthComponent {
+  id: string;
+  name: string;
+  status: string;
+  uptimePercent: number;
+  errorCount: number;
+}
+
+export interface AnalyticsHealth {
+  overallStatus: string;
+  healthyCount: number;
+  warningCount: number;
+  offlineCount: number;
+  errorCount: number;
+  components: AnalyticsHealthComponent[];
+}
+
+export interface AnalyticsAudit {
+  total: number;
+  byModule: LabelValue[];
+  byAction: LabelValue[];
+  mostActiveModule?: string | null;
+  mostCommonAction?: string | null;
+}
+
+export interface AnalyticsDocuments {
+  total: number;
+  uploaded: number;
+  archived: number;
+  aiClassified: number;
+}
+
+export interface AnalyticsContracts {
+  total: number;
+  active: number;
+  expiringSoon: number;
+  expired: number;
+  renewed: number;
+}
+
+export interface AnalyticsBackups {
+  total: number;
+  successCount: number;
+  failedCount: number;
+  successRate?: number | null;
+  lastSuccessfulAt?: string | null;
+  lastBackupAt?: string | null;
+}
+
+export interface AnalyticsInsight {
+  severity: 'info' | 'good' | 'warning' | 'critical';
+  title: string;
+  description: string;
+}
+
+export interface AnalyticsData {
+  period: AnalyticsPeriod;
+  kpis: AnalyticsKpi[];
+  activity: AnalyticsActivity;
+  security: AnalyticsSecurity;
+  ai: AnalyticsAi;
+  health: AnalyticsHealth;
+  audit: AnalyticsAudit;
+  documents: AnalyticsDocuments;
+  contracts: AnalyticsContracts;
+  backups: AnalyticsBackups;
+  insights: AnalyticsInsight[];
+}

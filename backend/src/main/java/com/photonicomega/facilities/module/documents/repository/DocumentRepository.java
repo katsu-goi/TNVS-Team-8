@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -20,6 +21,12 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
     long countByStatus(DocumentStatus status);
     List<Document> findByClassificationLevel(ClassificationLevel level);
     List<Document> findByCreatedByAndDeletedFalseOrderByCreatedAtDesc(String createdBy);
+
+    long countByCreatedAtBetween(LocalDateTime from, LocalDateTime to);
+
+    List<Document> findByCreatedAtBetween(LocalDateTime from, LocalDateTime to);
+
+    long countByAiPredictedCategoryIsNotNull();
 
     /** Candidates for retention auto-assignment (nightly retention job). */
     List<Document> findByRetentionPolicyIdIsNullAndDeletedFalse();

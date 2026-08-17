@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -25,6 +26,10 @@ public interface ContractRepository extends JpaRepository<Contract, UUID> {
     List<Contract> findByVendorId(UUID vendorId);
 
     long countByVendorId(UUID vendorId);
+
+    long countByCreatedAtBetween(LocalDateTime from, LocalDateTime to);
+
+    List<Contract> findByCreatedAtBetween(LocalDateTime from, LocalDateTime to);
 
     @Query("SELECT c FROM Contract c WHERE c.endDate <= :date AND c.status = 'ACTIVE'")
     List<Contract> findExpiringContractsBefore(LocalDate date);
