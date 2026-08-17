@@ -15,13 +15,13 @@ as a frontend testing/staging host.
 
 | | Local (Development) | Vercel (Staging/Test) | Production |
 |---|---|---|---|
-| Frontend | `http://localhost:5173` (Vite dev) | `https://photonic-omega.vercel.app` | `https://example.com` / `www.example.com` |
-| Backend | `http://localhost:8080` | Test backend (always-on host) | `https://api.example.com` (always-on host) |
+| Frontend | `http://localhost:5173` (Vite dev) | `https://tnvs-team-8-rho.vercel.app` | `https://YOUR-DOMAIN.com` / `www.YOUR-DOMAIN.com` |
+| Backend | `http://localhost:8080` | Test backend (always-on host) | `https://api.YOUR-DOMAIN.com` (always-on host) |
 | Database | Local Postgres or Supabase | Separate Supabase test project (recommended) | Supabase production project |
-| WebSocket | `ws://localhost:8080/api/ws-endpoint` (via Vite proxy) | `wss://<TEST-BACKEND>/api/ws-endpoint` | `wss://api.example.com/api/ws-endpoint` |
+| WebSocket | `ws://localhost:8080/api/ws-endpoint` (via Vite proxy) | `wss://BACKEND-HOST/api/ws-endpoint` | `wss://api.YOUR-DOMAIN.com/api/ws-endpoint` |
 
-> The exact domains are placeholders. Replace `API-TEST-DOMAIN`, `example.com`
-> and `api.example.com` with the real values once configured. No application
+> The exact domains are placeholders. Replace `BACKEND-HOST`, `YOUR-DOMAIN.com`
+> and `api.YOUR-DOMAIN.com` with the real values once configured. No application
 > code should contain real URLs — only environment variables.
 
 ---
@@ -33,10 +33,10 @@ as a frontend testing/staging host.
 ```text
 User
  ↓
-Vercel (https://photonic-omega.vercel.app)
+Vercel (https://tnvs-team-8-rho.vercel.app)
  ↓  React frontend (static SPA)
- ↓  REST:   VITE_API_BASE_URL=https://API-TEST-DOMAIN/api/v1
- ↓  STOMP:  VITE_WS_BASE_URL=https://API-TEST-DOMAIN   →  /ws-endpoint
+ ↓  REST:   VITE_API_BASE_URL=https://BACKEND-HOST/api/v1
+ ↓  STOMP:  VITE_WS_BASE_URL=https://BACKEND-HOST/api   →  /ws-endpoint
  ↓
 Test Backend — Spring Boot, always-on host (Docker/VPS/Render/Railway)
  ↓
@@ -48,12 +48,12 @@ Supabase PostgreSQL (separate test project recommended)
 ```text
 User
  ↓
-https://example.com  (and www.example.com) — Vercel custom domain
+https://YOUR-DOMAIN.com  (and www.YOUR-DOMAIN.com) — Vercel custom domain
  ↓  React frontend
- ↓  REST:   VITE_API_BASE_URL=https://api.example.com/api/v1
- ↓  STOMP:  VITE_WS_BASE_URL=https://api.example.com   →  /ws-endpoint
+ ↓  REST:   VITE_API_BASE_URL=https://api.YOUR-DOMAIN.com/api/v1
+ ↓  STOMP:  VITE_WS_BASE_URL=https://api.YOUR-DOMAIN.com/api   →  /ws-endpoint
  ↓
-Production Backend — https://api.example.com — Spring Boot, always-on host
+Production Backend — https://api.YOUR-DOMAIN.com — Spring Boot, always-on host
  ↓
 Supabase PostgreSQL (production project)
 ```
@@ -73,10 +73,14 @@ Reference: `frontend/.env.example` and `frontend/.env.production.example`.
 
 | Variable | Local | Vercel/Staging | Production |
 |---|---|---|---|
-| `VITE_API_BASE_URL` | `/api/v1` | `https://API-TEST-DOMAIN/api/v1` | `https://api.example.com/api/v1` |
-| `VITE_WS_BASE_URL` | *(empty — dev proxy)* | `https://API-TEST-DOMAIN` | `https://api.example.com` |
+| `VITE_API_BASE_URL` | `/api/v1` | `https://BACKEND-HOST/api/v1` | `https://api.YOUR-DOMAIN.com/api/v1` |
+| `VITE_WS_BASE_URL` | *(empty — dev proxy)* | `https://BACKEND-HOST/api` | `https://api.YOUR-DOMAIN.com/api` |
 | `VITE_SUPABASE_URL` | `https://dunijfrvfozwlykpkfhy.supabase.co` | same | same |
 | `VITE_SUPABASE_ANON_KEY` | publishable key | publishable key | publishable key |
+
+> `VITE_WS_BASE_URL` must include the backend context path `/api` because the
+> SockJS endpoint is registered at `/ws-endpoint` under the `/api` servlet
+> context — so the browser connects to `wss://<host>/api/ws-endpoint`.
 
 - **Local dev** relies on the Vite dev proxy (`vite.config.ts`): `/api`, `/v1`
   and `/ws-endpoint` are forwarded to `http://localhost:8080`. Never use
@@ -115,9 +119,9 @@ The backend is configured through environment variables (defaults in
 | Variable | Local | Staging | Production |
 |---|---|---|---|
 | `SPRING_PROFILES_ACTIVE` | `local` or `supabase` | `supabase` | `supabase` |
-| `CORS_ORIGINS` | `http://localhost:[*],http://127.0.0.1:[*]` | `https://photonic-omega.vercel.app` | `https://example.com,https://www.example.com` |
-| `FRONTEND_URL` | `http://localhost:5173` | `https://photonic-omega.vercel.app` | `https://example.com` |
-| `FILE_STORAGE_URL` | `http://localhost:8080/api/files` | `https://API-TEST-DOMAIN/api/files` | `https://api.example.com/api/files` |
+| `CORS_ORIGINS` | `http://localhost:[*],http://127.0.0.1:[*]` | `https://tnvs-team-8-rho.vercel.app` | `https://YOUR-DOMAIN.com,https://www.YOUR-DOMAIN.com` |
+| `FRONTEND_URL` | `http://localhost:5173` | `https://tnvs-team-8-rho.vercel.app` | `https://YOUR-DOMAIN.com` |
+| `FILE_STORAGE_URL` | `http://localhost:8080/api/files` | `https://BACKEND-HOST/api/files` | `https://api.YOUR-DOMAIN.com/api/files` |
 | `FILE_STORAGE_PATH` | `/mnt/fileserver/facilities` or temp | persistent volume | persistent volume |
 | `BACKUP_STORAGE_PATH` | temp | persistent volume | persistent volume |
 | `SUPABASE_URL` | `https://your-project.supabase.co` | test project URL | production project URL |
@@ -140,8 +144,8 @@ It uses origin **patterns** with `allowCredentials(true)`, so:
 - multiple origins are supported
 
 ```text
-Staging: CORS_ORIGINS=https://photonic-omega.vercel.app
-Prod:    CORS_ORIGINS=https://example.com,https://www.example.com
+Staging: CORS_ORIGINS=https://tnvs-team-8-rho.vercel.app
+Prod:    CORS_ORIGINS=https://YOUR-DOMAIN.com,https://www.YOUR-DOMAIN.com
 ```
 
 ---
@@ -154,8 +158,8 @@ The endpoint is publicly reachable and JWT-validated in the STOMP `CONNECT`
 frame.
 
 ```text
-Staging: wss://API-TEST-DOMAIN/api/ws-endpoint
-Prod:    wss://api.example.com/api/ws-endpoint
+Staging: wss://BACKEND-HOST/api/ws-endpoint
+Prod:    wss://api.YOUR-DOMAIN.com/api/ws-endpoint
 ```
 
 Vercel cannot proxy WebSockets to an external backend reliably, so always use
@@ -173,11 +177,13 @@ docker build -t photonic-omega-backend .
 docker run -d --name photonic-omega-backend \
   -p 8080:8080 \
   -e SPRING_PROFILES_ACTIVE=supabase \
+  -e SUPABASE_DB_URL='...' \
+  -e SUPABASE_DB_USERNAME='postgres.dunijfrvfozwlykpkfhy' \
   -e SUPABASE_DB_PASSWORD='...' \
   -e JWT_SECRET='...' \
   -e AI_API_KEY_ENCRYPTION_KEY='...' \
-  -e CORS_ORIGINS='https://photonic-omega.vercel.app' \
-  -e FRONTEND_URL='https://photonic-omega.vercel.app' \
+  -e CORS_ORIGINS='https://tnvs-team-8-rho.vercel.app' \
+  -e FRONTEND_URL='https://tnvs-team-8-rho.vercel.app' \
   -e MAIL_USERNAME='...' \
   -e MAIL_PASSWORD='...' \
   -v facilities-files:/mnt/fileserver/facilities \
@@ -196,9 +202,9 @@ set them in whichever DNS provider hosts the domain):
 
 | Record | Type | Target |
 |---|---|---|
-| `example.com` | A | `76.76.21.21` (Vercel) — or use Vercel's nameservers |
-| `www.example.com` | CNAME | `cname.vercel-dns.com` |
-| `api.example.com` | A | public IP of the backend server (VPS), or CNAME to your container host (Render/Railway) |
+| `YOUR-DOMAIN.com` | A | `76.76.21.21` (Vercel) — or use Vercel's nameservers |
+| `www.YOUR-DOMAIN.com` | CNAME | `cname.vercel-dns.com` |
+| `api.YOUR-DOMAIN.com` | A | public IP of the backend server (VPS), or CNAME to your container host (Render/Railway) |
 
 HTTPS/WSS is terminated at both ends (Vercel auto-provisions certs for the
 frontend; the backend host/reverse-proxy — e.g. Caddy/Nginx/Traefik — handles
@@ -213,7 +219,7 @@ frontend; the backend host/reverse-proxy — e.g. Caddy/Nginx/Traefik — handle
    target/facilities-management-1.0.0.jar` or the Docker image.
 2. **Configure backend env vars** (see §4). Especially: `SUPABASE_DB_PASSWORD`,
    `JWT_SECRET`, `AI_API_KEY_ENCRYPTION_KEY`, `CORS_ORIGINS`, `FRONTEND_URL`.
-3. **Verify backend health**: `GET https://API-TEST-DOMAIN/api/actuator/health`.
+3. **Verify backend health**: `GET https://BACKEND-HOST/api/actuator/health`.
 4. **Configure Vercel environment variables** (staging): `VITE_API_BASE_URL`,
    `VITE_WS_BASE_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
 5. **Deploy the Vercel frontend** (`vercel.json` builds `frontend/dist`).
@@ -225,7 +231,7 @@ frontend; the backend host/reverse-proxy — e.g. Caddy/Nginx/Traefik — handle
     cleanup 1 AM, realtime broadcasts 2s/3s/5s).
 11. **Configure the `.com` domain** (DNS per §8) when ready.
 12. **Change production env vars** (`CORS_ORIGINS`, `FRONTEND_URL`,
-    `VITE_API_BASE_URL`/`VITE_WS_BASE_URL` to `api.example.com`).
+    `VITE_API_BASE_URL`/`VITE_WS_BASE_URL` to `api.YOUR-DOMAIN.com`).
 13. **Deploy the production frontend**.
 14. **Final production testing** (full pass + rollback plan).
 
