@@ -4,6 +4,7 @@ import com.photonicomega.facilities.module.security.domain.LoginHistory;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -15,4 +16,8 @@ public interface LoginHistoryRepository extends JpaRepository<LoginHistory, UUID
     long countByUsernameAndStatus(String username, String status);
 
     long countByIpAddressAndStatus(String ipAddress, String status);
+
+    long countByStatusAndTimestampBetween(String status, Instant from, Instant to);
+
+    List<LoginHistory> findByTimestampBetween(Instant from, Instant to);
 }

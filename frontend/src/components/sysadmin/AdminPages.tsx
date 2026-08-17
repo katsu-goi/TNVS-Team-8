@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import {
   Activity, Users, Shield,
-  AlertTriangle, AlertCircle, Cpu,
-  BarChart3, Download, FileText, Bell, Settings, Layers, BookOpen,
+  AlertTriangle, AlertCircle,
+  FileText, Bell, Settings, Layers,
   RefreshCw, Wifi, WifiOff,
   Search, ChevronLeft, ChevronRight,} from 'lucide-react';
-import { loadAdminData, loadConfigs, updateConfig, loadIntegrations, loadNotifications, markNotificationRead } from '../../api/adminService';
+import { loadConfigs, updateConfig, loadIntegrations, loadNotifications, markNotificationRead } from '../../api/adminService';
 import { securityService } from '../../api/securityService';
 import { SubsystemHealthGrid } from './SubsystemHealthGrid';
 import type {
@@ -394,51 +394,6 @@ export const NotificationsPage: React.FC = () => {
             ))}
           </div>
         )}
-      </div>
-    </div>
-  );
-};
-
-export const AnalyticsPage: React.FC = () => {
-  const { data, loading, error, retry } = useQuery(async () => {
-    const m = await loadAdminData();
-    const [logs, alerts] = await Promise.all([
-      securityService.getLogs(),
-      securityService.getAlerts(),
-    ]);
-    return { metrics: m, logs, alerts };
-  });
-
-  if (loading) return <LoadingSkeleton />;
-  if (error) return <ErrorState message={error} onRetry={retry} />;
-  if (!data) return null;
-
-  const { metrics, logs, alerts } = data;
-
-  const analyticsItems = [
-    { label: 'Security Analytics', icon: Shield, desc: `${alerts.length} alerts, ${metrics.activeAlertsCount} open`, color: 'text-rose-500', value: alerts.length },
-    { label: 'Audit Analytics', icon: FileText, desc: `${logs.length} audit events tracked`, color: 'text-blue-500', value: logs.length },
-    { label: 'AI Performance', icon: Cpu, desc: `${metrics.totalDocuments} docs, ${metrics.totalContracts} contracts`, color: 'text-emerald-600', value: metrics.totalDocuments + metrics.totalContracts },
-    { label: 'Backup Analytics', icon: Download, desc: `${metrics.totalBackups} backup records`, color: 'text-amber-500', value: metrics.totalBackups },
-    { label: 'System Health', icon: Activity, desc: `${metrics.activeSessions} active sessions`, color: 'text-emerald-600', value: metrics.activeSessions },
-    { label: 'Document Activity', icon: FileText, desc: `${metrics.totalDocuments} documents in system`, color: 'text-blue-500', value: metrics.totalDocuments },
-    { label: 'Contract Status', icon: BookOpen, desc: `${metrics.totalContracts} contracts on record`, color: 'text-slate-500', value: metrics.totalContracts },
-  ];
-
-  return (
-    <div>
-      <PageHeader icon={BarChart3} title="Analytics" subtitle="Real-time insights and performance analytics across the system" />
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {analyticsItems.map((r) => (
-          <div key={r.label} className="card-stat p-5">
-            <div className="flex items-center space-x-3 mb-3">
-              <div className="p-2 rounded-lg bg-slate-100"><r.icon className={`w-5 h-5 ${r.color}`} /></div>
-              <p className="text-sm font-bold text-slate-900">{r.label}</p>
-            </div>
-            <p className="text-2xl font-bold text-slate-900 mb-1">{r.value}</p>
-            <p className="text-xs text-slate-500">{r.desc}</p>
-          </div>
-        ))}
       </div>
     </div>
   );
