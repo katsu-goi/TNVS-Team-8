@@ -1,6 +1,7 @@
 package com.photonicomega.facilities.config;
 
 import com.photonicomega.facilities.security.StompAuthChannelInterceptor;
+import com.photonicomega.facilities.security.StompSubscriptionAuthInterceptor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.simp.config.ChannelRegistration;
@@ -15,6 +16,7 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private final StompAuthChannelInterceptor stompAuthChannelInterceptor;
+    private final StompSubscriptionAuthInterceptor stompSubscriptionAuthInterceptor;
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry config) {
@@ -33,7 +35,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void configureClientInboundChannel(ChannelRegistration registration) {
-        // Authenticate every STOMP CONNECT frame with the caller's JWT.
-        registration.interceptors(stompAuthChannelInterceptor);
+        // 1. Authenticate every STOMP CONNECT frame with the caller's JWT.
+        // 2. Enforce role-based access on SUBSCRIBE frames (e.g. /topic/security/threats).
+        registration.interceptors(stompAuthChannelInterceptor, stompSubscriptionAuthInterceptor);
     }
 }

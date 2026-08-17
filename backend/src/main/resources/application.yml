@@ -167,6 +167,16 @@ app:
     contract-expiry-cron: "0 0 8 * * ?"        # 8 AM daily
     visitor-cleanup-cron: "0 0 1 * * ?"        # 1 AM daily
 
+  # Geographic IP Threat Map - IP geolocation provider (fail-open, Caffeine cached).
+  # Lookups that fail (timeout/rate-limit/private IP) resolve to "unknown" and
+  # never block security event processing.
+  geo:
+    provider: ${GEO_PROVIDER:ip-api}
+    base-url: ${GEO_BASE_URL:http://ip-api.com/json}
+    timeout-ms: ${GEO_TIMEOUT_MS:2000}
+    cache-ttl-seconds: ${GEO_CACHE_TTL_SECONDS:86400}
+    cache-max-size: ${GEO_CACHE_MAX_SIZE:10000}
+
   # Security
   security:
     bcrypt-strength: 12

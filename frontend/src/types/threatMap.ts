@@ -1,24 +1,39 @@
-// Geographic Threat Data Types
-export type ThreatType = 'DDOS' | 'SQL_INJECTION' | 'XSS' | 'BRUTE_FORCE' | 'FAILED_LOGIN' | 'PORT_SCAN' | 'MALWARE' | 'BOT_TRAFFIC';
+// Geographic Threat Data Types (backed by real /v1/security/ip-threats data)
+export type ThreatType =
+  | 'FAILED_LOGIN'
+  | 'ACCOUNT_LOCKED'
+  | 'SQL_INJECTION'
+  | 'XSS'
+  | 'PORT_SCAN'
+  | 'RATE_LIMIT'
+  | 'BLOCKED_IP'
+  | 'TRUSTED';
+
 export type ThreatSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-export type ThreatStatus = 'BLOCKED' | 'ACTIVE' | 'DETECTED';
-export type MarkerColor = 'red' | 'blue' | 'yellow' | 'green';
+export type ThreatStatus = 'BLOCKED' | 'DETECTED';
+export type MarkerColor = 'red' | 'blue' | 'orange' | 'green';
+
+export type ThreatWindow = '15m' | '1h' | '24h' | '7d';
+
+export interface ThreatTypeCount {
+  type: ThreatType;
+  count: number;
+}
 
 export interface IpThreatEntry {
   ip: string;
-  country: string;
-  city: string;
-  latitude: number;
-  longitude: number;
-  threatType: ThreatType;
+  country: string | null;
+  city: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  threatTypes: ThreatTypeCount[];
+  primaryThreat: ThreatType;
   severity: ThreatSeverity;
-  requests: number;
+  eventCount: number;
   status: ThreatStatus;
-  firstSeen: string;
-  lastSeen: string;
-  asn?: string;
-  isp?: string;
-  flag?: string;
+  firstSeen: string | null;
+  lastSeen: string | null;
+  source: string;
 }
 
 export interface ThreatMapStats {
@@ -30,51 +45,99 @@ export interface ThreatMapStats {
   failedLoginAttempts: number;
 }
 
+export interface TrustedSessionEntry {
+  sessionId: string;
+  username: string;
+  role: string;
+  ip: string;
+  country: string | null;
+  city: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  loginTime: string | null;
+  lastActivity: string | null;
+}
+
+export interface GatewayLogEntry {
+  timestamp: string;
+  action: string;
+  ip: string;
+  severity: ThreatSeverity;
+  module: string;
+  status: string;
+  reason: string;
+}
+
+export interface ThreatMapResponse {
+  window: ThreatWindow;
+  generatedAt: string;
+  threats: IpThreatEntry[];
+  trustedSessions: TrustedSessionEntry[];
+  stats: ThreatMapStats;
+  recentLogs: GatewayLogEntry[];
+}
+
+// STOMP envelope broadcast on /topic/security/threats
+export interface SecurityThreatEvent {
+  type: 'EVENT' | 'SYNC';
+  threat: IpThreatEntry | null;
+  log: GatewayLogEntry | null;
+  threats: IpThreatEntry[] | null;
+  trustedSessions: TrustedSessionEntry[] | null;
+  stats: ThreatMapStats;
+  timestamp: string;
+}
+
 export type ThreatFilterType = 'ALL' | ThreatType;
 
 export const THREAT_TYPE_LABEL: Record<ThreatType | 'ALL', string> = {
   ALL: 'All Threats',
-  DDOS: 'DDoS',
+  FAILED_LOGIN: 'Failed Login',
+  ACCOUNT_LOCKED: 'Account Lockout',
   SQL_INJECTION: 'SQL Injection',
   XSS: 'XSS',
-  BRUTE_FORCE: 'Brute Force',
-  FAILED_LOGIN: 'Failed Login',
   PORT_SCAN: 'Port Scan',
-  MALWARE: 'Malware',
-  BOT_TRAFFIC: 'Bot Traffic',
+  RATE_LIMIT: 'Rate Limit',
+  BLOCKED_IP: 'Blocked IP',
+  TRUSTED: 'Trusted Session',
+};
+
+export const THREAT_WINDOWS: ThreatWindow[] = ['15m', '1h', '24h', '7d'];
+
+export const THREAT_WINDOW_LABEL: Record<ThreatWindow, string> = {
+  '15m': 'Last 15 minutes',
+  '1h': 'Last hour',
+  '24h': 'Last 24 hours',
+  '7d': 'Last 7 days',
 };
 
 /**
- * Requirement 3:
- * 🔴 Red = Attack Source IP (DDoS, SQL Injection, Malware, Port Scan)
- * 🔵 Blue = Failed Login / Scan Source (Failed Login, XSS)
- * 🟡 Yellow = High Request Volume (Bot Traffic, Brute Force)
- * 🟢 Green = Trusted / Internal
+ * Marker color mapping:
+ * 🔴 Red = Critical attack sources (SQL Injection, XSS, Blocked IP, Account Lockout)
+ * 🔵 Blue = Failed login / scanner sources
+ * 🟠 Orange = High volume (rate limiting)
+ * 🟢 Green = Trusted / internal sessions
  */
 export function getMarkerColor(threatType: ThreatType): MarkerColor {
   switch (threatType) {
-    case 'DDOS':
     case 'SQL_INJECTION':
-    case 'MALWARE':
-    case 'PORT_SCAN':
-      return 'red';        // Attack Source
-    case 'FAILED_LOGIN':
     case 'XSS':
-      return 'blue';       // Failed Login / Scan Source
-    case 'BOT_TRAFFIC':
-    case 'BRUTE_FORCE':
-      return 'yellow';     // High Request Volume
+    case 'BLOCKED_IP':
+    case 'ACCOUNT_LOCKED':
+      return 'red';
+    case 'FAILED_LOGIN':
+    case 'PORT_SCAN':
+      return 'blue';
+    case 'RATE_LIMIT':
+      return 'orange';
     default:
-      return 'green';      // Trusted / Internal
+      return 'green';
   }
 }
 
 /**
- * Requirement 3:
- * Small = Low (6px)
- * Medium = Medium (9px)
- * Large = High (13px)
- * Extra Large = Critical (17px)
+ * Marker size by severity:
+ * Low = 6px, Medium = 9px, High = 13px, Critical = 17px
  */
 export function getMarkerRadius(severity: ThreatSeverity): number {
   switch (severity) {
@@ -88,6 +151,17 @@ export function getMarkerRadius(severity: ThreatSeverity): number {
 export const MARKER_COLORS: Record<MarkerColor, { fill: string; border: string; glow: string }> = {
   red:    { fill: '#ef4444', border: '#f87171', glow: 'rgba(239, 68, 68, 0.4)' },
   blue:   { fill: '#38bdf8', border: '#60a5fa', glow: 'rgba(56, 189, 248, 0.4)' },
-  yellow: { fill: '#f59e0b', border: '#fbbf24', glow: 'rgba(245, 158, 11, 0.4)' },
+  orange: { fill: '#f59e0b', border: '#fbbf24', glow: 'rgba(245, 158, 11, 0.4)' },
   green:  { fill: '#10b981', border: '#34d399', glow: 'rgba(16, 185, 129, 0.4)' },
 };
+
+export function emptyStats(): ThreatMapStats {
+  return {
+    totalThreatIps: 0,
+    detectedLast24h: 0,
+    countriesAffected: 0,
+    blockedIps: 0,
+    activeSessions: 0,
+    failedLoginAttempts: 0,
+  };
+}

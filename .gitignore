@@ -24,3 +24,6 @@ backend/src/main/java/com/photonicomega/facilities/module/ai/domain/AiHumanOutco
 backend/src/main/java/com/photonicomega/facilities/module/ai/domain/AiProviderStatus.java
 backend/src/main/java/com/photonicomega/facilities/module/ai/domain/AiProviderType.java
 backend/src/main/java/com/photonicomega/facilities/module/ai/domain/AiRequestStatus.java
+
+.vercel
+.env*

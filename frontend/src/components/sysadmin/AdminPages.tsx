@@ -7,6 +7,7 @@ import {
   Search, ChevronLeft, ChevronRight,} from 'lucide-react';
 import { loadConfigs, updateConfig, loadIntegrations, loadNotifications, markNotificationRead } from '../../api/adminService';
 import { securityService } from '../../api/securityService';
+import { SecurityThreatSection } from '../security/SecurityThreatSection';
 import { SubsystemHealthGrid } from './SubsystemHealthGrid';
 import type {
   SystemConfiguration, SecurityLog,
@@ -136,7 +137,7 @@ export const SecurityCenterPage: React.FC = () => {
         <div className="card-stat p-4"><p className="text-xs text-slate-500 uppercase tracking-wide">Open Alerts</p><p className="text-2xl font-bold text-rose-600 mt-1">{metrics.activeAlertsCount}</p></div>
         <div className="card-stat p-4"><p className="text-xs text-slate-500 uppercase tracking-wide">Failed Logins</p><p className="text-2xl font-bold text-amber-600 mt-1">{metrics.failedLoginAttempts}</p></div>
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <div className="card-stat p-5">
           <h3 className="text-sm font-bold text-slate-900 mb-3">Security Alerts ({alerts.length})</h3>
           {alerts.length === 0 ? <p className="text-xs text-slate-400">No alerts</p> : (
@@ -178,6 +179,7 @@ export const SecurityCenterPage: React.FC = () => {
           )}
         </div>
       </div>
+      <SecurityThreatSection />
     </div>
   );
 };
