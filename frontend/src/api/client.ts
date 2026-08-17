@@ -2,6 +2,18 @@ import axios, { AxiosError } from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
+// Components call safeFetchJson with module-relative paths like
+// `/api/v1/compliance/documents`. The axios client already prefixes
+// VITE_API_BASE_URL (e.g. https://BACKEND-HOST/api/v1), so resolve these
+// against the same base — otherwise native fetch targets window.location.origin
+// (the Vercel host in staging) instead of the backend.
+function resolveApiUrl(url: string): string {
+  if (url.startsWith('/api/v1')) {
+    return `${API_BASE_URL}${url.slice('/api/v1'.length)}`;
+  }
+  return url;
+}
+
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
@@ -54,7 +66,7 @@ export async function safeFetchJson<T = any>(url: string, options?: RequestInit)
       ...(options?.headers as Record<string, string> || {}),
     };
 
-    const res = await fetch(url, { ...options, headers });
+    const res = await fetch(resolveApiUrl(url), { ...options, headers });
     if (!res.ok) {
       return null;
     }
