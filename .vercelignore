@@ -1,0 +1,11 @@
+# Only the frontend is deployed to Vercel. The Spring Boot backend is a
+# separate always-on service (never deployed here).
+backend/
+frontend/node_modules
+frontend/dist
+
+# Tooling / local files
+.git
+.vercel
+.env*
+*.log

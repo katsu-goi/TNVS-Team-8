@@ -2,6 +2,9 @@ package com.photonicomega.facilities.module.security.filter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.photonicomega.facilities.common.dto.ApiResponse;
+import com.photonicomega.facilities.module.security.domain.RiskLevel;
+import com.photonicomega.facilities.module.security.domain.SecurityLog;
+import com.photonicomega.facilities.module.security.domain.SecurityModule;
 import com.photonicomega.facilities.module.security.service.SecurityAuditService;
 import jakarta.servlet.*;
 import jakarta.servlet.http.HttpServletRequest;
@@ -65,32 +68,68 @@ public class SuspiciousRequestFilter implements Filter {
         String url = httpRequest.getRequestURI();
 
         // Check query strings and headers
-        if (isSuspicious(httpRequest)) {
-            log.error("ATTACK DETECTED: Blocked suspicious request from IP: {} on URL: {}", ip, url);
+        String detectedThreat = detectThreat(httpRequest);
+        if (detectedThreat != null) {
+            log.error("ATTACK DETECTED: Blocked suspicious request from IP: {} on URL: {} ({})", ip, url, detectedThreat);
             httpResponse.setStatus(HttpStatus.FORBIDDEN.value());
             httpResponse.setContentType(MediaType.APPLICATION_JSON_VALUE);
             ApiResponse<Void> apiResponse = ApiResponse.failure(
                     "Request blocked: suspicious content detected.", "BLOCKED_SUSPICIOUS_REQUEST");
             httpResponse.getWriter().write(objectMapper.writeValueAsString(apiResponse));
+
+            recordBlockedEvent(httpRequest, ip, detectedThreat);
             return;
         }
 
         chain.doFilter(request, response);
     }
 
-    private boolean isSuspicious(HttpServletRequest request) {
+    /**
+     * Persists a security log entry for the blocked request so the IP threat
+     * map and audit trail reflect gateway-level attacks in real time.
+     */
+    private void recordBlockedEvent(HttpServletRequest request, String ip, String threat) {
+        try {
+            SecurityLog logEntry = SecurityLog.builder()
+                    .ipAddress(ip)
+                    .apiEndpoint(request.getRequestURI())
+                    .httpMethod(request.getMethod())
+                    .action("SUSPICIOUS_REQUEST_BLOCKED")
+                    .module(SecurityModule.API_GATEWAY)
+                    .status("BLOCKED")
+                    .reason(threat)
+                    .riskLevel(resolveRiskLevel(threat))
+                    .build();
+            securityAuditService.logSecurityEventAsync(logEntry);
+        } catch (Exception e) {
+            log.error("Failed to record blocked suspicious request", e);
+        }
+    }
+
+    private RiskLevel resolveRiskLevel(String threat) {
+        return switch (threat) {
+            case "SQL_INJECTION", "COMMAND_INJECTION" -> RiskLevel.CRITICAL;
+            case "XSS" -> RiskLevel.HIGH;
+            case "PATH_TRAVERSAL" -> RiskLevel.HIGH;
+            default -> RiskLevel.MEDIUM;
+        };
+    }
+
+    /**
+     * Returns the threat signature name when the request carries suspicious
+     * content, or {@code null} when it is clean.
+     */
+    private String detectThreat(HttpServletRequest request) {
         // 1. Inspect Query Params
         String queryString = request.getQueryString();
         if (queryString != null) {
             try {
                 String decoded = URLDecoder.decode(queryString, StandardCharsets.UTF_8);
-                if (matchesThreatPatterns(decoded)) {
-                    return true;
-                }
+                String threat = matchThreat(decoded);
+                if (threat != null) return threat;
             } catch (Exception e) {
-                if (matchesThreatPatterns(queryString)) {
-                    return true;
-                }
+                String threat = matchThreat(queryString);
+                if (threat != null) return threat;
             }
         }
 
@@ -101,9 +140,8 @@ public class SuspiciousRequestFilter implements Filter {
             String[] paramValues = request.getParameterValues(paramName);
             if (paramValues != null) {
                 for (String val : paramValues) {
-                    if (matchesThreatPatterns(val)) {
-                        return true;
-                    }
+                    String threat = matchThreat(val);
+                    if (threat != null) return threat;
                 }
             }
         }
@@ -113,26 +151,26 @@ public class SuspiciousRequestFilter implements Filter {
         while (headerNames.hasMoreElements()) {
             String name = headerNames.nextElement();
             String headerVal = request.getHeader(name);
-            if (headerVal != null && matchesThreatPatterns(headerVal)) {
+            if (headerVal != null) {
                 if ("User-Agent".equalsIgnoreCase(name) || "Referer".equalsIgnoreCase(name)) {
-                    if (matchesThreatPatterns(headerVal)) {
-                        return true;
-                    }
+                    String threat = matchThreat(headerVal);
+                    if (threat != null) return threat;
                 }
             }
         }
 
-        return false;
+        return null;
     }
 
-    private boolean matchesThreatPatterns(String input) {
+    private String matchThreat(String input) {
         if (input == null || input.isEmpty()) {
-            return false;
+            return null;
         }
-        return SQL_INJECTION_PATTERN.matcher(input).find()
-                || XSS_PATTERN.matcher(input).find()
-                || PATH_TRAVERSAL_PATTERN.matcher(input).find()
-                || COMMAND_INJECTION_PATTERN.matcher(input).find();
+        if (SQL_INJECTION_PATTERN.matcher(input).find()) return "SQL_INJECTION";
+        if (XSS_PATTERN.matcher(input).find()) return "XSS";
+        if (PATH_TRAVERSAL_PATTERN.matcher(input).find()) return "PATH_TRAVERSAL";
+        if (COMMAND_INJECTION_PATTERN.matcher(input).find()) return "COMMAND_INJECTION";
+        return null;
     }
 
     private String getClientIp(HttpServletRequest request) {

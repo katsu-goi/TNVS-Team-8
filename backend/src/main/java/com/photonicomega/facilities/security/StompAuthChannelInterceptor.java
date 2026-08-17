@@ -37,20 +37,36 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
 
     private final JwtTokenProvider jwtTokenProvider;
     private final UserDetailsService userDetailsService;
+    private final StompSessionRegistry sessionRegistry;
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
         StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
-        if (accessor == null || !StompCommand.CONNECT.equals(accessor.getCommand())) {
+        if (accessor == null) {
             return message;
         }
 
+        if (StompCommand.CONNECT.equals(accessor.getCommand())) {
+            return authenticateConnect(message, accessor);
+        }
+
+        if (StompCommand.DISCONNECT.equals(accessor.getCommand())) {
+            sessionRegistry.unregister(accessor.getSessionId());
+        }
+
+        return message;
+    }
+
+    private Message<?> authenticateConnect(Message<?> message, StompHeaderAccessor accessor) {
         String token = extractToken(accessor);
         if (StringUtils.hasText(token) && jwtTokenProvider.validateToken(token)) {
             String email = jwtTokenProvider.extractUsername(token);
             UserDetails userDetails = userDetailsService.loadUserByUsername(email);
             if (jwtTokenProvider.isTokenValid(token, userDetails)) {
-                accessor.setUser(new UsernamePasswordAuthenticationToken(email, null, userDetails.getAuthorities()));
+                UsernamePasswordAuthenticationToken authentication =
+                        new UsernamePasswordAuthenticationToken(email, null, userDetails.getAuthorities());
+                accessor.setUser(authentication);
+                sessionRegistry.register(accessor.getSessionId(), authentication);
                 log.debug("STOMP connection authenticated for user {}", email);
                 return message;
             }

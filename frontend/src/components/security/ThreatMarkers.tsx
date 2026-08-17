@@ -1,0 +1,209 @@
+import React, { useEffect, useRef } from 'react';
+import L from 'leaflet';
+import 'leaflet.markercluster';
+import { useMap } from 'react-leaflet';
+import {
+  IpThreatEntry,
+  ThreatFilterType,
+  TrustedSessionEntry,
+  getMarkerColor,
+  getMarkerRadius,
+  MARKER_COLORS,
+  THREAT_TYPE_LABEL,
+} from '../../types/threatMap';
+
+/**
+ * Imperative Leaflet marker + cluster layer.
+ *
+ * react-leaflet v5 no longer exposes a built-in MarkerClusterGroup, and the
+ * third-party glue packages lag React 19, so we attach a real
+ * `L.markerClusterGroup` to the map and rebuild markers imperatively whenever
+ * the store data changes. Markers are plain `L.marker` with a custom DivIcon
+ * (NOT CircleMarker), clustered via leaflet.markercluster. No blinking.
+ */
+const ThreatMarkers: React.FC<{
+  threats: IpThreatEntry[];
+  trustedSessions: TrustedSessionEntry[];
+  filter: ThreatFilterType;
+}> = ({ threats, trustedSessions, filter }) => {
+  const map = useMap();
+  const clusterRef = useRef<L.MarkerClusterGroup | null>(null);
+
+  useEffect(() => {
+    const cluster = L.markerClusterGroup({
+      maxClusterRadius: 50,
+      disableClusteringAtZoom: 6,
+      spiderfyOnMaxZoom: true,
+      showCoverageOnHover: false,
+      iconCreateFunction: (count) =>
+        L.divIcon({
+          className: 'threat-cluster',
+          html: `<div><span>${count.getChildCount()}</span></div>`,
+          iconSize: [40, 40],
+        }),
+    });
+    cluster.addTo(map);
+    clusterRef.current = cluster;
+    return () => {
+      map.removeLayer(cluster);
+      clusterRef.current = null;
+    };
+  }, [map]);
+
+  useEffect(() => {
+    const cluster = clusterRef.current;
+    if (!cluster) return;
+    cluster.clearLayers();
+
+    const threatEntries = threats.filter((t) => t.latitude != null && t.longitude != null);
+    const trustedEntries = trustedSessions.filter((t) => t.latitude != null && t.longitude != null);
+
+    const markers: L.Marker[] = [];
+
+    threatEntries.forEach((t) => {
+      if (filter !== 'ALL' && t.primaryThreat !== filter) return;
+      const marker = buildThreatMarker(t);
+      if (marker) markers.push(marker);
+    });
+
+    if (filter === 'ALL' || filter === 'TRUSTED') {
+      trustedEntries.forEach((s) => {
+        const marker = buildTrustedMarker(s);
+        if (marker) markers.push(marker);
+      });
+    }
+
+    if (markers.length > 0) {
+      cluster.addLayers(markers);
+    }
+  }, [threats, trustedSessions, filter]);
+
+  return null;
+};
+
+function buildThreatMarker(t: IpThreatEntry): L.Marker | null {
+  if (t.latitude == null || t.longitude == null) return null;
+  const color = MARKER_COLORS[getMarkerColor(t.primaryThreat)];
+  const radius = getMarkerRadius(t.severity);
+  const html = markerHtml(color.fill, radius, t.ip, t.severity);
+
+  const marker = L.marker([t.latitude, t.longitude], {
+    icon: L.divIcon({
+      className: 'threat-marker',
+      html,
+      iconSize: [radius * 2.4, radius * 2.4],
+      iconAnchor: [radius * 1.2, radius * 1.2],
+    }),
+    title: `${t.ip} (${THREAT_TYPE_LABEL[t.primaryThreat]})`,
+  });
+
+  marker.bindPopup(() => buildThreatPopup(t));
+  return marker;
+}
+
+function buildTrustedMarker(s: TrustedSessionEntry): L.Marker | null {
+  if (s.latitude == null || s.longitude == null) return null;
+  const green = MARKER_COLORS.green;
+  const html = markerHtml(green.fill, 8, s.username, 'TRUSTED');
+
+  const marker = L.marker([s.latitude, s.longitude], {
+    icon: L.divIcon({
+      className: 'threat-marker',
+      html,
+      iconSize: [19, 19],
+      iconAnchor: [10, 10],
+    }),
+    title: `${s.username} (trusted session)`,
+  });
+
+  const content = `
+    <div class="threat-popup-card">
+      <div class="threat-popup-header" style="border-left-color:${green.fill}">
+        <div>
+          <div class="threat-popup-ip">${escapeHtml(s.ip)}</div>
+          <div class="threat-popup-sub">${escapeHtml(s.username || '')} · ${escapeHtml(s.role || '')}</div>
+        </div>
+        <span class="threat-popup-badge badge-trusted">TRUSTED</span>
+      </div>
+      <div class="threat-popup-body">
+        <div class="threat-popup-row"><span>Location</span><span>${locationText(s.city, s.country)}</span></div>
+        <div class="threat-popup-row"><span>Login</span><span>${formatTime(s.loginTime)}</span></div>
+        <div class="threat-popup-row"><span>Last activity</span><span>${formatTime(s.lastActivity)}</span></div>
+      </div>
+    </div>
+  `;
+  marker.bindPopup(content, { className: 'threat-popup', maxWidth: 300, minWidth: 260 });
+  return marker;
+}
+
+function markerHtml(fill: string, radius: number, label: string, severity: string): string {
+  return `<div class="threat-dot" style="width:${radius * 2}px;height:${radius * 2}px;background:${fill}" title="${escapeHtml(label)} · ${escapeHtml(severity)}"></div>`;
+}
+
+function buildThreatPopup(t: IpThreatEntry): string {
+  const color = MARKER_COLORS[getMarkerColor(t.primaryThreat)];
+  const severityBadge = severityClass(t.severity);
+
+  const typesHtml = (t.threatTypes || [])
+    .map(
+      (tc) =>
+        `<div class="threat-popup-row"><span>${escapeHtml(THREAT_TYPE_LABEL[tc.type] || tc.type)}</span><span class="threat-count">× ${tc.count}</span></div>`
+    )
+    .join('');
+
+  return `
+    <div class="threat-popup-card">
+      <div class="threat-popup-header" style="border-left-color:${color.fill}">
+        <div>
+          <div class="threat-popup-ip">${escapeHtml(t.ip)}</div>
+          <div class="threat-popup-sub">${locationText(t.city, t.country)}</div>
+        </div>
+        <span class="threat-popup-badge ${t.status === 'BLOCKED' ? 'badge-blocked' : 'badge-detected'}">${t.status}</span>
+      </div>
+      <div class="threat-popup-body">
+        ${typesHtml}
+        <div class="threat-popup-row"><span>Severity</span><span class="threat-severity ${severityBadge}">${t.severity}</span></div>
+        <div class="threat-popup-row"><span>Events</span><span>${t.eventCount}</span></div>
+        <div class="threat-popup-row"><span>First seen</span><span>${formatTime(t.firstSeen)}</span></div>
+        <div class="threat-popup-row"><span>Last seen</span><span>${formatTime(t.lastSeen)}</span></div>
+        <div class="threat-popup-row"><span>Source</span><span>${escapeHtml(t.source || '—')}</span></div>
+      </div>
+    </div>
+  `;
+}
+
+function locationText(city: string | null, country: string | null): string {
+  if (city && country) return `${escapeHtml(city)}, ${escapeHtml(country)}`;
+  if (city) return escapeHtml(city);
+  if (country) return escapeHtml(country);
+  return 'Location: Unknown';
+}
+
+function formatTime(value: string | null): string {
+  if (!value) return '—';
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return '—';
+  }
+}
+
+function severityClass(severity: string): string {
+  switch (severity) {
+    case 'CRITICAL': return 'sev-critical';
+    case 'HIGH': return 'sev-high';
+    case 'MEDIUM': return 'sev-medium';
+    default: return 'sev-low';
+  }
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+export default ThreatMarkers;
