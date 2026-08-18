@@ -1,11 +1,11 @@
 import React from 'react';
 import { Globe, ShieldAlert, Ban, Users, Lock, Radar } from 'lucide-react';
-import type { ThreatMapStats } from '../../types/threatMap';
+import type { ThreatMapStats, ThreatWindow } from '../../types/threatMap';
 
-const SecurityTelemetry: React.FC<{ stats: ThreatMapStats }> = ({ stats }) => {
+const SecurityTelemetry: React.FC<{ stats: ThreatMapStats; window: ThreatWindow }> = ({ stats, window }) => {
   const items = [
     { label: 'Total Threat IPs', value: stats.totalThreatIps, icon: Radar, color: 'text-rose-600 bg-rose-50' },
-    { label: 'Detected (24h)', value: stats.detectedLast24h, icon: ShieldAlert, color: 'text-amber-600 bg-amber-50' },
+    { label: `Detected (${window})`, value: stats.detectedLast24h, icon: ShieldAlert, color: 'text-amber-600 bg-amber-50' },
     { label: 'Countries Affected', value: stats.countriesAffected, icon: Globe, color: 'text-sky-600 bg-sky-50' },
     { label: 'Blocked IPs', value: stats.blockedIps, icon: Ban, color: 'text-rose-600 bg-rose-50' },
     { label: 'Active Sessions', value: stats.activeSessions, icon: Users, color: 'text-emerald-600 bg-emerald-50' },

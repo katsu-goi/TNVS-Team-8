@@ -6,6 +6,7 @@ import com.photonicomega.facilities.module.security.domain.RiskLevel;
 import com.photonicomega.facilities.module.security.domain.SecurityLog;
 import com.photonicomega.facilities.module.security.domain.SecurityModule;
 import com.photonicomega.facilities.module.security.service.SecurityAuditService;
+import com.photonicomega.facilities.module.security.util.ClientIpResolver;
 import jakarta.servlet.*;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -174,10 +175,6 @@ public class SuspiciousRequestFilter implements Filter {
     }
 
     private String getClientIp(HttpServletRequest request) {
-        String xHeader = request.getHeader("X-Forwarded-For");
-        if (xHeader != null && !xHeader.isEmpty()) {
-            return xHeader.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
+        return ClientIpResolver.resolve(request).ip();
     }
 }

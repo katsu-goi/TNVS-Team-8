@@ -1,6 +1,7 @@
 package com.photonicomega.facilities.module.security.filter;
 
 import com.photonicomega.facilities.module.security.repository.BlockedIpRepository;
+import com.photonicomega.facilities.module.security.util.ClientIpResolver;
 import jakarta.servlet.*;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -44,10 +45,6 @@ public class IpBlacklistFilter implements Filter {
     }
 
     private String getClientIp(HttpServletRequest request) {
-        String xHeader = request.getHeader("X-Forwarded-For");
-        if (xHeader != null && !xHeader.isEmpty()) {
-            return xHeader.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
+        return ClientIpResolver.resolve(request).ip();
     }
 }

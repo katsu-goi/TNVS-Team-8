@@ -98,6 +98,9 @@ export const SecurityThreatMap: React.FC<{
   const hasMarkers = threats.some((t) => t.latitude != null && t.longitude != null)
     || trustedSessions.some((s) => s.latitude != null && s.longitude != null);
 
+  const geolocatedCount = threats.filter((t) => t.latitude != null && t.longitude != null).length;
+  const unmappedCount = threats.length - geolocatedCount;
+
   return (
     <div className="card-stat overflow-hidden relative" style={{ minHeight: '540px' }}>
       {/* Header */}
@@ -106,7 +109,7 @@ export const SecurityThreatMap: React.FC<{
           <div className="p-2 rounded-lg bg-emerald-50 text-emerald-600"><Globe className="w-5 h-5" /></div>
           <div>
             <h3 className="font-bold text-slate-900">Geographic IP Threat Vector Map</h3>
-            <p className="text-xs text-slate-500">Live security telemetry aggregated from the database</p>
+            <p className="text-xs text-slate-500">Live security telemetry aggregated from the database · geolocation is approximate</p>
           </div>
         </div>
         <div className="flex items-center space-x-2">
@@ -144,8 +147,11 @@ export const SecurityThreatMap: React.FC<{
               </div>
             )}
           </div>
-          <span className="px-2 py-1 rounded-lg bg-slate-100 text-slate-600 font-mono text-xs font-bold">
-            {threats.length} VECTORS
+          <span
+            className="px-2 py-1 rounded-lg bg-slate-100 text-slate-600 font-mono text-xs font-bold"
+            title={`${threats.length} threat IPs total · ${geolocatedCount} mapped on the map. IPs with LOCAL/PRIVATE sources or unknown locations cannot be mapped to a country.`}
+          >
+            {geolocatedCount} VECTORS
           </span>
         </div>
       </div>
@@ -184,12 +190,25 @@ export const SecurityThreatMap: React.FC<{
         )}
 
         {/* Empty state overlay */}
-        {!loading && !hasMarkers && (
+        {!loading && !hasMarkers && unmappedCount === 0 && (
           <div className="absolute inset-0 z-[1002] flex items-center justify-center pointer-events-none">
             <div className="bg-white/95 border border-slate-200 rounded-2xl shadow-xl px-6 py-5 text-center pointer-events-auto max-w-sm">
               <ShieldAlert className="w-8 h-8 mx-auto text-emerald-500 mb-2" />
               <p className="text-sm font-bold text-slate-800">No security threats detected</p>
               <p className="text-xs text-slate-500 mt-1">No security threats detected in the selected period.</p>
+            </div>
+          </div>
+        )}
+        {!loading && !hasMarkers && unmappedCount > 0 && (
+          <div className="absolute inset-0 z-[1002] flex items-center justify-center pointer-events-none">
+            <div className="bg-white/95 border border-slate-200 rounded-2xl shadow-xl px-6 py-5 text-center pointer-events-auto max-w-md">
+              <ShieldAlert className="w-8 h-8 mx-auto text-amber-500 mb-2" />
+              <p className="text-sm font-bold text-slate-800">Threats present but not mappable</p>
+              <p className="text-xs text-slate-500 mt-1">
+                {unmappedCount} threat {unmappedCount === 1 ? 'source has' : 'sources have'} LOCAL/PRIVATE IP
+                addresses or unresolved locations. Geographic mapping requires a public IP that the
+                geolocation provider can place.
+              </p>
             </div>
           </div>
         )}

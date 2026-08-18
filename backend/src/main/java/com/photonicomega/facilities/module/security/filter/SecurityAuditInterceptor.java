@@ -6,6 +6,9 @@ import com.photonicomega.facilities.module.security.domain.RiskLevel;
 import com.photonicomega.facilities.module.security.domain.SecurityLog;
 import com.photonicomega.facilities.module.security.domain.SecurityModule;
 import com.photonicomega.facilities.module.security.service.SecurityAuditService;
+import com.photonicomega.facilities.module.security.service.geo.IpGeolocationService;
+import com.photonicomega.facilities.module.security.util.ClientIpResolver;
+import com.photonicomega.facilities.module.security.util.GeoJson;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +31,7 @@ public class SecurityAuditInterceptor implements HandlerInterceptor {
 
     private final SecurityAuditService securityAuditService;
     private final UserRepository userRepository;
+    private final IpGeolocationService ipGeolocationService;
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
@@ -47,9 +51,7 @@ public class SecurityAuditInterceptor implements HandlerInterceptor {
             String url = request.getRequestURI();
             String method = request.getMethod();
             int status = response.getStatus();
-            String userAgent = request.getHeader("User-Agent");
-
-            // Extract OS and Browser
+            String userAgent = request.getHeader("User-Agent");            // Extract OS and Browser
             String os = parseOS(userAgent);
             String browser = parseBrowser(userAgent);
 
@@ -61,6 +63,10 @@ public class SecurityAuditInterceptor implements HandlerInterceptor {
             SecurityModule module = resolveModule(url);
             String action = resolveAction(method, url);
             RiskLevel risk = resolveRiskLevel(status, method, url);
+
+            // Persist cached geolocation (non-blocking, cache-only) with the log
+            // so the event carries its geographic context without a network call.
+            String geoLocation = enrichGeoLocation(ip);
 
             SecurityLog logEntry = SecurityLog.builder()
                     .timestamp(Instant.now())
@@ -82,6 +88,7 @@ public class SecurityAuditInterceptor implements HandlerInterceptor {
                     .status(status >= 400 ? "FAILED" : "SUCCESS")
                     .reason(ex != null ? ex.getMessage() : (status >= 400 ? "HTTP status " + status : "Normal completion"))
                     .riskLevel(risk)
+                    .geoLocation(geoLocation)
                     .build();
 
             // Run asynchronously
@@ -151,11 +158,22 @@ public class SecurityAuditInterceptor implements HandlerInterceptor {
     }
 
     private String getClientIp(HttpServletRequest request) {
-        String xHeader = request.getHeader("X-Forwarded-For");
-        if (xHeader != null && !xHeader.isEmpty()) {
-            return xHeader.split(",")[0].trim();
+        return ClientIpResolver.resolve(request).ip();
+    }
+
+    /**
+     * Reads cached geolocation for the IP (never performs a network lookup)
+     * and serializes it as JSON for the {@code geo_location} column.
+     */
+    private String enrichGeoLocation(String ip) {
+        if (ip == null || ip.isBlank()) {
+            return null;
         }
-        return request.getRemoteAddr();
+        try {
+            return ipGeolocationService.peek(ip).map(GeoJson::toCompactJson).orElse(null);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private String parseOS(String userAgent) {

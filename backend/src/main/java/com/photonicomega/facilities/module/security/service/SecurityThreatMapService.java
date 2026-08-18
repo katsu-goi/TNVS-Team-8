@@ -12,6 +12,8 @@ import com.photonicomega.facilities.module.security.repository.LoginHistoryRepos
 import com.photonicomega.facilities.module.security.repository.SecurityLogRepository;
 import com.photonicomega.facilities.module.security.service.geo.IpGeo;
 import com.photonicomega.facilities.module.security.service.geo.IpGeolocationService;
+import com.photonicomega.facilities.module.security.util.ClientIpResolver;
+import com.photonicomega.facilities.module.security.util.GeoJson;
 import com.photonicomega.facilities.module.security.util.IpMask;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -113,14 +115,30 @@ public class SecurityThreatMapService {
 
     /** Maps a single security log to a gateway feed entry (used by REST + STOMP). */
     public GatewayLogEntry toGatewayLogEntry(SecurityLog log) {
+        Optional<IpGeo> geo = log.getIpAddress() == null
+                ? Optional.empty()
+                : ipGeolocationService.peek(log.getIpAddress());
+        boolean privateIp = log.getIpAddress() != null
+                && ClientIpResolver.isPrivateOrLocal(log.getIpAddress());
         return new GatewayLogEntry(
                 log.getTimestamp(),
                 log.getAction(),
                 IpMask.maskIp(log.getIpAddress()),
+                log.getUsername(),
                 log.getRiskLevel() != null ? log.getRiskLevel().name() : RiskLevel.LOW.name(),
                 log.getModule() != null ? log.getModule().name() : "API_GATEWAY",
                 log.getStatus(),
-                log.getReason());
+                log.getReason(),
+                geo.map(IpGeo::country).orElse(null),
+                geo.map(IpGeo::countryCode).orElse(null),
+                geo.map(IpGeo::city).orElse(null),
+                privateIp,
+                geo.map(IpGeo::latitude).orElse(null),
+                geo.map(IpGeo::longitude).orElse(null),
+                geo.map(IpGeo::accuracyRadiusKm).orElse(null),
+                geo.map(IpGeo::confidence).orElse(null),
+                geo.map(IpGeo::isp).orElse(null),
+                geo.map(IpGeo::asn).orElse(null));
     }
 
     /** Resolves geo coordinates for an IP (cached, fail-open). */
@@ -231,7 +249,7 @@ public class SecurityThreatMapService {
         ThreatType primary = agg.primaryThreat();
         RiskLevel severity = agg.blocked
                 ? RiskLevel.CRITICAL
-                : agg.maxSeverity != null ? agg.maxSeverity : RiskLevel.MEDIUM;
+                : graduatedSeverity(primary, agg);
 
         List<IpThreatEntry.ThreatTypeCount> typeCounts = agg.counts.entrySet().stream()
                 .sorted(Map.Entry.<ThreatType, Long>comparingByValue().reversed())
@@ -239,13 +257,23 @@ public class SecurityThreatMapService {
                 .toList();
 
         Optional<IpGeo> geo = resolveGeo(agg.ip);
+        boolean privateIp = ClientIpResolver.isPrivateOrLocal(agg.ip);
 
         return new IpThreatEntry(
                 IpMask.maskIp(agg.ip),
                 geo.map(IpGeo::country).orElse(null),
+                geo.map(IpGeo::countryCode).orElse(null),
+                geo.map(IpGeo::region).orElse(null),
                 geo.map(IpGeo::city).orElse(null),
                 geo.map(IpGeo::latitude).orElse(null),
                 geo.map(IpGeo::longitude).orElse(null),
+                geo.map(IpGeo::timezone).orElse(null),
+                geo.map(IpGeo::isp).orElse(null),
+                geo.map(IpGeo::asn).orElse(null),
+                geo.map(IpGeo::accuracyRadiusKm).orElse(null),
+                geo.map(IpGeo::confidence).orElse(null),
+                geo.map(IpGeo::ipVersion).orElse(agg.ip.contains(":") ? 6 : 4),
+                privateIp,
                 typeCounts,
                 primary,
                 severity.name(),
@@ -256,19 +284,122 @@ public class SecurityThreatMapService {
                 String.join(",", agg.sources));
     }
 
+    /**
+     * Graduates the severity of a threat vector based on how many times the
+     * same source IP has produced the primary threat type within the window:
+     * 1 occurrence -> LOW, 2-4 -> MEDIUM, 5+ -> HIGH. BLOCKED and
+     * ACCOUNT_LOCKED keep their structural severity.
+     */
+    private RiskLevel graduatedSeverity(ThreatType primary, IpAggregate agg) {
+        if (agg.maxSeverity == null) {
+            return RiskLevel.MEDIUM;
+        }
+        if (primary == ThreatType.ACCOUNT_LOCKED) {
+            return RiskLevel.HIGH;
+        }
+        long primaryCount = agg.counts.getOrDefault(primary, 0L);
+        if (primaryCount >= 5) {
+            return RiskLevel.HIGH;
+        }
+        if (primaryCount >= 2) {
+            return RiskLevel.MEDIUM;
+        }
+        return RiskLevel.LOW;
+    }
+
     private TrustedSessionEntry toTrustedSessionEntry(ActiveSession session) {
         Optional<IpGeo> geo = resolveGeo(session.getIpAddress());
+        boolean privateIp = ClientIpResolver.isPrivateOrLocal(session.getIpAddress());
         return new TrustedSessionEntry(
                 session.getSessionId(),
                 session.getUsername(),
                 session.getRole(),
                 IpMask.maskIp(session.getIpAddress()),
                 geo.map(IpGeo::country).orElse(null),
+                geo.map(IpGeo::countryCode).orElse(null),
+                geo.map(IpGeo::region).orElse(null),
                 geo.map(IpGeo::city).orElse(null),
                 geo.map(IpGeo::latitude).orElse(null),
                 geo.map(IpGeo::longitude).orElse(null),
+                geo.map(IpGeo::timezone).orElse(null),
+                geo.map(IpGeo::isp).orElse(null),
+                geo.map(IpGeo::asn).orElse(null),
+                geo.map(IpGeo::accuracyRadiusKm).orElse(null),
+                geo.map(IpGeo::confidence).orElse(null),
+                geo.map(IpGeo::ipVersion).orElse(session.getIpAddress().contains(":") ? 6 : 4),
+                privateIp,
                 session.getLoginTime(),
                 session.getLastActivity());
+    }
+
+    /**
+     * Builds a {@link TrustedSessionEntry} for the user behind a successful
+     * login, used to push the green marker in the EVENT broadcast instead of
+     * waiting for the next 30s SYNC. Falls back to an {@link ActiveSession}
+     * when one is already tracked, otherwise builds a lightweight entry from
+     * the log itself (the interceptor records the audit row before the session
+     * may be upserted, so the fallback keeps the marker immediate).
+     */
+    public Optional<TrustedSessionEntry> buildTrustedSessionForLog(SecurityLog log) {
+        if (log == null || log.getIpAddress() == null || log.getIpAddress().isBlank()) {
+            return Optional.empty();
+        }
+        return activeSessionRepository.findByUsernameAndStatus(log.getUsername(), "ACTIVE")
+                .stream()
+                .filter(s -> log.getIpAddress().equals(s.getIpAddress()))
+                .findFirst()
+                .map(this::toTrustedSessionEntry)
+                .or(() -> activeSessionRepository.findByStatus("ACTIVE").stream()
+                        .filter(s -> log.getIpAddress().equals(s.getIpAddress()))
+                        .findFirst()
+                        .map(this::toTrustedSessionEntry))
+                .or(() -> {
+                    Optional<IpGeo> geo = resolveGeo(log.getIpAddress());
+                    boolean privateIp = ClientIpResolver.isPrivateOrLocal(log.getIpAddress());
+                    return Optional.of(new TrustedSessionEntry(
+                            log.getSessionId() != null ? log.getSessionId() : "n/a",
+                            log.getUsername() != null ? log.getUsername() : "unknown",
+                            log.getRole() != null ? log.getRole() : "USER",
+                            IpMask.maskIp(log.getIpAddress()),
+                            geo.map(IpGeo::country).orElse(null),
+                            geo.map(IpGeo::countryCode).orElse(null),
+                            geo.map(IpGeo::region).orElse(null),
+                            geo.map(IpGeo::city).orElse(null),
+                            geo.map(IpGeo::latitude).orElse(null),
+                            geo.map(IpGeo::longitude).orElse(null),
+                            geo.map(IpGeo::timezone).orElse(null),
+                            geo.map(IpGeo::isp).orElse(null),
+                            geo.map(IpGeo::asn).orElse(null),
+                            geo.map(IpGeo::accuracyRadiusKm).orElse(null),
+                            geo.map(IpGeo::confidence).orElse(null),
+                            geo.map(IpGeo::ipVersion).orElse(log.getIpAddress().contains(":") ? 6 : 4),
+                            privateIp,
+                            log.getTimestamp(),
+                            log.getTimestamp()));
+                });
+    }
+
+    /**
+     * Resolves and persists the geolocation JSON onto an existing
+     * {@link SecurityLog} so the {@code geo_location} column is populated for
+     * events that were recorded before the IP was cached. Fail-open: any
+     * resolution failure leaves the row untouched.
+     */
+    public void writeBackGeo(SecurityLog securityLog) {
+        if (securityLog == null || securityLog.getIpAddress() == null || securityLog.getIpAddress().isBlank()
+                || securityLog.getGeoLocation() != null) {
+            return;
+        }
+        Optional<IpGeo> geo = resolveGeo(securityLog.getIpAddress());
+        if (geo.isEmpty()) {
+            return;
+        }
+        try {
+            securityLog.setGeoLocation(GeoJson.toCompactJson(geo.get()));
+            securityLogRepository.save(securityLog);
+        } catch (Exception e) {
+            log.warn("Geo write-back failed for {}", securityLog.getIpAddress());
+        }
     }
 
     private ThreatMapStats buildStats(
