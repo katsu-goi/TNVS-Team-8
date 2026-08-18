@@ -19,4 +19,16 @@ public interface IpGeolocationService {
      * @return the resolved location, or {@link Optional#empty()} when unknown
      */
     Optional<IpGeo> geolocate(String ipAddress);
+
+    /**
+     * Reads a previously cached geolocation result WITHOUT performing a
+     * network lookup. Used by request-time paths (e.g. the audit interceptor)
+     * that must never block on the provider.
+     *
+     * @param ipAddress the IP to look up in the cache
+     * @return the cached location, or {@link Optional#empty()} when not cached
+     */
+    default Optional<IpGeo> peek(String ipAddress) {
+        return Optional.empty();
+    }
 }

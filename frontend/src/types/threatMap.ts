@@ -23,9 +23,18 @@ export interface ThreatTypeCount {
 export interface IpThreatEntry {
   ip: string;
   country: string | null;
+  countryCode: string | null;
+  region: string | null;
   city: string | null;
   latitude: number | null;
   longitude: number | null;
+  timezone: string | null;
+  isp: string | null;
+  asn: string | null;
+  accuracyRadiusKm: number | null;
+  confidence: number | null;
+  ipVersion: number;
+  privateIp: boolean;
   threatTypes: ThreatTypeCount[];
   primaryThreat: ThreatType;
   severity: ThreatSeverity;
@@ -51,9 +60,18 @@ export interface TrustedSessionEntry {
   role: string;
   ip: string;
   country: string | null;
+  countryCode: string | null;
+  region: string | null;
   city: string | null;
   latitude: number | null;
   longitude: number | null;
+  timezone: string | null;
+  isp: string | null;
+  asn: string | null;
+  accuracyRadiusKm: number | null;
+  confidence: number | null;
+  ipVersion: number;
+  privateIp: boolean;
   loginTime: string | null;
   lastActivity: string | null;
 }
@@ -62,10 +80,21 @@ export interface GatewayLogEntry {
   timestamp: string;
   action: string;
   ip: string;
+  username: string | null;
   severity: ThreatSeverity;
   module: string;
   status: string;
   reason: string;
+  country: string | null;
+  countryCode: string | null;
+  city: string | null;
+  privateIp: boolean;
+  latitude: number | null;
+  longitude: number | null;
+  accuracyRadiusKm: number | null;
+  confidence: number | null;
+  isp: string | null;
+  asn: string | null;
 }
 
 export interface ThreatMapResponse {
@@ -80,12 +109,37 @@ export interface ThreatMapResponse {
 // STOMP envelope broadcast on /topic/security/threats
 export interface SecurityThreatEvent {
   type: 'EVENT' | 'SYNC';
+  window: ThreatWindow;
   threat: IpThreatEntry | null;
   log: GatewayLogEntry | null;
+  trustedSession: TrustedSessionEntry | null;
   threats: IpThreatEntry[] | null;
   trustedSessions: TrustedSessionEntry[] | null;
   stats: ThreatMapStats;
   timestamp: string;
+}
+
+export interface ThreatMapDiagnostics {
+  clientIp: string;
+  ipVersion: number;
+  privateIp: boolean;
+  geoProvider: string;
+  geoResolved: boolean;
+  geolocation: {
+    country: string | null;
+    countryCode: string | null;
+    region: string | null;
+    city: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    timezone: string | null;
+    isp: string | null;
+    asn: string | null;
+    accuracyRadiusKm: number | null;
+    confidence: number | null;
+  } | null;
+  broadcastWindow: string;
+  trustedHeaderChain: string;
 }
 
 export type ThreatFilterType = 'ALL' | ThreatType;
@@ -164,4 +218,31 @@ export function emptyStats(): ThreatMapStats {
     activeSessions: 0,
     failedLoginAttempts: 0,
   };
+}
+
+/**
+ * True for loopback / RFC 1918 private / link-local / CGNAT addresses.
+ * Private IPs can never be geolocated by the public provider, so the UI
+ * renders them as LOCAL / PRIVATE sources and explains why no marker appears.
+ */
+export function isPrivateIp(ip: string | null | undefined): boolean {
+  if (!ip) return true;
+  const value = ip.trim();
+  if (value === '127.0.0.1' || value === '::1' || value === 'localhost') return true;
+  if (value.includes(':')) {
+    const lower = value.toLowerCase();
+    return lower.startsWith('0:') || lower.startsWith('::') || lower.startsWith('fc') ||
+      lower.startsWith('fd') || lower.startsWith('fe80:');
+  }
+  const parts = value.split('.');
+  if (parts.length !== 4) return true;
+  const a = parseInt(parts[0], 10);
+  const b = parseInt(parts[1], 10);
+  if (isNaN(a) || isNaN(b)) return true;
+  if (a === 127 || a === 10 || a === 0 || a === 255) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  return false;
 }

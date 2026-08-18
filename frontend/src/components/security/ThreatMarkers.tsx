@@ -126,7 +126,11 @@ function buildTrustedMarker(s: TrustedSessionEntry): L.Marker | null {
         <span class="threat-popup-badge badge-trusted">TRUSTED</span>
       </div>
       <div class="threat-popup-body">
-        <div class="threat-popup-row"><span>Location</span><span>${locationText(s.city, s.country)}</span></div>
+        <div class="threat-popup-row"><span>Location</span><span>${s.privateIp ? 'LOCAL / PRIVATE IP' : locationText(s.city, s.country)}</span></div>
+        ${s.region ? `<div class="threat-popup-row"><span>Region</span><span>${escapeHtml(s.region)}</span></div>` : ''}
+        ${s.isp ? `<div class="threat-popup-row"><span>ISP</span><span>${escapeHtml(s.isp)}</span></div>` : ''}
+        ${s.asn ? `<div class="threat-popup-row"><span>ASN</span><span>${escapeHtml(s.asn)}</span></div>` : ''}
+        ${s.accuracyRadiusKm != null ? `<div class="threat-popup-row"><span>Accuracy</span><span>± ${s.accuracyRadiusKm} km</span></div>` : ''}
         <div class="threat-popup-row"><span>Login</span><span>${formatTime(s.loginTime)}</span></div>
         <div class="threat-popup-row"><span>Last activity</span><span>${formatTime(s.lastActivity)}</span></div>
       </div>
@@ -151,6 +155,10 @@ function buildThreatPopup(t: IpThreatEntry): string {
     )
     .join('');
 
+  const geoHtml = t.latitude != null && t.longitude != null
+    ? geoDetailRows(t)
+    : `<div class="threat-popup-row"><span>Location</span><span class="threat-local">${t.privateIp ? 'LOCAL / PRIVATE IP — not geolocatable' : 'Unknown (provider could not resolve)'}</span></div>`;
+
   return `
     <div class="threat-popup-card">
       <div class="threat-popup-header" style="border-left-color:${color.fill}">
@@ -161,6 +169,7 @@ function buildThreatPopup(t: IpThreatEntry): string {
         <span class="threat-popup-badge ${t.status === 'BLOCKED' ? 'badge-blocked' : 'badge-detected'}">${t.status}</span>
       </div>
       <div class="threat-popup-body">
+        ${geoHtml}
         ${typesHtml}
         <div class="threat-popup-row"><span>Severity</span><span class="threat-severity ${severityBadge}">${t.severity}</span></div>
         <div class="threat-popup-row"><span>Events</span><span>${t.eventCount}</span></div>
@@ -170,6 +179,23 @@ function buildThreatPopup(t: IpThreatEntry): string {
       </div>
     </div>
   `;
+}
+
+function geoDetailRows(t: IpThreatEntry): string {
+  const rows: string[] = [];
+  rows.push(`<div class="threat-popup-row"><span>Location</span><span>${locationText(t.city, t.country)}</span></div>`);
+  if (t.region) rows.push(`<div class="threat-popup-row"><span>Region</span><span>${escapeHtml(t.region)}</span></div>`);
+  if (t.timezone) rows.push(`<div class="threat-popup-row"><span>Timezone</span><span>${escapeHtml(t.timezone)}</span></div>`);
+  if (t.isp) rows.push(`<div class="threat-popup-row"><span>ISP</span><span>${escapeHtml(t.isp)}</span></div>`);
+  if (t.asn) rows.push(`<div class="threat-popup-row"><span>ASN</span><span>${escapeHtml(t.asn)}</span></div>`);
+  if (t.accuracyRadiusKm != null) {
+    rows.push(`<div class="threat-popup-row"><span>Accuracy</span><span>± ${t.accuracyRadiusKm} km</span></div>`);
+  }
+  if (t.confidence != null) {
+    rows.push(`<div class="threat-popup-row"><span>Confidence</span><span>${t.confidence}%</span></div>`);
+  }
+  rows.push(`<div class="threat-popup-row"><span>Approx.</span><span>IP geolocation is approximate (ISP/network location)</span></div>`);
+  return rows.join('');
 }
 
 function locationText(city: string | null, country: string | null): string {

@@ -33,7 +33,13 @@ const GatewayLogs: React.FC<{ logs: GatewayLogEntry[]; connected: boolean }> = (
               </div>
               <p className="text-[11px] text-slate-600 font-mono break-all">
                 <span className="font-bold text-slate-800">{log.action}</span> from {log.ip}
+                {log.privateIp && <span className="ml-1 px-1 py-0.5 rounded bg-slate-200 text-slate-500 text-[9px] font-bold">LOCAL</span>}
               </p>
+              {(log.username || log.city || log.country) && (
+                <p className="text-[10px] text-slate-400 font-mono break-all">
+                  {[log.username, locationText(log.city, log.country)].filter(Boolean).join(' · ')}
+                </p>
+              )}
               <p className="text-[10px] text-slate-400 font-mono break-all">{log.reason || log.module}</p>
             </div>
           ))}
@@ -42,6 +48,13 @@ const GatewayLogs: React.FC<{ logs: GatewayLogEntry[]; connected: boolean }> = (
     </div>
   );
 };
+
+function locationText(city: string | null, country: string | null): string {
+  if (city && country) return `${city}, ${country}`;
+  if (city) return city;
+  if (country) return country;
+  return '';
+}
 
 function formatTime(value: string): string {
   try {

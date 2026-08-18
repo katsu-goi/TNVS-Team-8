@@ -3,6 +3,7 @@ package com.photonicomega.facilities.module.auth.controller;
 import com.photonicomega.facilities.common.dto.ApiResponse;
 import com.photonicomega.facilities.module.auth.dto.*;
 import com.photonicomega.facilities.module.auth.service.AuthService;
+import com.photonicomega.facilities.module.security.util.ClientIpResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
@@ -88,10 +89,6 @@ public class AuthController {
     }
 
     private String getClientIp(HttpServletRequest request) {
-        String xForwardedFor = request.getHeader("X-Forwarded-For");
-        if (xForwardedFor != null && !xForwardedFor.isEmpty()) {
-            return xForwardedFor.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
+        return ClientIpResolver.resolve(request).ip();
     }
 }

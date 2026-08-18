@@ -3,6 +3,7 @@ package com.photonicomega.facilities.ai;
 import com.photonicomega.facilities.common.dto.ApiResponse;
 import com.photonicomega.facilities.module.auth.domain.User;
 import com.photonicomega.facilities.module.auth.repository.UserRepository;
+import com.photonicomega.facilities.module.security.util.ClientIpResolver;
 import lombok.Builder;
 import org.springframework.security.access.prepost.PreAuthorize;
 import lombok.Data;
@@ -624,10 +625,6 @@ public class AiController {
     }
 
     private String clientIp(jakarta.servlet.http.HttpServletRequest req) {
-        String xff = req.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) {
-            return xff.split(",")[0].trim();
-        }
-        return req.getRemoteAddr();
+        return ClientIpResolver.resolve(req).ip();
     }
 }

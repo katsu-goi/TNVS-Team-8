@@ -11,7 +11,6 @@ import org.springframework.web.client.RestClient;
 
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
 
 /**
  * {@link IpGeolocationService} backed by the free {@code ip-api.com} HTTP API.
@@ -30,9 +29,6 @@ import java.util.regex.Pattern;
 @Slf4j
 public class IpApiGeolocationService implements IpGeolocationService {
 
-    private static final Pattern IPV4 = Pattern.compile(
-            "^\\d{1,3}(\\.\\d{1,3}){3}$");
-
     private final GeoProperties properties;
     private final RestClient restClient;
     private final Cache<String, Optional<IpGeo>> cache;
@@ -50,6 +46,14 @@ public class IpApiGeolocationService implements IpGeolocationService {
                 .maximumSize(properties.getCacheMaxSize())
                 .expireAfterWrite(properties.getCacheTtlSeconds(), TimeUnit.SECONDS)
                 .build();
+    }
+
+    @Override
+    public Optional<IpGeo> peek(String ipAddress) {
+        if (ipAddress == null || ipAddress.isBlank()) {
+            return Optional.empty();
+        }
+        return cache.getIfPresent(ipAddress.trim());
     }
 
     @Override
@@ -75,7 +79,7 @@ public class IpApiGeolocationService implements IpGeolocationService {
     private Optional<IpGeo> lookup(String ip) {
         try {
             JsonNode node = restClient.get()
-                    .uri("/{ip}?fields=status,country,city,lat,lon", ip)
+                    .uri("/{ip}?fields=status,message,country,countryCode,region,regionName,city,lat,lon,timezone,isp,org,as,query,accuracy,reverse,proxy,hosting", ip)
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
                     .body(JsonNode.class);
@@ -90,14 +94,26 @@ public class IpApiGeolocationService implements IpGeolocationService {
                 return Optional.empty();
             }
 
+            double lat = node.path("lat").asDouble();
+            double lon = node.path("lon").asDouble();
+            Double accuracy = node.hasNonNull("accuracy") ? node.path("accuracy").asDouble() : null;
+            Double confidence = node.hasNonNull("confidence") ? node.path("confidence").asDouble() : null;
+
             IpGeo geo = new IpGeo(
-                    node.path("lat").asDouble(),
-                    node.path("lon").asDouble(),
+                    lat,
+                    lon,
                     node.path("country").asText(null),
-                    node.path("city").asText(null)
-            );
-            log.debug("Geolocated {} -> {},{} ({}, {})", ip, geo.latitude(), geo.longitude(),
-                    geo.country(), geo.city());
+                    node.path("countryCode").asText(null),
+                    node.path("regionName").asText(null),
+                    node.path("city").asText(null),
+                    node.path("timezone").asText(null),
+                    node.path("isp").asText(null),
+                    node.path("as").asText(null),
+                    accuracy,
+                    confidence,
+                    ip.contains(":") ? 6 : 4);
+            log.debug("Geolocated {} -> {},{} ({}, {}) [{}]", ip, geo.latitude(), geo.longitude(),
+                    geo.country(), geo.city(), geo.isp());
             return Optional.of(geo);
         } catch (Exception ex) {
             log.warn("Geolocation lookup failed for {} (fail-open): {}", ip, ex.getMessage());
@@ -112,22 +128,6 @@ public class IpApiGeolocationService implements IpGeolocationService {
      * the provider and return empty when it cannot place them.
      */
     private boolean isPrivateOrLocal(String ip) {
-        if (!IPV4.matcher(ip).matches()) {
-            return ip.startsWith("0:") || ip.startsWith("::") || ip.startsWith("fc")
-                    || ip.startsWith("fd") || ip.startsWith("fe80:");
-        }
-        try {
-            String[] parts = ip.split("\\.");
-            int a = Integer.parseInt(parts[0]);
-            int b = Integer.parseInt(parts[1]);
-            if (a == 127 || a == 10 || a == 0 || a == 255) return true;
-            if (a == 192 && b == 168) return true;
-            if (a == 172 && b >= 16 && b <= 31) return true;
-            if (a == 169 && b == 254) return true;
-            if (a == 100 && b >= 64 && b <= 127) return true;
-            return false;
-        } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
-            return true;
-        }
+        return com.photonicomega.facilities.module.security.util.ClientIpResolver.isPrivateOrLocal(ip);
     }
 }

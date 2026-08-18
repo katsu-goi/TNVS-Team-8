@@ -5,6 +5,7 @@ import com.photonicomega.facilities.module.security.dto.IpThreatEntry;
 import com.photonicomega.facilities.module.security.dto.SecurityThreatEvent;
 import com.photonicomega.facilities.module.security.dto.ThreatMapResponse;
 import com.photonicomega.facilities.module.security.dto.ThreatWindow;
+import com.photonicomega.facilities.module.security.dto.TrustedSessionEntry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -20,16 +21,24 @@ import java.util.Optional;
  *
  * <p>Two message shapes are published:
  * <ul>
- *   <li><b>EVENT</b> (~every 5s): the most recent security log that maps to a
- *       threat, together with the affected threat vector and current stats.</li>
+ *   <li><b>EVENT</b> (~every 5s): the most recent security log, together with
+ *       the affected threat vector, an optional {@code trustedSession} for a
+ *       successful login, and current stats. Every EVENT carries the
+ *       {@code window} it was aggregated with so the client can ignore
+ *       mismatched data.</li>
  *   <li><b>SYNC</b> (~every 30s): a full snapshot of threats, trusted sessions
- *       and stats so a reconnecting client converges quickly.</li>
+ *       and stats (with its {@code window}) so a reconnecting client converges
+ *       quickly.</li>
  * </ul>
  *
  * <p>The 5s tick is cheap: it only replays {@link SecurityLog}s created since
  * the previous tick (timestamp watermark), and broadcasts nothing when there
  * is no new activity. This keeps the stream real (no fabricated events) while
  * satisfying the "EVENT ~5s / SYNC ~30s" cadence.
+ *
+ * <p>The broadcast window is fixed to {@link ThreatWindow#HOURS_24}; a client
+ * that selected a different window keeps its own REST snapshot and discards
+ * mismatched broadcast data rather than being overwritten by a 24h view.
  */
 @Service
 @RequiredArgsConstructor
@@ -37,6 +46,9 @@ import java.util.Optional;
 public class SecurityThreatBroadcastService {
 
     public static final String THREAT_TOPIC = "/topic/security/threats";
+
+    /** The window the real-time broadcast aggregates against. */
+    public static final ThreatWindow BROADCAST_WINDOW = ThreatWindow.HOURS_24;
 
     private final SimpMessagingTemplate messagingTemplate;
     private final SecurityThreatMapService mapService;
@@ -54,13 +66,25 @@ public class SecurityThreatBroadcastService {
             return;
         }
 
-        ThreatMapResponse map = mapService.buildMap(ThreatWindow.HOURS_24);
+        ThreatMapResponse map = mapService.buildMap(BROADCAST_WINDOW);
         for (SecurityLog log : fresh) {
             Optional<IpThreatEntry> threat = mapService.buildThreatForIp(log.getIpAddress(), map);
+
+            // Persist geolocation onto the row (idempotent) so logs carry geo.
+            mapService.writeBackGeo(log);
+
+            // For a successful login, attach the trusted session so the green
+            // marker appears immediately instead of waiting for the next SYNC.
+            Optional<TrustedSessionEntry> trusted = isSuccessfulLogin(log)
+                    ? mapService.buildTrustedSessionForLog(log)
+                    : Optional.empty();
+
             SecurityThreatEvent event = new SecurityThreatEvent(
                     SecurityThreatEvent.TYPE_EVENT,
+                    BROADCAST_WINDOW.getCode(),
                     threat.orElse(null),
                     mapService.toGatewayLogEntry(log),
+                    trusted.orElse(null),
                     null,
                     null,
                     map.stats(),
@@ -72,9 +96,11 @@ public class SecurityThreatBroadcastService {
 
     @Scheduled(fixedDelay = 30000, initialDelay = 30000)
     public void broadcastSync() {
-        ThreatMapResponse map = mapService.buildMap(ThreatWindow.HOURS_24);
+        ThreatMapResponse map = mapService.buildMap(BROADCAST_WINDOW);
         SecurityThreatEvent sync = new SecurityThreatEvent(
                 SecurityThreatEvent.TYPE_SYNC,
+                BROADCAST_WINDOW.getCode(),
+                null,
                 null,
                 null,
                 map.threats(),
@@ -82,5 +108,35 @@ public class SecurityThreatBroadcastService {
                 map.stats(),
                 Instant.now());
         messagingTemplate.convertAndSend(THREAT_TOPIC, sync);
+    }
+
+    /**
+     * Publishes an immediate EVENT for a caller-supplied security log (used by
+     * the admin test-event endpoint) without disturbing the watermark.
+     */
+    public void broadcastTestEvent(SecurityLog log) {
+        ThreatMapResponse map = mapService.buildMap(BROADCAST_WINDOW);
+        mapService.writeBackGeo(log);
+        Optional<IpThreatEntry> threat = mapService.buildThreatForIp(log.getIpAddress(), map);
+        SecurityThreatEvent event = new SecurityThreatEvent(
+                SecurityThreatEvent.TYPE_EVENT,
+                BROADCAST_WINDOW.getCode(),
+                threat.orElse(null),
+                mapService.toGatewayLogEntry(log),
+                null,
+                null,
+                null,
+                map.stats(),
+                Instant.now());
+        messagingTemplate.convertAndSend(THREAT_TOPIC, event);
+    }
+
+    private boolean isSuccessfulLogin(SecurityLog log) {
+        if (log == null || log.getAction() == null) {
+            return false;
+        }
+        String action = log.getAction().toUpperCase(java.util.Locale.ROOT);
+        String status = log.getStatus() == null ? "" : log.getStatus().toUpperCase(java.util.Locale.ROOT);
+        return action.contains("LOGIN") && !status.equals("FAILED");
     }
 }
