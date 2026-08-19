@@ -39,6 +39,9 @@ export function extractErrorMessage(error: unknown): string {
     const errObj = error as Record<string, any>;
     if (errObj.response?.data?.message) return errObj.response.data.message;
     if (errObj.response?.data?.error) return errObj.response.data.error;
+    if (errObj.code === 'ERR_NETWORK' || errObj.response?.status >= 500) {
+      return 'The local backend is unavailable. Run start-local.bat, wait for the server health check, then try again.';
+    }
     if (errObj.message) return errObj.message;
   }
   if (typeof error === 'string') return error;

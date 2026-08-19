@@ -13,7 +13,9 @@ public interface ActiveSessionRepository extends JpaRepository<ActiveSession, UU
 
     Optional<ActiveSession> findBySessionIdAndStatus(String sessionId, String status);
 
-    Optional<ActiveSession> findByUsernameAndStatus(String username, String status);
+    Optional<ActiveSession> findBySessionId(String sessionId);
+
+    List<ActiveSession> findByUsernameAndStatusOrderByLastActivityDesc(String username, String status);
 
     List<ActiveSession> findByStatus(String status);
 

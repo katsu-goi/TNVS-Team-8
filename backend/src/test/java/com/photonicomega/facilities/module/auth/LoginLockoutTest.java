@@ -6,6 +6,8 @@ import com.photonicomega.facilities.module.auth.domain.UserStatus;
 import com.photonicomega.facilities.module.auth.repository.HrAssistanceRequestRepository;
 import com.photonicomega.facilities.module.auth.repository.RoleRepository;
 import com.photonicomega.facilities.module.auth.repository.UserRepository;
+import com.photonicomega.facilities.module.security.domain.ActiveSession;
+import com.photonicomega.facilities.module.security.repository.ActiveSessionRepository;
 import com.photonicomega.facilities.security.JwtTokenProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -24,8 +26,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -58,6 +62,9 @@ class LoginLockoutTest {
     private HrAssistanceRequestRepository hrAssistanceRequestRepository;
 
     @Autowired
+    private ActiveSessionRepository activeSessionRepository;
+
+    @Autowired
     private JwtTokenProvider jwtTokenProvider;
 
     @Autowired
@@ -69,6 +76,7 @@ class LoginLockoutTest {
     @BeforeEach
     void seedAccount() {
         hrAssistanceRequestRepository.deleteAll();
+        activeSessionRepository.deleteAll();
         seedHelper.resetAccount(EMAIL, PASSWORD, "EMPLOYEE");
     }
 
@@ -162,6 +170,26 @@ class LoginLockoutTest {
     }
 
     @Test
+    @DisplayName("Duplicate active-session rows do not turn a valid login into a 500")
+    void duplicateActiveSessionsAreConsolidatedDuringLogin() throws Exception {
+        User user = reload();
+        activeSessionRepository.saveAll(List.of(
+                activeSession(user, "session-older", Instant.now().minusSeconds(30)),
+                activeSession(user, "session-newer", Instant.now())
+        ));
+
+        attempt(EMAIL, PASSWORD)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        List<ActiveSession> active = activeSessionRepository
+                .findByUsernameAndStatusOrderByLastActivityDesc(EMAIL, "ACTIVE");
+        assertEquals(1, active.size(), "only one active session should remain");
+        assertEquals("session-newer", active.get(0).getSessionId());
+        assertEquals(1, activeSessionRepository.findByStatus("REVOKED").size());
+    }
+
+    @Test
     @DisplayName("Unknown account returns a generic 401 without exposing account existence")
     void unknownAccountReturnsGenericError() throws Exception {
         attempt("nobody@test.local", PASSWORD)
@@ -217,6 +245,22 @@ class LoginLockoutTest {
 
     private User reload() {
         return userRepository.findByEmailAndDeletedFalse(EMAIL).orElseThrow();
+    }
+
+    private ActiveSession activeSession(User user, String sessionId, Instant lastActivity) {
+        return ActiveSession.builder()
+                .sessionId(sessionId)
+                .userId(user.getId().toString())
+                .username(user.getEmail())
+                .fullName(user.getFullName())
+                .role("EMPLOYEE")
+                .ipAddress("127.0.0.1")
+                .browser("Test")
+                .deviceName("Test")
+                .loginTime(lastActivity)
+                .lastActivity(lastActivity)
+                .status("ACTIVE")
+                .build();
     }
 
     /** Simulates the progressive countdown reaching zero so the next attempt can run. */

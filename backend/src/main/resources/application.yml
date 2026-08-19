@@ -282,3 +282,26 @@ spring:
       ddl-auto: update
   flyway:
     enabled: false
+
+---
+spring:
+  config:
+    activate:
+      on-profile: dev
+  datasource:
+    url: ${DEV_DB_URL:jdbc:h2:file:./data/facilities-dev;MODE=PostgreSQL;DB_CLOSE_ON_EXIT=FALSE}
+    username: ${DEV_DB_USERNAME:sa}
+    password: ${DEV_DB_PASSWORD:}
+    driver-class-name: org.h2.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+  flyway:
+    enabled: false
+app:
+  security:
+    bcrypt-strength: 4

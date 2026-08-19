@@ -9,13 +9,13 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -42,7 +42,7 @@ public class UserActivityService {
         private long timestamp;
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ActiveSession registerSession(User user, String ip, String userAgent) {
         ActiveSession session = upsert(user, ip, userAgent);
         emitEvent(UserActivityEvent.builder()
@@ -123,23 +123,34 @@ public class UserActivityService {
 
     private ActiveSession upsert(User user, String ip, String userAgent) {
         String[] agent = parseUserAgent(userAgent);
-        ActiveSession session = activeSessionRepository
-                .findByUsernameAndStatus(user.getEmail(), "ACTIVE")
-                .orElseGet(() -> ActiveSession.builder()
-                        .sessionId(UUID.randomUUID().toString())
-                        .userId(user.getId().toString())
-                        .username(user.getEmail())
-                        .fullName(user.getFullName())
-                        .role(firstRole(user))
-                        .ipAddress(ip != null ? ip : "unknown")
-                        .browser(agent[0])
-                        .deviceName(agent[1])
-                        .loginTime(Instant.now())
-                        .status("ACTIVE")
-                        .build());
+        List<ActiveSession> activeSessions = activeSessionRepository
+                .findByUsernameAndStatusOrderByLastActivityDesc(user.getEmail(), "ACTIVE");
+
+        ActiveSession session;
+        if (activeSessions.isEmpty()) {
+            String stableSessionId = "user-" + user.getId();
+            session = activeSessionRepository.findBySessionId(stableSessionId)
+                    .orElseGet(() -> ActiveSession.builder()
+                            .sessionId(stableSessionId)
+                            .userId(user.getId().toString())
+                            .username(user.getEmail())
+                            .build());
+            session.setLoginTime(Instant.now());
+            session.setStatus("ACTIVE");
+        } else {
+            session = activeSessions.get(0);
+            if (activeSessions.size() > 1) {
+                List<ActiveSession> duplicates = activeSessions.subList(1, activeSessions.size());
+                duplicates.forEach(duplicate -> duplicate.setStatus("REVOKED"));
+                activeSessionRepository.saveAll(duplicates);
+                log.warn("Consolidated {} duplicate active sessions for {}",
+                        duplicates.size(), user.getEmail());
+            }
+        }
         session.setFullName(user.getFullName());
         session.setRole(firstRole(user));
-        session.setIpAddress(ip != null ? ip : session.getIpAddress());
+        session.setIpAddress(ip != null ? ip
+                : session.getIpAddress() != null ? session.getIpAddress() : "unknown");
         session.setBrowser(agent[0]);
         session.setDeviceName(agent[1]);
         session.setLastActivity(Instant.now());

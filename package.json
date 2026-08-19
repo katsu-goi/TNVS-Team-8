@@ -4,7 +4,9 @@
   "version": "1.0.0",
   "scripts": {
     "build": "cd frontend && npm install && npm run build",
-    "dev": "cd frontend && npm run dev"
+    "dev": "cd frontend && npm run dev",
+    "dev:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File backend/run_backend.ps1",
+    "dev:local": "powershell -NoProfile -ExecutionPolicy Bypass -File start-local.ps1"
   },
   "dependencies": {
     "@supabase/server": "^1.4.1"

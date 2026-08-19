@@ -101,7 +101,14 @@ public class AuthService {
         auditService.log(user, "LOGIN_SUCCESS", "AUTH", null, null,
                 "User logged in successfully", ipAddress);
 
-        userActivityService.registerSession(user, ipAddress, userAgent);
+        try {
+            userActivityService.registerSession(user, ipAddress, userAgent);
+        } catch (RuntimeException ex) {
+            // Session presence is operational telemetry. It must not roll back
+            // an otherwise valid login or prevent the token response.
+            log.warn("Unable to register active session for {}; login will continue: {}",
+                    user.getEmail(), ex.getMessage());
+        }
 
         return AuthTokenResponse.builder()
                 .accessToken(accessToken)

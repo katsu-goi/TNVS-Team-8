@@ -2,6 +2,8 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
+const backendTarget = 'http://127.0.0.1:8080';
+
 export default defineConfig({
   plugins: [react()],
   define: {
@@ -16,17 +18,17 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: backendTarget,
         changeOrigin: true,
       },
       '/ws-endpoint': {
-        target: 'http://localhost:8080',
+        target: backendTarget,
         changeOrigin: true,
         ws: true,
         rewrite: (path) => '/api' + path,
       },
       '/v1': {
-        target: 'http://localhost:8080',
+        target: backendTarget,
         changeOrigin: true,
       },
     },
