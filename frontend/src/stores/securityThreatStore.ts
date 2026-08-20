@@ -1,7 +1,4 @@
 import { create } from 'zustand';
-import { Client } from '@stomp/stompjs';
-import SockJS from 'sockjs-client';
-import { useAuthStore } from './authStore';
 import { securityThreatService } from '../api/securityThreatService';
 import { supabase, supabaseAvailable } from '../lib/supabase';
 import type { RealtimeChannel } from '@supabase/supabase-js';
@@ -42,8 +39,6 @@ interface SecurityThreatState {
   loadDiagnostics: () => Promise<void>;
   triggerTestEvent: () => Promise<void>;
 }
-
-let stompClient: Client | null = null;
 
 const upsertThreat = (list: IpThreatEntry[], threat: IpThreatEntry): IpThreatEntry[] => {
   const idx = list.findIndex((t) => t.ip === threat.ip);
@@ -104,7 +99,7 @@ export const useSecurityThreatStore = create<SecurityThreatState>((set, get) => 
   },
 
   connect: () => {
-    // 1. Supabase Realtime CDC Subscriptions
+    // Supabase Realtime CDC Subscriptions
     if (supabaseAvailable && supabase && !get().supabaseChannel) {
       const channel = supabase
         .channel('public:security_monitoring')
@@ -157,62 +152,12 @@ export const useSecurityThreatStore = create<SecurityThreatState>((set, get) => 
 
       set({ supabaseChannel: channel });
     }
-
-    // 2. STOMP Client (Fallback / Legacy support)
-    if (stompClient?.active) return;
-
-    const wsBase = import.meta.env.VITE_WS_BASE_URL || '';
-    if (!wsBase) return;
-
-    try {
-      const token = useAuthStore.getState().accessToken;
-      const client = new Client({
-        webSocketFactory: () => new SockJS(`${wsBase}/ws-endpoint`),
-        connectHeaders: token ? { Authorization: `Bearer ${token}` } : {},
-        reconnectDelay: 5000,
-        heartbeatIncoming: 4000,
-        heartbeatOutgoing: 4000,
-      });
-
-      client.onConnect = () => {
-        const wasDisconnected = !get().connected;
-        set({ connected: true });
-        client.subscribe('/topic/security/threats', (message) => {
-          if (!message.body) return;
-          try {
-            const event = JSON.parse(message.body) as SecurityThreatEvent;
-            if (event.type === 'EVENT') {
-              get().applyEvent(event);
-            } else if (event.type === 'SYNC') {
-              get().applySync(event);
-            }
-          } catch {
-            /* ignore malformed frames */
-          }
-        });
-        if (wasDisconnected) {
-          void get().loadInitial();
-        }
-      };
-
-      client.onWebSocketClose = () => {};
-      client.onStompError = () => {};
-
-      client.activate();
-      stompClient = client;
-    } catch {
-      /* ignore if STOMP endpoint unavailable in serverless mode */
-    }
   },
 
   disconnect: () => {
     const { supabaseChannel } = get();
     if (supabaseChannel && supabase) {
       supabase.removeChannel(supabaseChannel);
-    }
-    if (stompClient) {
-      stompClient.deactivate();
-      stompClient = null;
     }
     set({ connected: false, supabaseChannel: null });
   },
