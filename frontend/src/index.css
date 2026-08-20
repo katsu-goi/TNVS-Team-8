@@ -100,9 +100,9 @@
   transition: transform 0.2s ease;
 }
 
-.marker-cluster-small  { background: rgba(16, 185, 129, 0.25); border: 2px solid rgba(16, 185, 129, 0.6); }
-.marker-cluster-medium { background: rgba(16, 185, 129, 0.25); border: 2px solid rgba(16, 185, 129, 0.6); }
-.marker-cluster-large  { background: rgba(16, 185, 129, 0.30); border: 2px solid rgba(16, 185, 129, 0.7); }
+.marker-cluster-small  { background: rgba(208, 47, 52, 0.25); border: 2px solid rgba(208, 47, 52, 0.6); }
+.marker-cluster-medium { background: rgba(208, 47, 52, 0.25); border: 2px solid rgba(208, 47, 52, 0.6); }
+.marker-cluster-large  { background: rgba(208, 47, 52, 0.30); border: 2px solid rgba(208, 47, 52, 0.7); }
 
 .marker-cluster div {
   width: 32px;
@@ -116,9 +116,9 @@
   color: #ffffff;
 }
 
-.marker-cluster-small  div { background: rgba(16, 185, 129, 0.85); }
-.marker-cluster-medium div { background: rgba(16, 185, 129, 0.85); }
-.marker-cluster-large  div { background: rgba(16, 185, 129, 0.90); }
+.marker-cluster-small  div { background: rgba(208, 47, 52, 0.85); }
+.marker-cluster-medium div { background: rgba(208, 47, 52, 0.85); }
+.marker-cluster-large  div { background: rgba(208, 47, 52, 0.90); }
 
 /* ── Geographic IP Threat Map: DivIcon Markers & Clusters ──────────────── */
 .threat-marker {
@@ -134,8 +134,8 @@
 }
 
 .threat-cluster {
-  background: rgba(16, 185, 129, 0.2);
-  border: 2px solid rgba(16, 185, 129, 0.55);
+  background: rgba(208, 47, 52, 0.2);
+  border: 2px solid rgba(208, 47, 52, 0.55);
   border-radius: 50%;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
@@ -145,7 +145,7 @@
   height: 32px;
   margin: 4px;
   border-radius: 50%;
-  background: rgba(16, 185, 129, 0.85);
+  background: rgba(208, 47, 52, 0.85);
   color: #ffffff;
   text-align: center;
   font-size: 12px;
@@ -306,7 +306,7 @@ section {
 }
 .glass-card:hover {
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
-  border-color: #00E676;
+  border-color: #D02F34;
 }
 
 /* Card solid variant for stat cards */
@@ -319,5 +319,5 @@ section {
 }
 .card-stat:hover {
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
-  border-color: #00E676;
+  border-color: #D02F34;
 }

@@ -12,17 +12,17 @@ export default {
       },
       colors: {
         brand: {
-          50: '#ecfdf5',
-          100: '#a7f3d0',
-          200: '#6ee7b7',
-          500: '#10B981',
-          600: '#059669',
-          700: '#047857',
-          900: '#064e3b',
-          950: '#022c22',
+          50: '#FCE8E9',   // Light Red
+          100: '#FCD7D9',
+          200: '#F8B1B4',
+          500: '#D02F34',  // Hirna Red
+          600: '#B2282C',
+          700: '#A9252A',  // Hirna Dark Red
+          900: '#7B1B1E',
+          950: '#4D1113',
         },
         surface: {
-          sidebar: '#0B0F19',
+          sidebar: '#D02F34', // Hirna Red background for Sidebar
           primary: '#0B1220',
           secondary: '#0F172A',
           tertiary: '#1e293b',
@@ -42,60 +42,67 @@ export default {
           'hover-light': '#F1F5F9',
         },
         content: {
-          primary: '#F8FAFC',
+          primary: '#1F2937', // Default text color updated as requested
           secondary: '#94A3B8',
           muted: '#64748b',
           dim: '#475569',
-          accent: '#00E676',
-          'accent-hover': '#10B981',
-          inverse: '#0B1220',
+          accent: '#D02F34', // Hirna Red as accent
+          'accent-hover': '#A9252A', // Hirna Dark Red as accent hover
+          inverse: '#FFFFFF',
           success: '#22C55E',
-          error: '#FB7185',
-          warning: '#F59E0B',
+          error: '#D02F34', // Alert Red matches Hirna Red closely
+          warning: '#FFC629', // Warning Yellow matches Hirna Yellow
         },
         border: {
-          DEFAULT: '#1E293B',
-          secondary: '#0F172A',
-          accent: '#00E676',
+          DEFAULT: '#E5E7EB', // Neutral border updated as requested
+          secondary: '#F1F5F9',
+          accent: '#D02F34', // Hirna Red border accent
           success: '#22C55E',
-          error: '#FB7185',
-          warning: '#F59E0B',
+          error: '#D02F34',
+          warning: '#FFC629',
         },
         accent: {
-          DEFAULT: '#00E676',
-          hover: '#10B981',
-          bg: 'rgba(0, 230, 118, 0.1)',
-          'bg-hover': 'rgba(0, 230, 118, 0.15)',
+          DEFAULT: '#D02F34', // Hirna Red
+          hover: '#A9252A', // Hirna Dark Red
+          bg: 'rgba(208, 47, 52, 0.1)',
+          'bg-hover': 'rgba(208, 47, 52, 0.15)',
         },
         success: {
           DEFAULT: '#22C55E',
           bg: 'rgba(34, 197, 94, 0.1)',
         },
         error: {
-          DEFAULT: '#FB7185',
-          bg: 'rgba(251, 113, 133, 0.1)',
+          DEFAULT: '#D02F34',
+          bg: 'rgba(208, 47, 52, 0.1)',
         },
         warning: {
-          DEFAULT: '#F59E0B',
-          bg: 'rgba(245, 158, 11, 0.1)',
+          DEFAULT: '#FFC629', // Hirna Yellow
+          bg: 'rgba(255, 198, 41, 0.1)',
         },
+        hirna: {
+          red: '#D02F34',
+          'dark-red': '#A9252A',
+          yellow: '#FFC629',
+          'light-red': '#FCE8E9',
+          'light-yellow': '#FFF6D8',
+        }
       },
       borderRadius: {
         'card': '1rem',
       },
       boxShadow: {
-        glass: '0 8px 32px rgba(0, 0, 0, 0.4)',
-        card: '0 2px 8px rgba(0, 0, 0, 0.18)',
-        soft: '0 1px 3px rgba(0, 0, 0, 0.2)',
-        medium: '0 4px 12px rgba(0, 0, 0, 0.25)',
-        strong: '0 8px 24px rgba(0, 0, 0, 0.3)',
-        heavy: '0 12px 40px rgba(0, 0, 0, 0.35)',
+        glass: '0 8px 32px rgba(0, 0, 0, 0.1)',
+        card: '0 2px 8px rgba(0, 0, 0, 0.05)',
+        soft: '0 1px 3px rgba(0, 0, 0, 0.05)',
+        medium: '0 4px 12px rgba(0, 0, 0, 0.08)',
+        strong: '0 8px 24px rgba(0, 0, 0, 0.12)',
+        heavy: '0 12px 40px rgba(0, 0, 0, 0.15)',
         'card-light': '0 1px 2px rgba(0, 0, 0, 0.05)',
         'card-light-hover': '0 4px 6px rgba(0, 0, 0, 0.07)',
       },
       backgroundImage: {
-        'gradient-page': 'linear-gradient(to bottom right, #0B1220, #0F172A)',
-        'gradient-accent': 'linear-gradient(135deg, #00E676, #10B981)',
+        'gradient-page': 'linear-gradient(to bottom right, #F8FAFC, #FFFFFF)',
+        'gradient-accent': 'linear-gradient(135deg, #D02F34, #A9252A)',
       },
     },
   },
