@@ -6,9 +6,10 @@ import {
   Download, Bell, Layers,
   ChevronRight, Loader2,
 } from 'lucide-react';
-import { loadAdminData, loadBackups, loadNotifications } from '../../api/adminService';
+import { supabaseMonitoringService } from '../../api/supabaseMonitoringService';
 import { kpiService } from '../../api/kpiService';
 import { securityService } from '../../api/securityService';
+import { loadBackups, loadNotifications } from '../../api/adminService';
 import { useLiveActivities } from './useLiveActivities';
 import { SubsystemHealthGrid } from './SubsystemHealthGrid';
 import type { DashboardMetrics, SecurityLog, AdminNotification, BackupRecord, SystemKpi } from '../../types';
@@ -51,13 +52,23 @@ export const SysAdminDashboard: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [m, k, l, b, n] = await Promise.all([
-        loadAdminData(),
+      const [telemetry, k, l, b, n] = await Promise.all([
+        supabaseMonitoringService.getLiveDashboardCounts(),
         kpiService.loadKpi(),
         securityService.getLogs(),
         loadBackups(),
         loadNotifications(),
       ]);
+      const m: DashboardMetrics = {
+        totalDocuments: telemetry.data.totalDocuments,
+        totalContracts: telemetry.data.totalContracts,
+        activeSessions: telemetry.data.activeSessionsCount,
+        failedLoginAttempts: telemetry.data.failedLoginAttemptsCount,
+        blockedIpsCount: telemetry.data.blockedIpsCount,
+        activeAlertsCount: telemetry.data.activeAlertsCount,
+        totalBackups: b.length,
+        totalNotifications: n.length,
+      };
       setMetrics(m);
       setKpi(k);
       setLogs(l);
