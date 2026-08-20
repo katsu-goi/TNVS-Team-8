@@ -100,10 +100,31 @@ const SYSTEM_FALLBACK_USERS: Record<string, { user: User; roles: string[] }> = {
   },
 };
 
+import { supabase } from '../lib/supabase';
+
 export async function login(req: LoginRequest): Promise<AuthTokenResponse> {
   try {
     const { data } = await apiClient.post('/auth/login', req);
     if (data?.data) {
+      if (supabase) {
+        supabase.from('security_audit_logs').insert([{
+          user_name: data.data.user?.fullName || req.email,
+          module: 'AUTHENTICATION',
+          action: 'LOGIN_SUCCESS',
+          risk_level: 'LOW',
+          ip_address: '127.0.0.1',
+          details: `User ${req.email} logged in successfully`,
+        }]).then(() => {});
+        supabase.from('active_sessions').insert([{
+          user_id: data.data.user?.id,
+          user_name: data.data.user?.fullName,
+          user_email: req.email,
+          user_role: data.data.user?.roles?.[0] || 'USER',
+          ip_address: '127.0.0.1',
+          device_info: navigator.userAgent || 'Web Browser',
+          last_active_at: new Date().toISOString(),
+        }]).then(() => {});
+      }
       return data.data;
     }
   } catch (error) {
@@ -112,6 +133,25 @@ export async function login(req: LoginRequest): Promise<AuthTokenResponse> {
     if (fallback) {
       const accessToken = buildFallbackToken(emailLower, fallback.roles);
       const refreshToken = buildFallbackToken(emailLower, fallback.roles);
+      if (supabase) {
+        supabase.from('security_audit_logs').insert([{
+          user_name: fallback.user.fullName,
+          module: 'AUTHENTICATION',
+          action: 'LOGIN_SUCCESS',
+          risk_level: 'LOW',
+          ip_address: '127.0.0.1',
+          details: `User ${fallback.user.fullName} logged in via admin session`,
+        }]).then(() => {});
+        supabase.from('active_sessions').insert([{
+          user_id: fallback.user.id,
+          user_name: fallback.user.fullName,
+          user_email: fallback.user.email,
+          user_role: fallback.roles[0],
+          ip_address: '127.0.0.1',
+          device_info: navigator.userAgent || 'Web Browser',
+          last_active_at: new Date().toISOString(),
+        }]).then(() => {});
+      }
       return {
         accessToken,
         refreshToken,
