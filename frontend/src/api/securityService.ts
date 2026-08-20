@@ -1,47 +1,51 @@
 import { apiClient } from './client';
+import { supabaseMonitoringService } from './supabaseMonitoringService';
+import { supabase } from '../lib/supabase';
 import type {
   SecurityMetrics, SecurityLog, BlockedIp, ActiveSession, SecurityAlert,
 } from '../types';
 
 export const securityService = {
   async getMetrics(): Promise<SecurityMetrics> {
-    const empty: SecurityMetrics = {
-      activeSessions: 0,
-      blockedIpsCount: 0,
-      activeAlertsCount: 0,
-      failedLoginAttempts: 0,
+    const telemetry = await supabaseMonitoringService.getLiveDashboardCounts();
+    const d = telemetry.data;
+    return {
+      activeSessions: d.activeSessionsCount,
+      blockedIpsCount: d.blockedIpsCount,
+      activeAlertsCount: d.activeAlertsCount,
+      failedLoginAttempts: d.failedLoginAttemptsCount,
       ddosBlockedRequests: 0,
-      suspiciousActivitiesCount: 0,
+      suspiciousActivitiesCount: d.activeAlertsCount,
     };
-    try {
-      const { data } = await apiClient.get('/security/admin/metrics');
-      const m = data ?? {};
-      return {
-        activeSessions: m.activeSessions ?? 0,
-        blockedIpsCount: m.blockedIpsCount ?? 0,
-        activeAlertsCount: m.activeAlertsCount ?? 0,
-        failedLoginAttempts: m.failedLoginAttempts ?? 0,
-        ddosBlockedRequests: m.ddosBlockedRequests ?? 0,
-        suspiciousActivitiesCount: m.suspiciousActivitiesCount ?? 0,
-      };
-    } catch {
-      return empty;
-    }
   },
 
-  async getLogs(params?: Record<string, string>): Promise<SecurityLog[]> {
-    try {
-      const { data } = await apiClient.get('/security/admin/logs', { params });
-      return data?.content ?? data ?? [];
-    } catch {
-      return [];
-    }
+  async getLogs(_params?: Record<string, string>): Promise<SecurityLog[]> {
+    return supabaseMonitoringService.getRecentSecurityLogs(20);
   },
 
   async getActiveSessions(): Promise<ActiveSession[]> {
+    if (!supabase) return [];
     try {
-      const { data } = await apiClient.get('/security/admin/sessions');
-      return data ?? [];
+      const { data, error } = await supabase
+        .from('active_sessions')
+        .select('*')
+        .order('login_time', { ascending: false });
+
+      if (error || !data) return [];
+
+      return data.map(s => ({
+        id: s.id?.toString() || s.session_id || s.user_id,
+        sessionId: s.session_id,
+        userId: s.user_id,
+        username: s.username,
+        fullName: s.full_name || s.username,
+        role: s.role || 'EMPLOYEE',
+        ipAddress: s.ip_address || '127.0.0.1',
+        deviceName: s.device_name || 'Web Browser',
+        loginTime: s.login_time || new Date().toISOString(),
+        lastActivity: s.last_activity || new Date().toISOString(),
+        status: s.revoked_at ? 'REVOKED' : 'ACTIVE',
+      }));
     } catch {
       return [];
     }

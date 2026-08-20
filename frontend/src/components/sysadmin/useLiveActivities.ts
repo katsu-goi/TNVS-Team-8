@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
 import { securityService } from '../../api/securityService';
 import type { ActiveSession } from '../../types';
@@ -21,33 +21,6 @@ export interface LiveActivity {
   isNew: boolean;
 }
 
-interface ActivityRow {
-  id: number;
-  event_type: string;
-  user_id?: string | null;
-  username: string;
-  full_name?: string | null;
-  email?: string | null;
-  role?: string | null;
-  action?: string | null;
-  ip?: string | null;
-  device?: string | null;
-  browser?: string | null;
-  created_at: string;
-}
-
-interface OnlineUserRow {
-  id: number;
-  username: string;
-  user_id?: string | null;
-  full_name?: string | null;
-  role?: string | null;
-  ip?: string | null;
-  device?: string | null;
-  browser?: string | null;
-  last_activity: string;
-}
-
 function initialsOf(name: string): string {
   return (
     name
@@ -57,25 +30,6 @@ function initialsOf(name: string): string {
       .map(part => part.charAt(0).toUpperCase())
       .join('') || '?'
   );
-}
-
-function rowToActivity(row: ActivityRow): LiveActivity {
-  const name = row.full_name || row.email || row.username || 'Unknown User';
-  const offline = row.event_type === 'USER_OFFLINE';
-  return {
-    id: `${row.event_type}-${row.username}-${row.id}`,
-    user: {
-      name,
-      email: row.email || row.username,
-      initials: initialsOf(name),
-      role: row.role || 'EMPLOYEE',
-    },
-    action: row.action || (offline ? 'Signed out' : 'Signed in'),
-    timestamp: new Date(row.created_at || Date.now()),
-    ip: row.ip || '',
-    device: row.device || '',
-    isNew: true,
-  };
 }
 
 export function useLiveActivities() {
@@ -145,14 +99,25 @@ export function useLiveActivities() {
     if (!supabase) return;
     try {
       const { data, error } = await supabase
-        .from('user_activity_events')
+        .from('security_audit_logs')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(20);
       if (error || !data || disposed()) return;
-      const recent = (data as ActivityRow[])
-        .filter(r => r.event_type === 'USER_ONLINE' || r.event_type === 'USER_OFFLINE')
-        .map(rowToActivity);
+      const recent = (data as any[]).map(row => ({
+        id: `audit-${row.id}`,
+        user: {
+          name: row.user_name || row.username || 'System User',
+          email: row.username || '',
+          initials: initialsOf(row.user_name || row.username || 'SU'),
+          role: row.role || 'EMPLOYEE',
+        },
+        action: row.action || 'SECURITY_EVENT',
+        timestamp: new Date(row.created_at || Date.now()),
+        ip: row.ip_address || '',
+        device: row.module || '',
+        isNew: false,
+      }));
       if (recent.length) {
         setActivities(prev => {
           const kept = prev.filter(a => a.id.startsWith('seed-'));
@@ -175,23 +140,34 @@ export function useLiveActivities() {
     if (supabase) {
       channel = supabase
         .channel('live-user-activity')
-        .on<ActivityRow>(
+        .on(
           'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'user_activity_events' },
-          (payload: RealtimePostgresChangesPayload<ActivityRow>) => {
+          { event: 'INSERT', schema: 'public', table: 'security_audit_logs' },
+          (payload: any) => {
             if (!payload.new) return;
-            const row = payload.new as ActivityRow;
-            if (row.event_type === 'USER_ONLINE' || row.event_type === 'USER_OFFLINE') {
-              pushActivity(rowToActivity(row));
-            }
+            const row = payload.new;
+            pushActivity({
+              id: `audit-${row.id}`,
+              user: {
+                name: row.user_name || row.username || 'System User',
+                email: row.username || '',
+                initials: initialsOf(row.user_name || row.username || 'SU'),
+                role: row.role || 'EMPLOYEE',
+              },
+              action: row.action || 'SECURITY_EVENT',
+              timestamp: new Date(row.created_at || Date.now()),
+              ip: row.ip_address || '',
+              device: row.module || '',
+              isNew: true,
+            });
           }
         )
-        .on<OnlineUserRow>(
+        .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'online_users' },
-          (payload: RealtimePostgresChangesPayload<OnlineUserRow>) => {
+          { event: '*', schema: 'public', table: 'active_sessions' },
+          (payload: any) => {
             if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-              if (payload.new?.username) updateOnline(set => set.add(payload.new!.username));
+              if (payload.new?.username) updateOnline(set => set.add(payload.new.username));
             } else if (payload.eventType === 'DELETE') {
               const removed = payload.old?.username;
               if (removed) updateOnline(set => set.delete(removed));
