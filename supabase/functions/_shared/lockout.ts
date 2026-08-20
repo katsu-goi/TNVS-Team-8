@@ -1,5 +1,6 @@
 import { adminDb } from "./db.ts";
-import { AuthUser, naiveIso } from "./auth-users.ts";
+import { AuthUser, naiveIso, tzIso } from "./auth-users.ts";
+import { parseUserAgent } from "./sessions.ts";
 
 const MAX_ATTEMPTS = 3;
 const LOCK_DURATIONS_SECONDS = [10, 30];
@@ -170,5 +171,42 @@ export async function writeSecurityAlert(
     });
   } catch (e) {
     console.error("security_alert insert threw:", (e as Error).message);
+  }
+}
+
+/**
+ * Writes one row into security_logs (the "gateway log" feed). Mirrors
+ * Spring's SecurityLogService so login/logout activity streams to the
+ * Real-time Gateway Logs widget and the SysAdmin Recent Security Events.
+ */
+export async function writeSecurityLog(
+  user: AuthUser | null,
+  action: string,
+  status: "SUCCESS" | "FAILED",
+  riskLevel: string,
+  ipAddress: string | null,
+  userAgent: string | null,
+  reason: string,
+): Promise<void> {
+  try {
+    const db = adminDb();
+    const agent = parseUserAgent(userAgent);
+    await db.from("security_logs").insert({
+      action,
+      module: "AUTH",
+      full_name: user ? `${user.row.first_name} ${user.row.last_name}` : null,
+      role: user?.roles[0] ?? null,
+      username: user?.row.email ?? null,
+      user_id: user?.row.id ?? null,
+      ip_address: ipAddress ?? null,
+      browser: agent.browser,
+      device_name: agent.device,
+      risk_level: riskLevel,
+      status,
+      reason,
+      timestamp: tzIso(),
+    });
+  } catch (e) {
+    console.error("security_logs insert threw:", (e as Error).message);
   }
 }

@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { apiClient } from './client';
 import type { SecurityLog } from '../types';
 
 export type TelemetryStatus = 'LIVE' | 'EMPTY' | 'DISCONNECTED' | 'INITIALIZING';
@@ -37,71 +38,27 @@ export interface SubsystemConnectivityStatus {
 
 export const supabaseMonitoringService = {
   /**
-   * Fetch live counts directly from Supabase PostgreSQL tables.
+   * Fetch live counts from the edge-function KPI endpoint (service role
+   * under the hood — no anon table access needed).
    */
   async getLiveDashboardCounts(): Promise<TelemetryMetric<LiveDashboardCounts>> {
-    if (!supabase) {
-      return {
-        data: {
-          totalUsers: 0,
-          totalDocuments: 0,
-          totalContracts: 0,
-          totalFacilities: 0,
-          totalReservations: 0,
-          totalVisitors: 0,
-          totalLegalCases: 0,
-          activeSessionsCount: 0,
-          failedLoginAttemptsCount: 0,
-          blockedIpsCount: 0,
-          activeAlertsCount: 0,
-          unreadNotificationsCount: 0,
-        },
-        status: 'DISCONNECTED',
-        error: 'Supabase client is not initialized',
-        lastUpdated: new Date().toISOString(),
-      };
-    }
-
     try {
-      const [
-        usersRes,
-        docsRes,
-        contractsRes,
-        facilitiesRes,
-        reservationsRes,
-        visitorsRes,
-        legalRes,
-        sessionsRes,
-        alertsRes,
-        logsRes,
-        notifsRes,
-      ] = await Promise.all([
-        supabase.from('users').select('*', { count: 'exact', head: true }),
-        supabase.from('documents').select('*', { count: 'exact', head: true }),
-        supabase.from('documents').select('*', { count: 'exact', head: true }).eq('category', 'CONTRACT'),
-        supabase.from('facilities').select('*', { count: 'exact', head: true }),
-        supabase.from('facility_reservations').select('*', { count: 'exact', head: true }),
-        supabase.from('visitor_logs').select('*', { count: 'exact', head: true }),
-        supabase.from('legal_cases').select('*', { count: 'exact', head: true }),
-        supabase.from('active_sessions').select('*', { count: 'exact', head: true }),
-        supabase.from('security_alerts').select('*', { count: 'exact', head: true }).eq('resolved', false),
-        supabase.from('security_audit_logs').select('*', { count: 'exact', head: true }).eq('action', 'LOGIN_FAILED'),
-        supabase.from('employee_notifications').select('*', { count: 'exact', head: true }).eq('read', false),
-      ]);
+      const { data } = await apiClient.get('/admin/kpi');
+      const k = (data?.data ?? data ?? {}) as Record<string, any>;
 
       const counts: LiveDashboardCounts = {
-        totalUsers: usersRes.count ?? 0,
-        totalDocuments: docsRes.count ?? 0,
-        totalContracts: contractsRes.count ?? 0,
-        totalFacilities: facilitiesRes.count ?? 0,
-        totalReservations: reservationsRes.count ?? 0,
-        totalVisitors: visitorsRes.count ?? 0,
-        totalLegalCases: legalRes.count ?? 0,
-        activeSessionsCount: sessionsRes.count ?? 0,
-        failedLoginAttemptsCount: logsRes.count ?? 0,
-        blockedIpsCount: 0,
-        activeAlertsCount: alertsRes.count ?? 0,
-        unreadNotificationsCount: notifsRes.count ?? 0,
+        totalUsers: k.global?.activeUsers ?? 0,
+        totalDocuments: k.documents?.totalDocuments ?? 0,
+        totalContracts: k.contracts?.totalContracts ?? 0,
+        totalFacilities: k.facilities?.totalFacilities ?? 0,
+        totalReservations: k.facilities?.bookingsToday ?? 0,
+        totalVisitors: k.visitors?.totalVisitors ?? 0,
+        totalLegalCases: k.legal?.totalCases ?? 0,
+        activeSessionsCount: k.global?.activeSessions ?? 0,
+        failedLoginAttemptsCount: k.global?.failedLoginAttempts ?? 0,
+        blockedIpsCount: k.global?.blockedIps ?? 0,
+        activeAlertsCount: k.global?.activeAlerts ?? 0,
+        unreadNotificationsCount: k.global?.unreadNotifications ?? 0,
       };
 
       const hasAnyData = Object.values(counts).some(v => v > 0);
@@ -136,28 +93,30 @@ export const supabaseMonitoringService = {
   },
 
   /**
-   * Fetch recent security audit logs from Supabase.
+   * Fetch recent security logs from the security_logs table (anon SELECT is
+   * permitted via the realtime RLS policies so the browser can read them).
    */
   async getRecentSecurityLogs(limit = 10): Promise<SecurityLog[]> {
     if (!supabase) return [];
     try {
       const { data, error } = await supabase
-        .from('security_audit_logs')
+        .from('security_logs')
         .select('*')
-        .order('created_at', { ascending: false })
+        .order('timestamp', { ascending: false })
         .limit(limit);
 
       if (error || !data) return [];
 
       return data.map(row => ({
         id: row.id?.toString() || Math.random().toString(),
-        timestamp: row.created_at || new Date().toISOString(),
-        fullName: row.user_name || row.username || 'System User',
+        timestamp: row.timestamp || row.created_at || new Date().toISOString(),
+        username: row.username ?? undefined,
+        fullName: row.full_name || row.username || 'System User',
+        role: row.role ?? undefined,
         module: row.module || 'SECURITY',
         action: row.action || 'SECURITY_EVENT',
-        riskLevel: (row.risk_level as any) || (row.severity as any) || 'LOW',
-        ipAddress: row.ip_address || row.ip || '127.0.0.1',
-        details: row.details || '',
+        riskLevel: row.risk_level || 'LOW',
+        ipAddress: row.ip_address || '127.0.0.1',
         status: row.status || 'SUCCESS',
       }));
     } catch {
@@ -166,76 +125,27 @@ export const supabaseMonitoringService = {
   },
 
   /**
-   * Test connectivity and latency across all 6 core subsystem tables in Supabase.
+   * Test connectivity and latency across all core subsystems using the
+   * monitoring edge function's health snapshot.
    */
   async checkSubsystemConnectivity(): Promise<SubsystemConnectivityStatus[]> {
-    const subsystems = [
-      { key: 'facilities', name: 'Facilities & Asset Management', table: 'facilities' },
-      { key: 'visitors', name: 'Visitor & Access Control System', table: 'visitor_logs' },
-      { key: 'documents', name: 'Document Vault & Repository', table: 'documents' },
-      { key: 'records', name: 'Records Management & Retention', table: 'records' },
-      { key: 'legal', name: 'Legal & Compliance Management', table: 'legal_cases' },
-      { key: 'contracts', name: 'Contract Lifecycle Management', table: 'documents' },
-    ];
-
-    if (!supabase) {
-      return subsystems.map(s => ({
+    try {
+      const { data } = await apiClient.get('/monitoring/admin/system-monitoring/subsystems');
+      const snapshot = (data?.data ?? data) as Record<string, any> | null;
+      const subs: any[] = Array.isArray(snapshot?.subsystems) ? snapshot.subsystems : [];
+      return subs.map(s => ({
         key: s.key,
         name: s.name,
-        status: 'OFFLINE',
-        latencyMs: 0,
-        recordCount: 0,
-        lastChecked: new Date().toISOString(),
-        detail: 'Supabase client uninitialized',
+        status: (s.status === 'HEALTHY' ? 'HEALTHY' : s.status === 'WARNING' ? 'WARNING' : 'OFFLINE') as 'HEALTHY' | 'WARNING' | 'OFFLINE',
+        latencyMs: s.latencyAvgMs ?? 0,
+        recordCount: s.errorCount ?? 0,
+        lastChecked: s.lastSync || new Date().toISOString(),
+        detail: Array.isArray(s.checks) && s.checks.length
+          ? s.checks.map((c: any) => `${c.name}: ${c.status}`).join(', ')
+          : `Status: ${s.status}`,
       }));
+    } catch {
+      return [];
     }
-
-    const results = await Promise.all(
-      subsystems.map(async sub => {
-        const start = performance.now();
-        try {
-          if (!supabase) throw new Error('Supabase client uninitialized');
-          const { count, error } = await supabase
-            .from(sub.table)
-            .select('*', { count: 'exact', head: true });
-          const latency = Math.round(performance.now() - start);
-
-          if (error) {
-            return {
-              key: sub.key,
-              name: sub.name,
-              status: error.code === '42P01' || error.message.includes('404') ? ('HEALTHY' as const) : ('WARNING' as const),
-              latencyMs: latency,
-              recordCount: 0,
-              lastChecked: new Date().toISOString(),
-              detail: `Connected · 0 records indexed · ${latency}ms latency`,
-            };
-          }
-
-          return {
-            key: sub.key,
-            name: sub.name,
-            status: 'HEALTHY' as const,
-            latencyMs: latency,
-            recordCount: count ?? 0,
-            lastChecked: new Date().toISOString(),
-            detail: `Connected · ${count ?? 0} records indexed · ${latency}ms latency`,
-          };
-        } catch (err: any) {
-          const latency = Math.round(performance.now() - start);
-          return {
-            key: sub.key,
-            name: sub.name,
-            status: 'HEALTHY' as const,
-            latencyMs: latency,
-            recordCount: 0,
-            lastChecked: new Date().toISOString(),
-            detail: `Connected · 0 records indexed · ${latency}ms latency`,
-          };
-        }
-      })
-    );
-
-    return results;
   },
 };

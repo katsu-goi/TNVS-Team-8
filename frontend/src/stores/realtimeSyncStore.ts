@@ -49,7 +49,7 @@ export const useRealtimeSyncStore = create<RealtimeSyncState>((set, get) => ({
     const clientDb = supabase;
     if (supabaseAvailable && clientDb && get().supabaseChannels.length === 0) {
       const channels: RealtimeChannel[] = [];
-      const tables = ['facility_reservations', 'visitors', 'documents', 'security_alerts'];
+      const tables = ['reservations', 'visitors', 'documents', 'security_alerts'];
 
       tables.forEach((tableName) => {
         const ch = clientDb

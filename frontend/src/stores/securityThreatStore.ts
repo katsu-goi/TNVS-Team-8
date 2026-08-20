@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 import { securityThreatService } from '../api/securityThreatService';
+import { securityService } from '../api/securityService';
 import { supabase, supabaseAvailable } from '../lib/supabase';
 import type { RealtimeChannel } from '@supabase/supabase-js';
+import type { SecurityLog } from '../types';
 import type {
   GatewayLogEntry,
   IpThreatEntry,
@@ -56,6 +58,54 @@ const upsertSession = (list: TrustedSessionEntry[], session: TrustedSessionEntry
   return updated;
 };
 
+function toGatewayLog(row: Record<string, any>): GatewayLogEntry {
+  const ipVal = String(row.ip_address ?? row.ip ?? '0.0.0.0');
+  return {
+    timestamp: String(row.timestamp ?? row.created_at ?? new Date().toISOString()),
+    action: String(row.action ?? 'AUDIT'),
+    ip: ipVal,
+    username: row.username ?? row.full_name ?? null,
+    severity: (row.risk_level as ThreatSeverity) ?? 'LOW',
+    module: String(row.module ?? 'SECURITY'),
+    status: String(row.status ?? 'SUCCESS'),
+    reason: String(row.reason ?? 'Security log entry'),
+    country: null,
+    countryCode: null,
+    city: null,
+    privateIp: isPrivateIp(ipVal),
+    latitude: null,
+    longitude: null,
+    accuracyRadiusKm: null,
+    confidence: null,
+    isp: null,
+    asn: null,
+  };
+}
+
+function securityLogToGatewayLog(log: SecurityLog): GatewayLogEntry {
+  const ipVal = log.ipAddress || '0.0.0.0';
+  return {
+    timestamp: log.timestamp,
+    action: log.action || 'AUDIT',
+    ip: ipVal,
+    username: log.username ?? log.fullName ?? null,
+    severity: ((log.riskLevel || 'LOW') as ThreatSeverity),
+    module: log.module || 'SECURITY',
+    status: log.status || 'SUCCESS',
+    reason: 'Security log entry',
+    country: null,
+    countryCode: null,
+    city: null,
+    privateIp: isPrivateIp(ipVal),
+    latitude: null,
+    longitude: null,
+    accuracyRadiusKm: null,
+    confidence: null,
+    isp: null,
+    asn: null,
+  };
+}
+
 export const useSecurityThreatStore = create<SecurityThreatState>((set, get) => ({
   window: '24h',
   threats: [],
@@ -88,13 +138,17 @@ export const useSecurityThreatStore = create<SecurityThreatState>((set, get) => 
           threats: map.threats ?? [],
           trustedSessions: map.trustedSessions ?? [],
           stats: map.stats ?? emptyStats(),
-          gatewayLogs: map.recentLogs ?? [],
         });
       }
     } catch {
       set({ error: 'Failed to load threat map data.' });
     } finally {
       set({ loading: false });
+    }
+    // Seed the Real-time Gateway Logs feed from the security logs endpoint.
+    const logs = await securityService.getLogs();
+    if (logs.length) {
+      set({ gatewayLogs: logs.slice(0, 50).map(securityLogToGatewayLog) });
     }
   },
 
@@ -112,30 +166,10 @@ export const useSecurityThreatStore = create<SecurityThreatState>((set, get) => 
         )
         .on(
           'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'security_audit_logs' },
+          { event: 'INSERT', schema: 'public', table: 'security_logs' },
           (payload) => {
-            const row = payload.new as Record<string, unknown>;
-            const ipVal = String(row.ip_address ?? row.ip ?? '0.0.0.0');
-            const newLog: GatewayLogEntry = {
-              timestamp: String(row.created_at ?? new Date().toISOString()),
-              action: String(row.action ?? 'AUDIT'),
-              ip: ipVal,
-              username: row.created_by ? String(row.created_by) : null,
-              severity: (row.severity ? String(row.severity) : 'INFO') as ThreatSeverity,
-              module: String(row.subsystem ?? 'SECURITY'),
-              status: row.entity_type ? String(row.entity_type) : 'AUDIT',
-              reason: row.details ? String(row.details) : 'Security log entry',
-              country: null,
-              countryCode: null,
-              city: null,
-              privateIp: isPrivateIp(ipVal),
-              latitude: null,
-              longitude: null,
-              accuracyRadiusKm: null,
-              confidence: null,
-              isp: null,
-              asn: null,
-            };
+            if (!payload.new) return;
+            const newLog = toGatewayLog(payload.new as Record<string, any>);
 
             set((state) => ({
               gatewayLogs: [newLog, ...state.gatewayLogs].slice(0, 50),

@@ -15,6 +15,7 @@ import {
   recordFailedAttempt,
   writeAudit,
   writeLoginHistory,
+  writeSecurityLog,
   LockoutInfo,
 } from "../_shared/lockout.ts";
 import {
@@ -113,6 +114,8 @@ async function handleLogin(_ctx: AuthContext | null, req: Request, body: unknown
     if (user) {
       const info = await recordFailedAttempt(user, ctx.ip, ctx.userAgent ?? "");
       await writeLoginHistory(user.row.email, user.row.id, ctx.ip, "FAILED", "INVALID_CREDENTIALS", ctx.userAgent ?? "");
+      await writeSecurityLog(user, "LOGIN_FAILED", "FAILED", "MEDIUM", ctx.ip, ctx.userAgent,
+        `Failed login attempt ${info.failedAttempts}/3`);
       if (info.permanentlyLocked) {
         return lockoutResponse(
           info,
@@ -156,6 +159,8 @@ async function handleLogin(_ctx: AuthContext | null, req: Request, body: unknown
   await writeAudit(user, "LOGIN_SUCCESS", "AUTH", "User", user.row.id,
     "User logged in successfully", ctx.ip);
   await writeLoginHistory(user.row.email, user.row.id, ctx.ip, "SUCCESS", "", ctx.userAgent ?? "");
+  await writeSecurityLog(user, "LOGIN_SUCCESS", "SUCCESS", "LOW", ctx.ip, ctx.userAgent,
+    "User logged in successfully");
 
   const agent = parseUserAgent(ctx.userAgent);
   await upsertActiveSession(user, ctx.ip, ctx.userAgent);
@@ -218,6 +223,7 @@ async function handleLogout(ctx: AuthContext | null, _req: Request, _body: unkno
     });
     await removeOnlineUser(ctx.email);
     await writeAudit(ctx.user, "LOGOUT", "AUTH", "User", ctx.userId, "User logged out", null);
+    await writeSecurityLog(ctx.user, "LOGOUT", "SUCCESS", "LOW", null, null, "User logged out");
   }
   return jsonResponse(ok("Logged out successfully"), 200);
 }

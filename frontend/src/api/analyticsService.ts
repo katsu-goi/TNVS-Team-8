@@ -6,7 +6,7 @@ export async function fetchAnalytics(from?: Date, to?: Date): Promise<AnalyticsD
     const params: Record<string, string> = {};
     if (from) params.from = from.toISOString();
     if (to) params.to = to.toISOString();
-    const { data } = await apiClient.get('/admin/analytics', { params });
+    const { data } = await apiClient.get('/analytics/admin/analytics', { params });
     return data?.data ?? data;
   } catch (err) {
     console.warn('Analytics API unavailable, returning empty analytics structure:', err);
