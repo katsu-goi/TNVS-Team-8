@@ -3,14 +3,12 @@ import axios, { AxiosError } from 'axios';
 const DEFAULT_SUPABASE_PROJECT_URL = 'https://dunijfrvfozwlykpkfhy.supabase.co';
 
 export const getApiBaseUrl = (): string => {
-  if (import.meta.env.VITE_API_BASE_URL) {
-    return import.meta.env.VITE_API_BASE_URL;
+  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  if (envUrl && !envUrl.includes('trycloudflare.com')) {
+    return envUrl;
   }
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_PROJECT_URL;
-  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-    return `${supabaseUrl}/functions/v1`;
-  }
-  return '/api/v1';
+  return `${supabaseUrl}/functions/v1`;
 };
 
 const API_BASE_URL = getApiBaseUrl();
