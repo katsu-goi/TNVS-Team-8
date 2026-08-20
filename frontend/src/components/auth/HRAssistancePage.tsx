@@ -78,7 +78,7 @@ export const HRAssistancePage: React.FC = () => {
 
   return (
     <div className="relative min-h-screen w-full overflow-hidden bg-black">
-      <div className="absolute inset-0 bg-cover bg-center bg-no-repeat bg-fixed" style={{ backgroundImage: `url('/hirna-vehicle4.png')` }} />
+      <div className="absolute inset-0 bg-cover bg-top bg-no-repeat bg-fixed" style={{ backgroundImage: `url('/hirna-vehicle4.png')` }} />
       <div className="absolute inset-0 bg-black/30" />
       <div className="relative z-10 flex items-center justify-center min-h-screen px-4 py-8">
         <div className="w-full max-h-[92vh] overflow-y-auto scrollbar-none" style={{ maxWidth: '445px' }}>
