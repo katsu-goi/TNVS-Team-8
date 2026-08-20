@@ -1,0 +1,1451 @@
+[
+  {
+    "controller": "AiController",
+    "method": "GET/POST",
+    "path": "/v1/ai/v1/ai",
+    "handler": "setDefaultProvider",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\ai\\AiController.java"
+  },
+  {
+    "controller": "AiController",
+    "method": "DELETE",
+    "path": "/v1/ai/providers/{id}",
+    "handler": "deleteProvider",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\ai\\AiController.java"
+  },
+  {
+    "controller": "AiController",
+    "method": "GET",
+    "path": "/v1/ai/modules",
+    "handler": "updateModuleConfig",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\ai\\AiController.java"
+  },
+  {
+    "controller": "AiController",
+    "method": "GET",
+    "path": "/v1/ai/modules/{id}/models",
+    "handler": "getSystemPrompt",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\ai\\AiController.java"
+  },
+  {
+    "controller": "AiController",
+    "method": "PUT",
+    "path": "/v1/ai/prompt",
+    "handler": "updateSystemPrompt",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\ai\\AiController.java"
+  },
+  {
+    "controller": "AiController",
+    "method": "GET",
+    "path": "/v1/ai/logs",
+    "handler": "testConnection",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\ai\\AiController.java"
+  },
+  {
+    "controller": "AiController",
+    "method": "POST",
+    "path": "/v1/ai/models",
+    "handler": "fetchModels",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\ai\\AiController.java"
+  },
+  {
+    "controller": "AiController",
+    "method": "POST",
+    "path": "/v1/ai/classify",
+    "handler": "classifyDocument",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\ai\\AiController.java"
+  },
+  {
+    "controller": "AiController",
+    "method": "POST",
+    "path": "/v1/ai/analyze-contract",
+    "handler": "analyzeContract",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\ai\\AiController.java"
+  },
+  {
+    "controller": "AiController",
+    "method": "POST",
+    "path": "/v1/ai/execute",
+    "handler": "executeLiveAi",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\ai\\AiController.java"
+  },
+  {
+    "controller": "AiController",
+    "method": "GET",
+    "path": "/v1/ai/instructions",
+    "handler": "detectModule",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\ai\\AiController.java"
+  },
+  {
+    "controller": "AiController",
+    "method": "POST",
+    "path": "/v1/ai/context",
+    "handler": "getModuleDataContext",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\ai\\AiController.java"
+  },
+  {
+    "controller": "BackupController",
+    "method": "GET/POST",
+    "path": "/v1/admin/backups/v1/admin/backups",
+    "handler": "getAll",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\admin\\controller\\BackupController.java"
+  },
+  {
+    "controller": "BackupController",
+    "method": "GET",
+    "path": "/v1/admin/backups/latest",
+    "handler": "getLatest",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\admin\\controller\\BackupController.java"
+  },
+  {
+    "controller": "BackupController",
+    "method": "POST",
+    "path": "/v1/admin/backups",
+    "handler": "create",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\admin\\controller\\BackupController.java"
+  },
+  {
+    "controller": "HrAssistanceAdminController",
+    "method": "GET/POST",
+    "path": "/v1/admin/hr-assistance/v1/admin/hr-assistance",
+    "handler": "list",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\admin\\controller\\HrAssistanceAdminController.java"
+  },
+  {
+    "controller": "HrAssistanceAdminController",
+    "method": "GET",
+    "path": "/v1/admin/hr-assistance/{id}",
+    "handler": "get",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\admin\\controller\\HrAssistanceAdminController.java"
+  },
+  {
+    "controller": "HrAssistanceAdminController",
+    "method": "PATCH",
+    "path": "/v1/admin/hr-assistance/{id}/status",
+    "handler": "updateStatus",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\admin\\controller\\HrAssistanceAdminController.java"
+  },
+  {
+    "controller": "IntegrationController",
+    "method": "GET/POST",
+    "path": "/v1/admin/integrations/v1/admin/integrations",
+    "handler": "getAll",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\admin\\controller\\IntegrationController.java"
+  },
+  {
+    "controller": "IntegrationController",
+    "method": "GET",
+    "path": "/v1/admin/integrations/{systemName}",
+    "handler": "getBySystemName",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\admin\\controller\\IntegrationController.java"
+  },
+  {
+    "controller": "NotificationController",
+    "method": "GET/POST",
+    "path": "/v1/admin/notifications/v1/admin/notifications",
+    "handler": "getAll",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\admin\\controller\\NotificationController.java"
+  },
+  {
+    "controller": "NotificationController",
+    "method": "GET",
+    "path": "/v1/admin/notifications/unread-count",
+    "handler": "getUnreadCount",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\admin\\controller\\NotificationController.java"
+  },
+  {
+    "controller": "NotificationController",
+    "method": "PUT",
+    "path": "/v1/admin/notifications/{id}/read",
+    "handler": "markAsRead",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\admin\\controller\\NotificationController.java"
+  },
+  {
+    "controller": "SystemConfigController",
+    "method": "GET/POST",
+    "path": "/v1/admin/config/v1/admin/config",
+    "handler": "getAll",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\admin\\controller\\SystemConfigController.java"
+  },
+  {
+    "controller": "SystemConfigController",
+    "method": "GET",
+    "path": "/v1/admin/config/{key}",
+    "handler": "getByKey",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\admin\\controller\\SystemConfigController.java"
+  },
+  {
+    "controller": "SystemConfigController",
+    "method": "PUT",
+    "path": "/v1/admin/config/{key}",
+    "handler": "update",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\admin\\controller\\SystemConfigController.java"
+  },
+  {
+    "controller": "UserAdminController",
+    "method": "GET/POST",
+    "path": "/v1/admin/users/v1/admin/users",
+    "handler": "listUsers",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\admin\\controller\\UserAdminController.java"
+  },
+  {
+    "controller": "UserAdminController",
+    "method": "POST",
+    "path": "/v1/admin/users/{id}/unlock",
+    "handler": "unlockUser",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\admin\\controller\\UserAdminController.java"
+  },
+  {
+    "controller": "AnalyticsController",
+    "method": "GET/POST",
+    "path": "/v1/admin/analytics/v1/admin/analytics",
+    "handler": "getAnalytics",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\analytics\\AnalyticsController.java"
+  },
+  {
+    "controller": "AuthController",
+    "method": "GET/POST",
+    "path": "/v1/auth/v1/auth",
+    "handler": "login",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\auth\\controller\\AuthController.java"
+  },
+  {
+    "controller": "AuthController",
+    "method": "POST",
+    "path": "/v1/auth/refresh",
+    "handler": "refreshToken",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\auth\\controller\\AuthController.java"
+  },
+  {
+    "controller": "AuthController",
+    "method": "POST",
+    "path": "/v1/auth/logout",
+    "handler": "logout",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\auth\\controller\\AuthController.java"
+  },
+  {
+    "controller": "AuthController",
+    "method": "POST",
+    "path": "/v1/auth/heartbeat",
+    "handler": "heartbeat",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\auth\\controller\\AuthController.java"
+  },
+  {
+    "controller": "AuthController",
+    "method": "POST",
+    "path": "/v1/auth/forgot-password",
+    "handler": "forgotPassword",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\auth\\controller\\AuthController.java"
+  },
+  {
+    "controller": "AuthController",
+    "method": "POST",
+    "path": "/v1/auth/reset-password",
+    "handler": "resetPassword",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\auth\\controller\\AuthController.java"
+  },
+  {
+    "controller": "HrAssistanceController",
+    "method": "GET/POST",
+    "path": "/v1/auth/hr/v1/auth/hr",
+    "handler": "requestAssistance",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\auth\\controller\\HrAssistanceController.java"
+  },
+  {
+    "controller": "ComplianceController",
+    "method": "GET/POST",
+    "path": "/v1/compliance/v1/compliance",
+    "handler": "getDashboardSummary",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\compliance\\controller\\ComplianceController.java"
+  },
+  {
+    "controller": "ComplianceController",
+    "method": "GET",
+    "path": "/v1/compliance/documents",
+    "handler": "getDocuments",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\compliance\\controller\\ComplianceController.java"
+  },
+  {
+    "controller": "ComplianceController",
+    "method": "GET",
+    "path": "/v1/compliance/contracts",
+    "handler": "getContracts",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\compliance\\controller\\ComplianceController.java"
+  },
+  {
+    "controller": "ComplianceController",
+    "method": "GET",
+    "path": "/v1/compliance/retention-policies",
+    "handler": "getRetentionPolicies",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\compliance\\controller\\ComplianceController.java"
+  },
+  {
+    "controller": "ComplianceController",
+    "method": "GET",
+    "path": "/v1/compliance/audit-logs",
+    "handler": "getAuditLogs",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\compliance\\controller\\ComplianceController.java"
+  },
+  {
+    "controller": "ComplianceController",
+    "method": "POST",
+    "path": "/v1/compliance/documents/{id}/approve",
+    "handler": "approveDocument",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\compliance\\controller\\ComplianceController.java"
+  },
+  {
+    "controller": "ComplianceController",
+    "method": "POST",
+    "path": "/v1/compliance/documents/{id}/archive",
+    "handler": "archiveDocument",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\compliance\\controller\\ComplianceController.java"
+  },
+  {
+    "controller": "ComplianceController",
+    "method": "POST",
+    "path": "/v1/compliance/documents/{id}/disposal",
+    "handler": "requestDisposal",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\compliance\\controller\\ComplianceController.java"
+  },
+  {
+    "controller": "ComplianceController",
+    "method": "POST",
+    "path": "/v1/compliance/retention-policies",
+    "handler": "createRetentionPolicy",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\compliance\\controller\\ComplianceController.java"
+  },
+  {
+    "controller": "ComplianceController",
+    "method": "PUT",
+    "path": "/v1/compliance/retention-policies/{id}",
+    "handler": "updateRetentionPolicy",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\compliance\\controller\\ComplianceController.java"
+  },
+  {
+    "controller": "ComplianceController",
+    "method": "POST",
+    "path": "/v1/compliance/retention-policies/{id}/toggle",
+    "handler": "toggleRetentionPolicy",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\compliance\\controller\\ComplianceController.java"
+  },
+  {
+    "controller": "ComplianceController",
+    "method": "GET",
+    "path": "/v1/compliance/disposals",
+    "handler": "getDisposals",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\compliance\\controller\\ComplianceController.java"
+  },
+  {
+    "controller": "ComplianceController",
+    "method": "POST",
+    "path": "/v1/compliance/disposals/{id}/approve",
+    "handler": "approveDisposal",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\compliance\\controller\\ComplianceController.java"
+  },
+  {
+    "controller": "ComplianceController",
+    "method": "POST",
+    "path": "/v1/compliance/disposals/{id}/reject",
+    "handler": "rejectDisposal",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\compliance\\controller\\ComplianceController.java"
+  },
+  {
+    "controller": "ComplianceController",
+    "method": "GET",
+    "path": "/v1/compliance/alerts",
+    "handler": "getAlerts",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\compliance\\controller\\ComplianceController.java"
+  },
+  {
+    "controller": "ComplianceController",
+    "method": "POST",
+    "path": "/v1/compliance/alerts/{id}/acknowledge",
+    "handler": "acknowledgeAlert",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\compliance\\controller\\ComplianceController.java"
+  },
+  {
+    "controller": "ComplianceController",
+    "method": "POST",
+    "path": "/v1/compliance/alerts/{id}/dismiss",
+    "handler": "dismissAlert",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\compliance\\controller\\ComplianceController.java"
+  },
+  {
+    "controller": "ContractController",
+    "method": "GET/POST",
+    "path": "/v1/contracts/v1/contracts",
+    "handler": "getAllContracts",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\contracts\\controller\\ContractController.java"
+  },
+  {
+    "controller": "ContractController",
+    "method": "POST",
+    "path": "/v1/contracts",
+    "handler": "createContract",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\contracts\\controller\\ContractController.java"
+  },
+  {
+    "controller": "DashboardController",
+    "method": "GET/POST",
+    "path": "/v1/dashboard/v1/dashboard",
+    "handler": "getDashboardSummary",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\dashboard\\DashboardController.java"
+  },
+  {
+    "controller": "KpiController",
+    "method": "GET/POST",
+    "path": "/v1/admin/kpi/v1/admin/kpi",
+    "handler": "getKpi",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\dashboard\\KpiController.java"
+  },
+  {
+    "controller": "DocumentController",
+    "method": "GET/POST",
+    "path": "/v1/documents/v1/documents",
+    "handler": "getAllDocuments",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\documents\\controller\\DocumentController.java"
+  },
+  {
+    "controller": "DocumentController",
+    "method": "POST",
+    "path": "/v1/documents",
+    "handler": "createDocument",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\documents\\controller\\DocumentController.java"
+  },
+  {
+    "controller": "DocumentController",
+    "method": "GET",
+    "path": "/v1/documents/search",
+    "handler": "searchDocuments",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\documents\\controller\\DocumentController.java"
+  },
+  {
+    "controller": "DocumentController",
+    "method": "POST",
+    "path": "/v1/documents/upload",
+    "handler": "uploadDocument",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\documents\\controller\\DocumentController.java"
+  },
+  {
+    "controller": "DocumentController",
+    "method": "GET",
+    "path": "/v1/documents/{id}/download",
+    "handler": "downloadDocument",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\documents\\controller\\DocumentController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "GET/POST",
+    "path": "/v1/employee/v1/employee",
+    "handler": "getDashboardSummary",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "GET",
+    "path": "/v1/employee/reservations",
+    "handler": "getReservations",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "POST",
+    "path": "/v1/employee/reservations",
+    "handler": "createReservation",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "PUT",
+    "path": "/v1/employee/reservations/{id}",
+    "handler": "updateReservation",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "POST",
+    "path": "/v1/employee/reservations/{id}/cancel",
+    "handler": "cancelReservation",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "POST",
+    "path": "/v1/employee/rooms/available",
+    "handler": "roomsAvailable",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "GET",
+    "path": "/v1/employee/rooms/filters",
+    "handler": "roomFilters",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "GET",
+    "path": "/v1/employee/visitors",
+    "handler": "getVisitors",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "POST",
+    "path": "/v1/employee/visitors",
+    "handler": "createVisitor",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "PUT",
+    "path": "/v1/employee/visitors/{id}",
+    "handler": "updateVisitor",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "GET",
+    "path": "/v1/employee/documents",
+    "handler": "getDocuments",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "POST",
+    "path": "/v1/employee/documents",
+    "handler": "createDocument",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "GET",
+    "path": "/v1/employee/requests",
+    "handler": "getRequests",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "POST",
+    "path": "/v1/employee/requests",
+    "handler": "createRequest",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "POST",
+    "path": "/v1/employee/requests/{id}/cancel",
+    "handler": "cancelRequest",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "GET",
+    "path": "/v1/employee/notifications",
+    "handler": "getNotifications",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "GET",
+    "path": "/v1/employee/notifications/unread-count",
+    "handler": "getUnreadCount",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "POST",
+    "path": "/v1/employee/notifications/{id}/read",
+    "handler": "markRead",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "POST",
+    "path": "/v1/employee/notifications/read-all",
+    "handler": "markAllRead",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "POST",
+    "path": "/v1/employee/notifications/{id}/dismiss",
+    "handler": "dismissNotification",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "GET",
+    "path": "/v1/employee/profile",
+    "handler": "getProfile",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "EmployeeController",
+    "method": "PUT",
+    "path": "/v1/employee/profile",
+    "handler": "updateProfile",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\EmployeeController.java"
+  },
+  {
+    "controller": "RequestReviewController",
+    "method": "GET/POST",
+    "path": "/v1/requests-review/v1/requests-review",
+    "handler": "listForReview",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\RequestReviewController.java"
+  },
+  {
+    "controller": "RequestReviewController",
+    "method": "GET",
+    "path": "/v1/requests-review/pending",
+    "handler": "listPending",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\RequestReviewController.java"
+  },
+  {
+    "controller": "RequestReviewController",
+    "method": "POST",
+    "path": "/v1/requests-review/{id}/approve",
+    "handler": "approve",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\RequestReviewController.java"
+  },
+  {
+    "controller": "RequestReviewController",
+    "method": "POST",
+    "path": "/v1/requests-review/{id}/reject",
+    "handler": "reject",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\RequestReviewController.java"
+  },
+  {
+    "controller": "RequestReviewController",
+    "method": "POST",
+    "path": "/v1/requests-review/{id}/complete",
+    "handler": "complete",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\employee\\controller\\RequestReviewController.java"
+  },
+  {
+    "controller": "FacilitiesManagerController",
+    "method": "GET/POST",
+    "path": "/v1/facilities-manager/v1/facilities-manager",
+    "handler": "getDashboardKpi",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesManagerController.java"
+  },
+  {
+    "controller": "FacilitiesManagerController",
+    "method": "GET",
+    "path": "/v1/facilities-manager/reservations",
+    "handler": "getReservations",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesManagerController.java"
+  },
+  {
+    "controller": "FacilitiesManagerController",
+    "method": "POST",
+    "path": "/v1/facilities-manager/reservations/{id}/approve",
+    "handler": "approveReservation",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesManagerController.java"
+  },
+  {
+    "controller": "FacilitiesManagerController",
+    "method": "POST",
+    "path": "/v1/facilities-manager/reservations/{id}/reject",
+    "handler": "rejectReservation",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesManagerController.java"
+  },
+  {
+    "controller": "FacilitiesManagerController",
+    "method": "POST",
+    "path": "/v1/facilities-manager/reservations/{id}/ai/approval-suggest",
+    "handler": "aiSuggestApproval",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesManagerController.java"
+  },
+  {
+    "controller": "FacilitiesManagerController",
+    "method": "GET",
+    "path": "/v1/facilities-manager/rooms/summary",
+    "handler": "getRoomSummary",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesManagerController.java"
+  },
+  {
+    "controller": "FacilitiesManagerController",
+    "method": "GET",
+    "path": "/v1/facilities-manager/rooms",
+    "handler": "getAllRooms",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesManagerController.java"
+  },
+  {
+    "controller": "FacilitiesManagerController",
+    "method": "POST",
+    "path": "/v1/facilities-manager/rooms",
+    "handler": "createRoom",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesManagerController.java"
+  },
+  {
+    "controller": "FacilitiesManagerController",
+    "method": "PUT",
+    "path": "/v1/facilities-manager/rooms/{id}",
+    "handler": "updateRoom",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesManagerController.java"
+  },
+  {
+    "controller": "FacilitiesManagerController",
+    "method": "POST",
+    "path": "/v1/facilities-manager/rooms/{id}/maintenance",
+    "handler": "scheduleMaintenance",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesManagerController.java"
+  },
+  {
+    "controller": "FacilitiesManagerController",
+    "method": "GET",
+    "path": "/v1/facilities-manager/maintenance",
+    "handler": "getMaintenanceSchedules",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesManagerController.java"
+  },
+  {
+    "controller": "FacilitiesManagerController",
+    "method": "GET",
+    "path": "/v1/facilities-manager/assets",
+    "handler": "getAssetOverview",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesManagerController.java"
+  },
+  {
+    "controller": "FacilitiesManagerController",
+    "method": "GET",
+    "path": "/v1/facilities-manager/assets/list",
+    "handler": "listAssets",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesManagerController.java"
+  },
+  {
+    "controller": "FacilitiesManagerController",
+    "method": "GET",
+    "path": "/v1/facilities-manager/calendar",
+    "handler": "getCalendar",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesManagerController.java"
+  },
+  {
+    "controller": "FacilitiesManagerController",
+    "method": "GET",
+    "path": "/v1/facilities-manager/analytics",
+    "handler": "getAnalytics",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesManagerController.java"
+  },
+  {
+    "controller": "FacilitiesManagerController",
+    "method": "GET",
+    "path": "/v1/facilities-manager/reports",
+    "handler": "getReports",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesManagerController.java"
+  },
+  {
+    "controller": "FacilitiesOfficerController",
+    "method": "GET/POST",
+    "path": "/v1/facilities-officer/v1/facilities-officer",
+    "handler": "searchRooms",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesOfficerController.java"
+  },
+  {
+    "controller": "FacilitiesOfficerController",
+    "method": "GET",
+    "path": "/v1/facilities-officer/rooms/filters",
+    "handler": "getFilterOptions",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesOfficerController.java"
+  },
+  {
+    "controller": "FacilitiesOfficerController",
+    "method": "GET",
+    "path": "/v1/facilities-officer/dashboard/summary",
+    "handler": "getDashboardSummary",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesOfficerController.java"
+  },
+  {
+    "controller": "FacilitiesOfficerController",
+    "method": "GET",
+    "path": "/v1/facilities-officer/reservations",
+    "handler": "getMyReservations",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesOfficerController.java"
+  },
+  {
+    "controller": "FacilitiesOfficerController",
+    "method": "POST",
+    "path": "/v1/facilities-officer/reservations",
+    "handler": "createReservation",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesOfficerController.java"
+  },
+  {
+    "controller": "FacilitiesOfficerController",
+    "method": "POST",
+    "path": "/v1/facilities-officer/reservations/{id}/cancel",
+    "handler": "cancelReservation",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesOfficerController.java"
+  },
+  {
+    "controller": "FacilitiesOfficerController",
+    "method": "POST",
+    "path": "/v1/facilities-officer/ai/suggest",
+    "handler": "aiSuggestRooms",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesOfficerController.java"
+  },
+  {
+    "controller": "FacilitiesOfficerController",
+    "method": "POST",
+    "path": "/v1/facilities-officer/ai/draft",
+    "handler": "aiDraftReservation",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesOfficerController.java"
+  },
+  {
+    "controller": "FacilitiesOfficerController",
+    "method": "POST",
+    "path": "/v1/facilities-officer/ai/validate",
+    "handler": "aiValidateReservation",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilitiesOfficerController.java"
+  },
+  {
+    "controller": "FacilityController",
+    "method": "GET/POST",
+    "path": "/v1/facilities/v1/facilities",
+    "handler": "getAllFacilities",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilityController.java"
+  },
+  {
+    "controller": "FacilityController",
+    "method": "POST",
+    "path": "/v1/facilities",
+    "handler": "createFacility",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilityController.java"
+  },
+  {
+    "controller": "FacilityController",
+    "method": "GET",
+    "path": "/v1/facilities/{facilityId}/rooms",
+    "handler": "getRoomsByFacility",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilityController.java"
+  },
+  {
+    "controller": "FacilityController",
+    "method": "POST",
+    "path": "/v1/facilities/rooms",
+    "handler": "createRoom",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilityController.java"
+  },
+  {
+    "controller": "FacilityController",
+    "method": "GET",
+    "path": "/v1/facilities/reservations",
+    "handler": "getAllReservations",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilityController.java"
+  },
+  {
+    "controller": "FacilityController",
+    "method": "POST",
+    "path": "/v1/facilities/reservations",
+    "handler": "createReservation",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\facilities\\controller\\FacilityController.java"
+  },
+  {
+    "controller": "LegalCaseController",
+    "method": "GET/POST",
+    "path": "/v1/legal-cases/v1/legal-cases",
+    "handler": "getAllCases",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalCaseController.java"
+  },
+  {
+    "controller": "LegalCaseController",
+    "method": "POST",
+    "path": "/v1/legal-cases",
+    "handler": "createCase",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalCaseController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "GET/POST",
+    "path": "/v1/legal/v1/legal",
+    "handler": "getDashboardSummary",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "GET",
+    "path": "/v1/legal/contracts",
+    "handler": "getContracts",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "GET",
+    "path": "/v1/legal/contracts/{id}",
+    "handler": "getContract",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "POST",
+    "path": "/v1/legal/contracts",
+    "handler": "createContract",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "PUT",
+    "path": "/v1/legal/contracts/{id}",
+    "handler": "updateContract",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "POST",
+    "path": "/v1/legal/contracts/{id}/submit-review",
+    "handler": "submitReview",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "POST",
+    "path": "/v1/legal/contracts/{id}/approve",
+    "handler": "approveContract",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "POST",
+    "path": "/v1/legal/contracts/{id}/activate",
+    "handler": "activateContract",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "POST",
+    "path": "/v1/legal/contracts/{id}/renew",
+    "handler": "renewContract",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "POST",
+    "path": "/v1/legal/contracts/{id}/terminate",
+    "handler": "terminateContract",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "POST",
+    "path": "/v1/legal/contracts/{id}/clauses",
+    "handler": "addClause",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "PUT",
+    "path": "/v1/legal/clauses/{id}",
+    "handler": "updateClause",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "DELETE",
+    "path": "/v1/legal/clauses/{id}",
+    "handler": "deleteClause",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "GET",
+    "path": "/v1/legal/cases",
+    "handler": "getCases",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "GET",
+    "path": "/v1/legal/cases/{id}",
+    "handler": "getCase",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "POST",
+    "path": "/v1/legal/cases",
+    "handler": "createCase",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "PUT",
+    "path": "/v1/legal/cases/{id}",
+    "handler": "updateCase",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "POST",
+    "path": "/v1/legal/cases/{id}/status",
+    "handler": "changeCaseStatus",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "GET",
+    "path": "/v1/legal/documents",
+    "handler": "getDocuments",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "POST",
+    "path": "/v1/legal/documents/{id}/approve",
+    "handler": "approveDocument",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "GET",
+    "path": "/v1/legal/retention-policies",
+    "handler": "getRetentionPolicies",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "GET",
+    "path": "/v1/legal/notices",
+    "handler": "getNotices",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "POST",
+    "path": "/v1/legal/notices/{id}/acknowledge",
+    "handler": "acknowledgeNotice",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "POST",
+    "path": "/v1/legal/notices/{id}/dismiss",
+    "handler": "dismissNotice",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "LegalOfficerController",
+    "method": "GET",
+    "path": "/v1/legal/audit-logs",
+    "handler": "getAuditLogs",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\legal\\controller\\LegalOfficerController.java"
+  },
+  {
+    "controller": "SystemMonitoringController",
+    "method": "GET/POST",
+    "path": "/v1/admin/system-monitoring/v1/admin/system-monitoring",
+    "handler": "getSubsystemHealth",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\monitoring\\controller\\SystemMonitoringController.java"
+  },
+  {
+    "controller": "SystemMonitoringController",
+    "method": "GET",
+    "path": "/v1/admin/system-monitoring/subsystems/{subsystemId}",
+    "handler": "getSubsystemDetail",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\monitoring\\controller\\SystemMonitoringController.java"
+  },
+  {
+    "controller": "UserNotificationController",
+    "method": "GET/POST",
+    "path": "/v1/notifications/v1/notifications",
+    "handler": "list",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\notification\\controller\\UserNotificationController.java"
+  },
+  {
+    "controller": "UserNotificationController",
+    "method": "GET",
+    "path": "/v1/notifications/unread-count",
+    "handler": "unreadCount",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\notification\\controller\\UserNotificationController.java"
+  },
+  {
+    "controller": "UserNotificationController",
+    "method": "POST",
+    "path": "/v1/notifications/{id}/read",
+    "handler": "markRead",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\notification\\controller\\UserNotificationController.java"
+  },
+  {
+    "controller": "UserNotificationController",
+    "method": "POST",
+    "path": "/v1/notifications/read-all",
+    "handler": "markAllRead",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\notification\\controller\\UserNotificationController.java"
+  },
+  {
+    "controller": "UserNotificationController",
+    "method": "POST",
+    "path": "/v1/notifications/{id}/dismiss",
+    "handler": "dismiss",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\notification\\controller\\UserNotificationController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "GET/POST",
+    "path": "/v1/procurement/v1/procurement",
+    "handler": "getDashboardSummary",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "GET",
+    "path": "/v1/procurement/contracts",
+    "handler": "getContracts",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "GET",
+    "path": "/v1/procurement/contracts/{id}",
+    "handler": "getContract",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "POST",
+    "path": "/v1/procurement/contracts",
+    "handler": "createContract",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "PUT",
+    "path": "/v1/procurement/contracts/{id}",
+    "handler": "updateContract",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "POST",
+    "path": "/v1/procurement/contracts/{id}/submit-review",
+    "handler": "submitReview",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "POST",
+    "path": "/v1/procurement/contracts/{id}/approve",
+    "handler": "approveContract",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "POST",
+    "path": "/v1/procurement/contracts/{id}/activate",
+    "handler": "activateContract",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "POST",
+    "path": "/v1/procurement/contracts/{id}/renew",
+    "handler": "renewContract",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "POST",
+    "path": "/v1/procurement/contracts/{id}/terminate",
+    "handler": "terminateContract",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "POST",
+    "path": "/v1/procurement/contracts/{id}/clauses",
+    "handler": "addClause",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "PUT",
+    "path": "/v1/procurement/clauses/{id}",
+    "handler": "updateClause",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "DELETE",
+    "path": "/v1/procurement/clauses/{id}",
+    "handler": "deleteClause",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "GET",
+    "path": "/v1/procurement/vendors",
+    "handler": "getVendors",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "GET",
+    "path": "/v1/procurement/vendors/{id}",
+    "handler": "getVendor",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "POST",
+    "path": "/v1/procurement/vendors",
+    "handler": "createVendor",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "PUT",
+    "path": "/v1/procurement/vendors/{id}",
+    "handler": "updateVendor",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "POST",
+    "path": "/v1/procurement/vendors/{id}/status",
+    "handler": "changeVendorStatus",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "POST",
+    "path": "/v1/procurement/vendors/{id}/performance",
+    "handler": "recordVendorPerformance",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "POST",
+    "path": "/v1/procurement/vendors/{id}/obligations",
+    "handler": "addObligation",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "PUT",
+    "path": "/v1/procurement/obligations/{id}",
+    "handler": "updateObligation",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "POST",
+    "path": "/v1/procurement/obligations/{id}/status",
+    "handler": "changeObligationStatus",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "DELETE",
+    "path": "/v1/procurement/obligations/{id}",
+    "handler": "deleteObligation",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "GET",
+    "path": "/v1/procurement/documents",
+    "handler": "getDocuments",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "POST",
+    "path": "/v1/procurement/documents/{id}/approve",
+    "handler": "approveDocument",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "GET",
+    "path": "/v1/procurement/legal-cases",
+    "handler": "getLegalCases",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "GET",
+    "path": "/v1/procurement/notices",
+    "handler": "getNotices",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "POST",
+    "path": "/v1/procurement/notices/{id}/acknowledge",
+    "handler": "acknowledgeNotice",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "POST",
+    "path": "/v1/procurement/notices/{id}/dismiss",
+    "handler": "dismissNotice",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "ProcurementOfficerController",
+    "method": "GET",
+    "path": "/v1/procurement/audit-logs",
+    "handler": "getAuditLogs",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\procurement\\controller\\ProcurementOfficerController.java"
+  },
+  {
+    "controller": "SecurityAdminController",
+    "method": "GET/POST",
+    "path": "/v1/security/admin/v1/security/admin",
+    "handler": "getSecurityMetrics",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\security\\controller\\SecurityAdminController.java"
+  },
+  {
+    "controller": "SecurityAdminController",
+    "method": "GET",
+    "path": "/v1/security/admin/logs",
+    "handler": "getSecurityLogs",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\security\\controller\\SecurityAdminController.java"
+  },
+  {
+    "controller": "SecurityAdminController",
+    "method": "GET",
+    "path": "/v1/security/admin/sessions",
+    "handler": "getActiveSessions",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\security\\controller\\SecurityAdminController.java"
+  },
+  {
+    "controller": "SecurityAdminController",
+    "method": "POST",
+    "path": "/v1/security/admin/sessions/{id}/revoke",
+    "handler": "revokeSession",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\security\\controller\\SecurityAdminController.java"
+  },
+  {
+    "controller": "SecurityAdminController",
+    "method": "GET",
+    "path": "/v1/security/admin/blocked-ips",
+    "handler": "getBlockedIps",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\security\\controller\\SecurityAdminController.java"
+  },
+  {
+    "controller": "SecurityAdminController",
+    "method": "POST",
+    "path": "/v1/security/admin/blocked-ips",
+    "handler": "blockIp",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\security\\controller\\SecurityAdminController.java"
+  },
+  {
+    "controller": "SecurityAdminController",
+    "method": "DELETE",
+    "path": "/v1/security/admin/blocked-ips/{ipAddress}",
+    "handler": "unblockIp",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\security\\controller\\SecurityAdminController.java"
+  },
+  {
+    "controller": "SecurityAdminController",
+    "method": "GET",
+    "path": "/v1/security/admin/alerts",
+    "handler": "getSecurityAlerts",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\security\\controller\\SecurityAdminController.java"
+  },
+  {
+    "controller": "SecurityAdminController",
+    "method": "POST",
+    "path": "/v1/security/admin/alerts/{id}/resolve",
+    "handler": "resolveAlert",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\security\\controller\\SecurityAdminController.java"
+  },
+  {
+    "controller": "SecurityThreatMapController",
+    "method": "GET/POST",
+    "path": "/v1/security/ip-threats/v1/security/ip-threats",
+    "handler": "getVectorMapData",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\security\\controller\\SecurityThreatMapController.java"
+  },
+  {
+    "controller": "SecurityThreatMapController",
+    "method": "GET",
+    "path": "/v1/security/ip-threats/stats",
+    "handler": "getMapStats",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\security\\controller\\SecurityThreatMapController.java"
+  },
+  {
+    "controller": "SecurityThreatMapController",
+    "method": "GET",
+    "path": "/v1/security/ip-threats/stream",
+    "handler": "streamThreatEvents",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\security\\controller\\SecurityThreatMapController.java"
+  },
+  {
+    "controller": "SecurityThreatMapController",
+    "method": "POST",
+    "path": "/v1/security/ip-threats/test-event",
+    "handler": "triggerTestEvent",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\security\\controller\\SecurityThreatMapController.java"
+  },
+  {
+    "controller": "SecurityThreatMapController",
+    "method": "GET",
+    "path": "/v1/security/ip-threats/diagnostics",
+    "handler": "diagnostics",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\security\\controller\\SecurityThreatMapController.java"
+  },
+  {
+    "controller": "VisitorController",
+    "method": "GET/POST",
+    "path": "/v1/visitors/v1/visitors",
+    "handler": "getAllVisitors",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\visitor\\controller\\VisitorController.java"
+  },
+  {
+    "controller": "VisitorController",
+    "method": "POST",
+    "path": "/v1/visitors/register",
+    "handler": "registerVisitor",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\visitor\\controller\\VisitorController.java"
+  },
+  {
+    "controller": "VisitorController",
+    "method": "POST",
+    "path": "/v1/visitors/{id}/check-in",
+    "handler": "checkInVisitor",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\visitor\\controller\\VisitorController.java"
+  },
+  {
+    "controller": "VisitorController",
+    "method": "POST",
+    "path": "/v1/visitors/{id}/check-out",
+    "handler": "checkOutVisitor",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\visitor\\controller\\VisitorController.java"
+  },
+  {
+    "controller": "VisitorController",
+    "method": "POST",
+    "path": "/v1/visitors/{id}/verify",
+    "handler": "verifyVisitor",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\visitor\\controller\\VisitorController.java"
+  },
+  {
+    "controller": "VisitorController",
+    "method": "GET",
+    "path": "/v1/visitors/{id}/verifications",
+    "handler": "getVerifications",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\visitor\\controller\\VisitorController.java"
+  },
+  {
+    "controller": "VisitorController",
+    "method": "GET",
+    "path": "/v1/visitors/watchlist",
+    "handler": "getWatchlist",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\visitor\\controller\\VisitorController.java"
+  },
+  {
+    "controller": "VisitorController",
+    "method": "POST",
+    "path": "/v1/visitors/watchlist",
+    "handler": "addWatchlistEntry",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\visitor\\controller\\VisitorController.java"
+  },
+  {
+    "controller": "VisitorController",
+    "method": "POST",
+    "path": "/v1/visitors/watchlist/{id}/status",
+    "handler": "updateWatchlistStatus",
+    "file": "backend\\src\\main\\java\\com\\photonicomega\\facilities\\module\\visitor\\controller\\VisitorController.java"
+  }
+]

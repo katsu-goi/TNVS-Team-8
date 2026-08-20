@@ -21,7 +21,7 @@ Act as a senior full-stack engineer (Spring Boot 3 + React 19 + TypeScript) work
 - **Purpose:** Facilities & Administrative Management for TNVS (Team 8). The core system must be ~70% complete and demoable at a pre-oral defense; integrations with other teams are a planned future capability, not a current dependency.
 - **Backend:** Spring Boot 3.3.5, Java 21, Spring Security (JWT), Spring Data JPA, PostgreSQL, Lombok, Flyway (default/local profile only).
 - **Frontend:** Vite 6 + React 19 + TypeScript, React Router, Zustand stores (`frontend/src/stores/authStore.ts`), API services under `frontend/src/api/`.
-- **Database:** Supabase PostgreSQL (project ref `nlzfosfyyqileruosebi`). The `supabase` Spring profile connects to Supabase with `ddl-auto: update` and Flyway **disabled**. Local dev uses `local`/`default` profiles with Flyway migrations in `backend/src/main/resources/db/migration/`. Supabase schema migrations live in `supabase/migrations/` (currently only `00001_create_all_tables.sql`).
+- **Database:** Supabase PostgreSQL (project ref `dunijfrvfozwlykpkfhy`). The `supabase` Spring profile connects to Supabase with `ddl-auto: update` and Flyway **disabled**. Local dev uses `local`/`default` profiles with Flyway migrations in `backend/src/main/resources/db/migration/`. Supabase schema migrations live in `supabase/migrations/` (currently `00001_create_all_tables.sql`; `002_add_rate_limit_counts.sql` adds the Edge Function rate-limit counters).
 - **Realtime:** Supabase Realtime for live user activity / online users (backend `SupabaseRealtimePublisher`, frontend `realtimeSyncStore.ts`).
 
 ## Current modules (baseline state, do not re-verify exhaustively)

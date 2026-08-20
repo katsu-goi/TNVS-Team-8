@@ -1,6 +1,6 @@
 -- ============================================================
 -- Enterprise Management System — Full Database Schema
--- Run this in your Supabase SQL Editor (https://supabase.com/dashboard/project/nlzfosfyyqileruosebi/sql/new)
+-- Run this in your Supabase SQL Editor (https://supabase.com/dashboard/project/dunijfrvfozwlykpkfhy/sql/new)
 -- ============================================================
 
 -- 1. FACILITIES
