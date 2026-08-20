@@ -1,0 +1,8 @@
+{
+  "nodeModulesDir": "auto",
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@^2.49.1",
+    "jose": "npm:jose@^5.10.0",
+    "bcryptjs": "npm:bcryptjs@^3.0.2"
+  }
+}
