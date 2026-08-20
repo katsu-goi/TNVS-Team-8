@@ -1,6 +1,4 @@
 import { create } from 'zustand';
-import { Client } from '@stomp/stompjs';
-import SockJS from 'sockjs-client';
 import { isSuperAdmin, useAuthStore } from './authStore';
 import type { AppNotification } from '../api/notificationService';
 import { supabase, supabaseAvailable } from '../lib/supabase';
@@ -19,7 +17,6 @@ interface NotificationRealtimeState {
   revision: number;
   lastNotification: AppNotification | null;
   lastAdminNotification: AppNotification | null;
-  stompClient: Client | null;
   supabaseChannel: RealtimeChannel | null;
   connect: () => void;
   disconnect: () => void;
@@ -34,7 +31,7 @@ export const useNotificationRealtimeStore = create<NotificationRealtimeState>((s
   supabaseChannel: null,
 
   connect: () => {
-    // 1. Supabase Realtime Subscription
+    // Supabase Realtime Subscription
     if (supabaseAvailable && supabase && !get().supabaseChannel) {
       const currentUser = useAuthStore.getState().user;
       const channel = supabase
@@ -75,65 +72,13 @@ export const useNotificationRealtimeStore = create<NotificationRealtimeState>((s
 
       set({ supabaseChannel: channel });
     }
-
-    // 2. STOMP Client (Fallback / Legacy support)
-    if (get().stompClient?.active) return;
-    const token = useAuthStore.getState().accessToken;
-    if (!token) return;
-
-    const wsBase = import.meta.env.VITE_WS_BASE_URL || '';
-    if (!wsBase) return;
-
-    try {
-      const client = new Client({
-        webSocketFactory: () => new SockJS(`${wsBase}/ws-endpoint`),
-        connectHeaders: { Authorization: `Bearer ${token}` },
-        reconnectDelay: 5000,
-        heartbeatIncoming: 4000,
-        heartbeatOutgoing: 4000,
-      });
-
-      client.onConnect = () => {
-        set({ connected: true });
-
-        client.subscribe('/user/queue/notifications', (message) => {
-          if (!message.body) return;
-          try {
-            const notif = JSON.parse(message.body) as AppNotification;
-            set((state) => ({ lastNotification: notif, revision: state.revision + 1 }));
-          } catch { /* ignore parse errors */ }
-        });
-
-        const user = useAuthStore.getState().user;
-        if (user && isSuperAdmin(user)) {
-          client.subscribe('/user/queue/admin-notifications', (message) => {
-            if (!message.body) return;
-            try {
-              const notif = JSON.parse(message.body) as AppNotification;
-              set((state) => ({ lastAdminNotification: notif, revision: state.revision + 1 }));
-            } catch { /* ignore parse errors */ }
-          });
-        }
-      };
-
-      client.onStompError = () => {};
-      client.onWebSocketClose = () => {};
-
-      client.activate();
-      set({ stompClient: client });
-    } catch {
-      /* ignore if STOMP endpoint unavailable in serverless mode */
-    }
   },
 
   disconnect: () => {
-    const { stompClient, supabaseChannel } = get();
+    const { supabaseChannel } = get();
     if (supabaseChannel && supabase) {
       supabase.removeChannel(supabaseChannel);
     }
-    if (stompClient) {
-      stompClient.deactivate();
-    }
-    set({ connected: false, stompClient: null, supabaseChannel: null });
+    set({ connected: false, supabaseChannel: null });
   },
 }));
