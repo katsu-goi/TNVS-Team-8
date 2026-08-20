@@ -102,16 +102,42 @@ const SYSTEM_FALLBACK_USERS: Record<string, { user: User; roles: string[] }> = {
 
 import { supabase } from '../lib/supabase';
 
-/** Write login telemetry to Supabase so Realtime CDC broadcasts the event. */
+/**
+ * Write login telemetry to Supabase AND broadcast via localStorage so the
+ * dashboard Live User Activity widget picks up the login immediately — even
+ * if the Supabase insert fails (placeholder key, RLS, network, etc.).
+ */
 async function recordLoginTelemetry(user: User, email: string) {
-  if (!supabase) return;
   const now = new Date().toISOString();
+  const fullName = user.fullName || `${user.firstName} ${user.lastName}`;
+  const role = user.roles?.[0] || 'USER';
+
+  // ── Always broadcast locally so the dashboard gets the event ──
   try {
-    // Insert into active_sessions (matches schema: username, full_name, role, ip_address, browser, device_name, login_time, last_activity, status)
-    await supabase.from('active_sessions').insert([{
+    const loginEvent = JSON.stringify({
+      type: 'LOGIN_SUCCESS',
       username: email,
-      full_name: user.fullName || `${user.firstName} ${user.lastName}`,
-      role: user.roles?.[0] || 'USER',
+      full_name: fullName,
+      role,
+      login_time: now,
+      browser: navigator.userAgent?.split(' ').pop() || 'Web Browser',
+      device_name: navigator.platform || 'Unknown Device',
+    });
+    localStorage.setItem('last_login_event', loginEvent);
+    // Trigger a storage event for same-tab listeners
+    window.dispatchEvent(new StorageEvent('storage', {
+      key: 'last_login_event',
+      newValue: loginEvent,
+    }));
+  } catch { /* localStorage not available */ }
+
+  // ── Also try to persist to Supabase for CDC Realtime ──
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from('active_sessions').insert([{
+      username: email,
+      full_name: fullName,
+      role,
       ip_address: '0.0.0.0',
       browser: navigator.userAgent?.split(' ').pop() || 'Web Browser',
       device_name: navigator.platform || 'Unknown Device',
@@ -119,20 +145,21 @@ async function recordLoginTelemetry(user: User, email: string) {
       last_activity: now,
       status: 'ACTIVE',
     }]);
-  } catch { /* non-blocking */ }
+    if (error) console.warn('[Telemetry] active_sessions insert failed:', error.message);
+  } catch (err) { console.warn('[Telemetry] active_sessions insert error:', err); }
   try {
-    // Insert into security_logs (matches schema: action, module, full_name, role, ip_address, risk_level, status)
-    await supabase.from('security_logs').insert([{
+    const { error } = await supabase.from('security_logs').insert([{
       action: 'LOGIN_SUCCESS',
       module: 'AUTHENTICATION',
-      full_name: user.fullName || `${user.firstName} ${user.lastName}`,
-      role: user.roles?.[0] || 'USER',
+      full_name: fullName,
+      role,
       ip_address: '0.0.0.0',
       risk_level: 'LOW',
       status: 'SUCCESS',
       reason: `User ${email} logged in successfully`,
     }]);
-  } catch { /* non-blocking */ }
+    if (error) console.warn('[Telemetry] security_logs insert failed:', error.message);
+  } catch (err) { console.warn('[Telemetry] security_logs insert error:', err); }
 }
 
 export async function login(req: LoginRequest): Promise<AuthTokenResponse> {
