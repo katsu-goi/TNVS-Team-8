@@ -32,6 +32,24 @@ function initialsOf(name: string): string {
   );
 }
 
+function toActivity(row: Record<string, any>, isNew: boolean): LiveActivity {
+  const name = row.full_name || row.username || 'System User';
+  return {
+    id: `activity-${row.id}`,
+    user: {
+      name,
+      email: row.email || row.username || '',
+      initials: initialsOf(name),
+      role: row.role || 'EMPLOYEE',
+    },
+    action: row.action || 'USER_EVENT',
+    timestamp: new Date(row.created_at || row.timestamp || Date.now()),
+    ip: row.ip || row.ip_address || '',
+    device: row.device || row.browser || '',
+    isNew,
+  };
+}
+
 export function useLiveActivities() {
   const [activities, setActivities] = useState<LiveActivity[]>([]);
   const [onlineCount, setOnlineCount] = useState(0);
@@ -62,62 +80,85 @@ export function useLiveActivities() {
     newTimersRef.current.push(timer);
   }, []);
 
-  const seedFromSessions = useCallback(async (disposed: () => boolean) => {
+  const seedOnline = useCallback(async (disposed: () => boolean) => {
+    if (!supabase) {
+      // Supabase not configured — fall back to REST via the sessions edge endpoint.
+      try {
+        const result: any = await securityService.getActiveSessions();
+        if (disposed()) return;
+        const sessions: ActiveSession[] = Array.isArray(result) ? result : result ? [result] : [];
+        updateOnline(set => {
+          set.clear();
+          sessions.forEach(s => s.username && set.add(s.username));
+        });
+        setActivities(prev => {
+          const seeds = sessions.map<LiveActivity>(s => {
+            const name = s.fullName || s.username || 'Unknown User';
+            return {
+              id: `seed-${s.id || s.sessionId || s.username || s.userId}`,
+              user: {
+                name,
+                email: s.username || '',
+                initials: initialsOf(name),
+                role: s.role || 'EMPLOYEE',
+              },
+              action: 'Currently online',
+              timestamp: new Date(s.loginTime || Date.now()),
+              ip: s.ipAddress || '',
+              device: s.deviceName || '',
+              isNew: false,
+            };
+          });
+          const kept = prev.filter(a => !a.id.startsWith('seed-'));
+          return [...kept, ...seeds].slice(0, 50);
+        });
+      } catch { /* backend unavailable */ }
+      return;
+    }
     try {
-      const result: any = await securityService.getActiveSessions();
-      if (disposed()) return;
-      const sessions: ActiveSession[] = Array.isArray(result) ? result : result ? [result] : [];
+      const { data, error } = await supabase
+        .from('online_users')
+        .select('*');
+      if (error || !data || disposed()) return;
+      const rows = (data as any[]) ?? [];
       updateOnline(set => {
         set.clear();
-        sessions.forEach(s => s.username && set.add(s.username));
+        rows.forEach(r => r.username && set.add(r.username));
       });
       setActivities(prev => {
-        const seeds = sessions.map<LiveActivity>(s => {
-          const name = s.fullName || s.username || 'Unknown User';
+        const seeds = rows.map<LiveActivity>(r => {
+          const name = r.full_name || r.username || 'Unknown User';
           return {
-            id: `seed-${s.id || s.sessionId || s.username || s.userId}`,
+            id: `seed-${r.username}`,
             user: {
               name,
-              email: s.username || '',
+              email: r.username || '',
               initials: initialsOf(name),
-              role: s.role || 'EMPLOYEE',
+              role: r.role || 'EMPLOYEE',
             },
             action: 'Currently online',
-            timestamp: new Date(s.loginTime || Date.now()),
-            ip: s.ipAddress || '',
-            device: s.deviceName || '',
+            timestamp: new Date(r.last_activity || Date.now()),
+            ip: r.ip || '',
+            device: r.device || r.browser || '',
             isNew: false,
           };
         });
         const kept = prev.filter(a => !a.id.startsWith('seed-'));
         return [...kept, ...seeds].slice(0, 50);
       });
-    } catch { /* backend unavailable */ }
+    } catch { /* ignore */ }
   }, [updateOnline]);
 
   const seedRecentEvents = useCallback(async (disposed: () => boolean) => {
     if (!supabase) return;
     try {
       const { data, error } = await supabase
-        .from('security_audit_logs')
+        .from('user_activity_events')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(20);
       if (error || !data || disposed()) return;
-      const recent = (data as any[]).map(row => ({
-        id: `audit-${row.id}`,
-        user: {
-          name: row.user_name || row.username || 'System User',
-          email: row.username || '',
-          initials: initialsOf(row.user_name || row.username || 'SU'),
-          role: row.role || 'EMPLOYEE',
-        },
-        action: row.action || 'SECURITY_EVENT',
-        timestamp: new Date(row.created_at || Date.now()),
-        ip: row.ip_address || '',
-        device: row.module || '',
-        isNew: false,
-      }));
+      const recent = ((data as any[]) ?? []).map(row => toActivity(row, false));
       if (recent.length) {
         setActivities(prev => {
           const kept = prev.filter(a => a.id.startsWith('seed-'));
@@ -131,7 +172,7 @@ export function useLiveActivities() {
     let disposed = false;
     const isDisposed = () => disposed;
 
-    seedFromSessions(isDisposed);
+    seedOnline(isDisposed);
     seedRecentEvents(isDisposed);
 
     let fallbackPoll: number | null = null;
@@ -142,36 +183,25 @@ export function useLiveActivities() {
         .channel('live-user-activity')
         .on(
           'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'security_audit_logs' },
+          { event: 'INSERT', schema: 'public', table: 'user_activity_events' },
           (payload: any) => {
             if (!payload.new) return;
-            const row = payload.new;
-            pushActivity({
-              id: `audit-${row.id}`,
-              user: {
-                name: row.user_name || row.username || 'System User',
-                email: row.username || '',
-                initials: initialsOf(row.user_name || row.username || 'SU'),
-                role: row.role || 'EMPLOYEE',
-              },
-              action: row.action || 'SECURITY_EVENT',
-              timestamp: new Date(row.created_at || Date.now()),
-              ip: row.ip_address || '',
-              device: row.module || '',
-              isNew: true,
-            });
+            pushActivity(toActivity(payload.new, true));
           }
         )
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'active_sessions' },
+          { event: 'INSERT', schema: 'public', table: 'online_users' },
           (payload: any) => {
-            if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-              if (payload.new?.username) updateOnline(set => set.add(payload.new.username));
-            } else if (payload.eventType === 'DELETE') {
-              const removed = payload.old?.username;
-              if (removed) updateOnline(set => set.delete(removed));
-            }
+            if (payload.new?.username) updateOnline(set => set.add(payload.new.username));
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'DELETE', schema: 'public', table: 'online_users' },
+          (payload: any) => {
+            const removed = payload.old?.username;
+            if (removed) updateOnline(set => set.delete(removed));
           }
         )
         .subscribe();
@@ -179,7 +209,7 @@ export function useLiveActivities() {
     } else {
       // Supabase not configured — fall back to REST polling for online count.
       const poll = () => {
-        seedFromSessions(isDisposed);
+        seedOnline(isDisposed);
       };
       poll();
       fallbackPoll = window.setInterval(poll, 5000);
@@ -195,7 +225,7 @@ export function useLiveActivities() {
       }
       channelRef.current = null;
     };
-  }, [pushActivity, updateOnline, seedFromSessions, seedRecentEvents]);
+  }, [pushActivity, updateOnline, seedOnline, seedRecentEvents]);
 
   return { activities, onlineCount, peakToday };
 }

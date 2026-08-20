@@ -1,6 +1,5 @@
 import { apiClient } from './client';
 import { supabaseMonitoringService } from './supabaseMonitoringService';
-import { supabase } from '../lib/supabase';
 import type {
   SecurityMetrics, SecurityLog, BlockedIp, ActiveSession, SecurityAlert,
 } from '../types';
@@ -24,27 +23,22 @@ export const securityService = {
   },
 
   async getActiveSessions(): Promise<ActiveSession[]> {
-    if (!supabase) return [];
     try {
-      const { data, error } = await supabase
-        .from('active_sessions')
-        .select('*')
-        .order('login_time', { ascending: false });
-
-      if (error || !data) return [];
-
-      return data.map(s => ({
-        id: s.id?.toString() || s.session_id || s.user_id,
-        sessionId: s.session_id,
-        userId: s.user_id,
+      const { data } = await apiClient.get('/security/admin/sessions');
+      const arr = Array.isArray(data) ? data : data?.data ?? [];
+      return (arr as any[]).map(s => ({
+        id: String(s.id ?? s.sessionId ?? s.userId ?? ''),
+        sessionId: s.sessionId,
+        userId: s.userId,
         username: s.username,
-        fullName: s.full_name || s.username,
+        fullName: s.fullName || s.username,
         role: s.role || 'EMPLOYEE',
-        ipAddress: s.ip_address || '127.0.0.1',
-        deviceName: s.device_name || 'Web Browser',
-        loginTime: s.login_time || new Date().toISOString(),
-        lastActivity: s.last_activity || new Date().toISOString(),
-        status: s.revoked_at ? 'REVOKED' : 'ACTIVE',
+        ipAddress: s.ipAddress || '127.0.0.1',
+        browser: s.browser,
+        deviceName: s.deviceName || 'Web Browser',
+        loginTime: s.loginTime || new Date().toISOString(),
+        lastActivity: s.lastActivity || new Date().toISOString(),
+        status: s.status || 'ACTIVE',
       }));
     } catch {
       return [];
