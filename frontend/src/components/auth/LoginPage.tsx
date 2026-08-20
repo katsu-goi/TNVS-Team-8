@@ -92,7 +92,7 @@ export const LoginPage: React.FC = () => {
 
   return (
     <div className="relative h-screen w-full overflow-hidden bg-black">
-      <div className="absolute inset-0 bg-cover bg-top bg-no-repeat bg-fixed" style={{ backgroundImage: `url('/hirna-vehicle2.png')` }} />
+      <div className="absolute inset-0 bg-cover bg-top bg-no-repeat bg-fixed" style={{ backgroundImage: `url('/hirna-vehicle3.png')` }} />
       <div className="absolute inset-0 bg-black/30" />
       <div className="relative z-10 flex items-center justify-center h-screen px-4 py-4">
         <div className="w-full max-h-[90vh] overflow-y-auto" style={{ maxWidth: '445px' }}>
