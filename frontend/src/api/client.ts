@@ -1,15 +1,32 @@
 import axios, { AxiosError } from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+const DEFAULT_SUPABASE_PROJECT_URL = 'https://dunijfrvfozwlykpkfhy.supabase.co';
+
+export const getApiBaseUrl = (): string => {
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL;
+  }
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_PROJECT_URL;
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    return `${supabaseUrl}/functions/v1`;
+  }
+  return '/api/v1';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 // Components call safeFetchJson with module-relative paths like
 // `/api/v1/compliance/documents`. The axios client already prefixes
-// VITE_API_BASE_URL (e.g. https://BACKEND-HOST/api/v1), so resolve these
-// against the same base — otherwise native fetch targets window.location.origin
+// VITE_API_BASE_URL (e.g. https://BACKEND-HOST/api/v1 or Supabase Edge Functions),
+// so resolve these against the same base — otherwise native fetch targets window.location.origin
 // (the Vercel host in staging) instead of the backend.
 function resolveApiUrl(url: string): string {
+  const base = getApiBaseUrl();
   if (url.startsWith('/api/v1')) {
-    return `${API_BASE_URL}${url.slice('/api/v1'.length)}`;
+    return `${base}${url.slice('/api/v1'.length)}`;
+  }
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    return `${base}${url.startsWith('/') ? '' : '/'}${url}`;
   }
   return url;
 }
