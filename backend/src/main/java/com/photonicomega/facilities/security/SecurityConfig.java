@@ -78,10 +78,34 @@ public class SecurityConfig {
                     .requestMatchers("/v1/security/**").hasRole("SUPER_ADMIN")
                     .requestMatchers("/v1/facilities-manager/**").hasRole("FACILITIES_MANAGER")
                     .requestMatchers("/v1/facilities-officer/**").hasRole("FACILITIES_OFFICER")
-                    .requestMatchers("/v1/compliance/**").hasRole("COMPLIANCE_OFFICER")
-                    .requestMatchers("/v1/legal/**").hasRole("LEGAL_OFFICER")
+                    // The records family. COMPLIANCE_OFFICER raises a disposal;
+                    // COMPLIANCE_MANAGER / DATA_PROTECTION_OFFICER / LEGAL_COUNSEL
+                    // are the roles with the authority to sign one off. With only
+                    // COMPLIANCE_OFFICER admitted here, the two-person rule on
+                    // disposal was unsatisfiable: the sole role that could reach
+                    // the decide endpoint was the same role that raised the
+                    // request, so enforcement would have deadlocked every disposal
+                    // rather than getting a second pair of eyes on it.
+                    //
+                    // SUPER_ADMIN and SYSTEM_ADMINISTRATOR are deliberately absent.
+                    // Administering the platform must not confer access to the
+                    // company's records, and this is the URL layer where that
+                    // would otherwise leak in.
+                    .requestMatchers("/v1/compliance/**").hasAnyRole(
+                            "COMPLIANCE_OFFICER", "COMPLIANCE_MANAGER",
+                            "RECORDS_OFFICER", "DATA_PROTECTION_OFFICER", "LEGAL_COUNSEL")
+                    .requestMatchers("/v1/legal/**").hasAnyRole("LEGAL_OFFICER", "LEGAL_COUNSEL")
                     .requestMatchers("/v1/procurement/**").hasRole("CONTRACT_OFFICER")
                     .requestMatchers("/v1/employee/**").hasRole("EMPLOYEE")
+                    // The approval gate is reachable by any authenticated user by
+                    // design: it is a shared inbox spanning every module, so a URL
+                    // rule cannot express who may act on a given request. Authority
+                    // is decided per request inside ApprovalGateService against
+                    // SensitiveAction, which is strictly narrower than any prefix
+                    // rule could be - the queue endpoint returns only the requests
+                    // the caller is actually eligible to decide, and a vote from an
+                    // unauthorised role is refused with its reason.
+                    .requestMatchers("/v1/governance/**").authenticated()
                     .anyRequest().authenticated())
             .authenticationProvider(authenticationProvider())
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);

@@ -1,5 +1,27 @@
 import { apiClient } from './client';
 
+/**
+ * Two functions here — `terminateContract` and `deleteClause` — no longer do what
+ * their names say. `POST /legal/contracts/{id}/terminate` and
+ * `DELETE /legal/clauses/{id}` both go through `GovernedActionGateway.raise` for
+ * CONTRACT_TERMINATE and LEGAL_CLAUSE_DELETE: they raise an approval request and
+ * mutate nothing. The 200 they answer with carries a pending-approval DTO
+ * (`pendingApproval: true`, `approvalRequestId`, `requiredApprovals`, ...), so the
+ * contract is still ACTIVE and the clause is still attached when the promise
+ * resolves. A caller that reads 200 as "done" — hides the row, prints "Contract
+ * terminated" — is lying to its user, and a reload will contradict it.
+ *
+ * `reason` is required rather than optional on purpose. The gate refuses any
+ * request without a justification of at least ten trimmed characters, so a call
+ * that omits it can only ever fail with a 422; making the parameter mandatory moves
+ * that failure from runtime to `tsc`. Neither function has a call site yet, which
+ * is the only reason this could be tightened without a migration.
+ *
+ * On the DELETE the reason goes in the query string rather than a body. The handler
+ * accepts both, but a DELETE body is stripped by some proxies and a query parameter
+ * always arrives — and a reason that silently vanishes in transit reproduces exactly
+ * the 422 this change exists to prevent.
+ */
 export const legalService = {
   async getDashboardSummary() {
     const { data } = await apiClient.get('/legal/dashboard/summary');
@@ -39,8 +61,8 @@ export const legalService = {
     const { data } = await apiClient.post(`/legal/contracts/${id}/renew`, body ?? {});
     return data?.data;
   },
-  async terminateContract(id: string) {
-    const { data } = await apiClient.post(`/legal/contracts/${id}/terminate`);
+  async terminateContract(id: string, reason: string) {
+    const { data } = await apiClient.post(`/legal/contracts/${id}/terminate`, { reason });
     return data?.data;
   },
 
@@ -53,8 +75,8 @@ export const legalService = {
     const { data } = await apiClient.put(`/legal/clauses/${clauseId}`, body);
     return data?.data;
   },
-  async deleteClause(clauseId: string) {
-    const { data } = await apiClient.delete(`/legal/clauses/${clauseId}`);
+  async deleteClause(clauseId: string, reason: string) {
+    const { data } = await apiClient.delete(`/legal/clauses/${clauseId}?reason=${encodeURIComponent(reason)}`);
     return data?.data;
   },
 

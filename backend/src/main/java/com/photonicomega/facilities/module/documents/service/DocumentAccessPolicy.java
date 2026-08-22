@@ -23,8 +23,9 @@ import java.util.stream.Collectors;
  *
  * <ul>
  *   <li>SUPER_ADMIN - all documents.</li>
- *   <li>COMPLIANCE_OFFICER / LEGAL_OFFICER - cross-department governance
- *       VIEW + DOWNLOAD, with no generic UPDATE/DELETE/SHARE.</li>
+ *   <li>Records &amp; legal authorities - cross-department governance
+ *       VIEW + DOWNLOAD, with no generic UPDATE/DELETE/SHARE. See
+ *       {@link #RECORDS_AUTHORITIES}.</li>
  *   <li>CONTRACT_OFFICER - own documents, own-department (Procurement)
  *       documents, contract-related documents, and explicit grants. No
  *       unrestricted access to the whole catalogue.</li>
@@ -35,18 +36,59 @@ import java.util.stream.Collectors;
  * </ul>
  *
  * <p>Grant rows ({@code document_grants}) are the explicit-exception /
- * sharing mechanism. Roles already covered by the default policy
- * (SUPER_ADMIN, COMPLIANCE_OFFICER, LEGAL_OFFICER) do not need grant rows.
+ * sharing mechanism. Roles already covered by the default policy do not need
+ * grant rows.
  */
 @Service
 @RequiredArgsConstructor
 public class DocumentAccessPolicy {
 
     private static final String SUPER_ADMIN = "SUPER_ADMIN";
-    private static final String COMPLIANCE_OFFICER = "COMPLIANCE_OFFICER";
-    private static final String LEGAL_OFFICER = "LEGAL_OFFICER";
     private static final String CONTRACT_OFFICER = "CONTRACT_OFFICER";
     private static final String EMPLOYEE = "EMPLOYEE";
+
+    /**
+     * Roles whose duty <em>is</em> the company's records, and which therefore read
+     * across departments.
+     *
+     * <p>The last four were added because the approval gate had made them approvers
+     * of document disposal, deletion, declassification and retention override
+     * without anything making them readers. Those actions carry no department scope -
+     * a {@code COMPLIANCE_MANAGER} can be asked about any document in the company -
+     * while this policy fell through to "same department only" for every role it did
+     * not name. So a fresh install shipped a pending disposal for an archived
+     * Procurement record whose only eligible approvers sat in Compliance and Legal,
+     * and not one of them could open it. The signature would still have been
+     * collected, and the audit trail would have recorded a second review that nobody
+     * was able to perform - false assurance, which is worse than no second review at
+     * all, because the record of it looks identical to the real thing.
+     *
+     * <p>Only <em>approvers</em> are listed. Requesters are deliberately not, even
+     * though {@code FACILITIES_MANAGER} and {@code DEPARTMENT_HEAD} can raise a
+     * document deletion: someone asking for an act only needs to see what they are
+     * already entitled to see, and the person who authorises it is the one who has to
+     * see the whole picture. Widening the requester side instead would hand a
+     * department-wide window to two roles that are deliberately scoped, and gain
+     * nothing - a request naming a document its requester cannot read is exactly the
+     * request an approver who <em>can</em> read it should refuse.
+     *
+     * <p>{@code RECORDS_OFFICER} is a requester rather than an approver, and is
+     * included anyway: {@code COMPLIANCE_OFFICER} already reads across departments
+     * and the seeded account holding it is titled "Records/Compliance Officer", so
+     * the dedicated records role would otherwise have had strictly less reach over
+     * records than the compliance officer standing in for it.
+     *
+     * <p>Every role here is a records or legal authority. None is an administrator,
+     * and none was added because an administrative account was inconvenienced -
+     * administering the platform still confers no authority over what it stores.
+     */
+    private static final Set<String> RECORDS_AUTHORITIES = Set.of(
+            "COMPLIANCE_OFFICER",
+            "LEGAL_OFFICER",
+            "RECORDS_OFFICER",
+            "COMPLIANCE_MANAGER",
+            "DATA_PROTECTION_OFFICER",
+            "LEGAL_COUNSEL");
 
     /** Keywords used to recognise contract-related documents for CONTRACT_OFFICER. */
     private static final Set<String> CONTRACT_KEYWORDS = Set.of(
@@ -69,7 +111,7 @@ public class DocumentAccessPolicy {
         if (hasGrant(user, document, null)) {
             return true;
         }
-        if (hasRole(user, COMPLIANCE_OFFICER) || hasRole(user, LEGAL_OFFICER)) {
+        if (isRecordsAuthority(user)) {
             return true;
         }
         if (hasRole(user, CONTRACT_OFFICER)) {
@@ -95,7 +137,7 @@ public class DocumentAccessPolicy {
         if (hasGrant(user, document, DocumentGrantAccessLevel.DOWNLOAD)) {
             return true;
         }
-        if (hasRole(user, COMPLIANCE_OFFICER) || hasRole(user, LEGAL_OFFICER)) {
+        if (isRecordsAuthority(user)) {
             return true;
         }
         if (hasRole(user, CONTRACT_OFFICER)) {
@@ -127,6 +169,20 @@ public class DocumentAccessPolicy {
     private boolean hasRole(User user, String roleName) {
         return user.getRoles().stream()
                 .anyMatch(role -> role.getName() != null && role.getName().equalsIgnoreCase(roleName));
+    }
+
+    /**
+     * Whether the caller holds any role in {@link #RECORDS_AUTHORITIES}.
+     *
+     * <p>Compared case-insensitively against the role name, matching
+     * {@link #hasRole}. Role names are stored as written by whatever created the
+     * account, and a case mismatch here would fail open into the same-department
+     * fallback - silently, and looking exactly like a correct denial.
+     */
+    private boolean isRecordsAuthority(User user) {
+        return user.getRoles().stream()
+                .map(role -> role.getName() == null ? "" : role.getName().toUpperCase(Locale.ROOT))
+                .anyMatch(RECORDS_AUTHORITIES::contains);
     }
 
     /**

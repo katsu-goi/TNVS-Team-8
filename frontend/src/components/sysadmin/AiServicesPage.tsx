@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiClient, extractErrorMessage } from '../../api/client';
 import { AddAiProviderModal, ProviderFormData } from './AddAiProviderModal';
+import { ConfirmActionModal, pendingApprovalMessage } from '../governance/ConfirmActionModal';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import {
   Cpu, CheckCircle2, RefreshCw,
@@ -172,6 +173,19 @@ export const AiServicesPage: React.FC = () => {
   const [showConfigModuleModal, setShowConfigModuleModal] = useState<AIModule | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
+
+  // The two acts on this screen that the approval gate governs: rolling a module's AI
+  // instructions back to an earlier version, and deleting a configured provider. Both
+  // are refused outright unless the caller sends a written reason, so each needs a step
+  // in front of it that collects one - a bare click on Restore or the bin icon can only
+  // ever produce a 422. Holding the target here (the version string, the provider) means
+  // the dialog can name what is about to be requested, which is the difference between
+  // "are you sure" and telling the approver-to-be what they are signing for.
+  const [confirmRollbackVersion, setConfirmRollbackVersion] = useState<string | null>(null);
+  const [confirmDeleteProvider, setConfirmDeleteProvider] = useState<Provider | null>(null);
+  // One flag for both: only one of these dialogs is ever open at a time, and it exists so
+  // the confirm button cannot be pressed twice into two identical approval requests.
+  const [raisingApproval, setRaisingApproval] = useState(false);
 
   // Configure-modal state (per-module AI model selection)
   const [configProviderId, setConfigProviderId] = useState('');
@@ -380,20 +394,42 @@ export const AiServicesPage: React.FC = () => {
     }
   };
 
-  const handleRestoreInstruction = async (version: string) => {
+  /**
+   * Files a request to roll a module's instructions back. It rolls nothing back.
+   *
+   * The response `data` is no longer a ModuleInstruction - it is the approval request the
+   * gate raised. Feeding it back into component state, which is what this did, was worse
+   * than the wrong toast: `setSelectedInstruction(res.data.data)` replaced the live
+   * instruction with an approval object, and `setTempInstructionContent(res.data.data
+   * .content || '')` blanked the editor, because an approval DTO has no `content`. The
+   * administrator was shown an empty instruction body immediately after clicking Restore
+   * and had every reason to conclude the rollback had wiped the module's instructions.
+   * Nothing on the server moved. So nothing here writes instruction state - the screen
+   * keeps showing what is actually live until an approver signs and the executor runs.
+   */
+  const handleRestoreInstruction = async (version: string, reason: string) => {
     if (!selectedModuleKey) return;
+    setRaisingApproval(true);
     try {
-      const res = await apiClient.post(`/ai/instructions/${selectedModuleKey}/restore/${version}`);
-      if (res.data?.data) {
-        setSelectedInstruction(res.data.data);
-        setTempInstructionContent(res.data.data.content || '');
-        setIsEditingInstruction(false);
-        setShowVersionHistory(false);
-        showToast(`Restored "${res.data.data.name}" to v${version}`);
-        fetchAllData();
-      }
-    } catch {
-      showToast('Failed to restore module instruction version');
+      const res = await apiClient.post(`/ai/instructions/${selectedModuleKey}/restore/${version}`, { reason });
+      // Was `Restored "<name>" to v<version>`, which was untrue on both halves: nothing
+      // was restored, and it will not be until SUPER_ADMIN or SECURITY_OFFICER approves.
+      // The server's own sentence names the request id and who still has to sign.
+      showToast(pendingApprovalMessage(res.data, 'Roll back AI instructions'));
+      setConfirmRollbackVersion(null);
+      // The history panel closes because the request is filed, not because the history
+      // changed - it has not, which is also why no refetch is issued here. Note what is
+      // deliberately absent: the editor is left exactly as the admin had it, since an act
+      // that changed nothing must not discard a draft they were part-way through.
+      setShowVersionHistory(false);
+    } catch (err) {
+      // The gate answers 422 with the one sentence that says what to do differently
+      // ("...needs a written reason before it can be requested"). The hardcoded 'Failed
+      // to restore module instruction version' that stood here discarded it and left the
+      // user retrying a call that cannot succeed until they change something.
+      showToast(extractErrorMessage(err));
+    } finally {
+      setRaisingApproval(false);
     }
   };
 
@@ -425,13 +461,35 @@ export const AiServicesPage: React.FC = () => {
     }
   };
 
-  const handleDeleteProvider = async (id: string) => {
+  /**
+   * Files a request to delete a provider. The provider stays configured and keeps
+   * serving traffic until an approver signs.
+   *
+   * Takes the whole provider rather than an id so the dialog and the failure message can
+   * name it; the list is the only place providers exist client-side.
+   */
+  const handleDeleteProvider = async (provider: Provider, reason: string) => {
+    setRaisingApproval(true);
     try {
-      await apiClient.delete(`/ai/providers/${id}`);
-      setProviders(prev => prev.filter(p => p.id !== id));
-      showToast('AI provider removed.');
-    } catch {
-      showToast('Failed to delete AI provider.');
+      // Reason goes in the query string, not a DELETE body. The handler reads either, but
+      // a DELETE body is stripped by some proxies, and the symptom of that is a 422
+      // complaining about a missing reason the user demonstrably typed - unfalsifiable
+      // from the browser. A query parameter survives every hop.
+      const res = await apiClient.delete(`/ai/providers/${provider.id}`, { params: { reason } });
+      // `setProviders(prev => prev.filter(...))` used to run here. It made the card vanish
+      // from a provider that is still configured and still routing requests, and the next
+      // realtime refresh or reload put it straight back - which reads as the screen losing
+      // track of itself and teaches the admin to distrust everything else on it.
+      // Likewise 'AI provider removed.' claimed a deletion that had not happened.
+      showToast(pendingApprovalMessage(res.data, 'Delete AI provider'));
+      setConfirmDeleteProvider(null);
+    } catch (err) {
+      // 'Failed to delete AI provider.' hid every reason the gate gives for refusing -
+      // reason too short, provider is the default, a module still routes through it -
+      // each of which tells the admin a different next step.
+      showToast(extractErrorMessage(err));
+    } finally {
+      setRaisingApproval(false);
     }
   };
 
@@ -797,7 +855,7 @@ export const AiServicesPage: React.FC = () => {
                     </button>
                     {!p.isDefault && (
                       <button
-                        onClick={() => handleDeleteProvider(p.id)}
+                        onClick={() => setConfirmDeleteProvider(p)}
                         className="text-xs text-rose-500 hover:text-rose-700 p-1"
                         title="Delete Provider"
                       >
@@ -1130,7 +1188,7 @@ export const AiServicesPage: React.FC = () => {
                         </p>
                       </div>
                       <button
-                        onClick={() => handleRestoreInstruction(v.version)}
+                        onClick={() => setConfirmRollbackVersion(v.version)}
                         className="shrink-0 text-xs font-semibold text-emerald-700 hover:text-emerald-900 hover:underline"
                       >
                         Restore
@@ -1563,6 +1621,41 @@ export const AiServicesPage: React.FC = () => {
           isOpen={showAddProviderModal}
           onClose={() => setShowAddProviderModal(false)}
           onSave={handleSaveProviderFromModal}
+        />
+      )}
+
+      {/* GATE: ROLL BACK AI INSTRUCTIONS
+          Restore in the audit history above cannot call the route directly - the gate
+          needs the reason, and the person needs telling that the click files a request
+          against instructions that stay live in the meantime. `consequence` repeats
+          AI_INSTRUCTION_ROLLBACK's own rationale so the approver reads the same words. */}
+      {confirmRollbackVersion && (
+        <ConfirmActionModal
+          title="Roll Back AI Instructions"
+          targetLabel={`${selectedInstruction?.name || selectedModuleKey} — roll back to v${confirmRollbackVersion}`}
+          consequence="AI instructions decide what the assistant recommends to every user, so changing them changes advice company-wide - silently, with no build and no diff for anyone to review."
+          reasonPlaceholder="Why must this module go back to the earlier instructions? The approver has no other context."
+          icon={History}
+          busy={raisingApproval}
+          onCancel={() => setConfirmRollbackVersion(null)}
+          onConfirm={reason => handleRestoreInstruction(confirmRollbackVersion, reason)}
+        />
+      )}
+
+      {/* GATE: DELETE AI PROVIDER
+          Named with the model as well as the display name because two gateway entries
+          for the same vendor differ only by model, and the approver sees this label
+          without the console in front of them. */}
+      {confirmDeleteProvider && (
+        <ConfirmActionModal
+          title="Delete AI Provider"
+          targetLabel={`${confirmDeleteProvider.name} · ${confirmDeleteProvider.model}`}
+          consequence="Removing the configured provider disables classification and OCR for every module at once."
+          reasonPlaceholder="Why is this provider being removed, and what serves the modules that use it?"
+          icon={Trash2}
+          busy={raisingApproval}
+          onCancel={() => setConfirmDeleteProvider(null)}
+          onConfirm={reason => handleDeleteProvider(confirmDeleteProvider, reason)}
         />
       )}
     </div>

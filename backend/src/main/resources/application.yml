@@ -10,7 +10,11 @@ spring:
   application:
     name: facilities-management-service
   profiles:
-    active: ${SPRING_PROFILES_ACTIVE:supabase}
+    # `dev` is the zero-configuration profile: it needs no external database and
+    # no environment variables, so a fresh clone boots green with one command.
+    # Every deployed environment sets SPRING_PROFILES_ACTIVE explicitly
+    # (`supabase` in the cloud, `local` against a developer Postgres).
+    active: ${SPRING_PROFILES_ACTIVE:dev}
 
   # Primary PostgreSQL Database
   datasource:
@@ -248,6 +252,33 @@ spring:
 app:
   security:
     bcrypt-strength: 4
+
+---
+# Zero-configuration developer profile. File-backed H2 in PostgreSQL
+# compatibility mode, so the schema comes from the entity model and the data
+# survives a restart - unlike the `test` profile, which is create-drop and is
+# wiped every boot. Requires no local Postgres and no credentials.
+spring:
+  config:
+    activate:
+      on-profile: dev
+  datasource:
+    url: jdbc:h2:file:./data/facilities-dev;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+  flyway:
+    enabled: false
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+app:
+  security:
+    bcrypt-strength: 6
 
 ---
 spring:

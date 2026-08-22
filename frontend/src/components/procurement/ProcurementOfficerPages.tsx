@@ -5,16 +5,30 @@ import {
   X, BellRing, Bell, ShieldAlert, Ban, Gavel, Send, PlayCircle,
   RotateCcw, Pencil, ChevronRight, Gauge, CalendarClock,
 } from 'lucide-react';
-import { safeFetchJson } from '../../api/client';
+import { mutateJson, safeFetchJson } from '../../api/client';
+import { ConfirmActionModal, pendingApprovalMessage } from '../governance/ConfirmActionModal';
 
-// POST/PUT helper that surfaces failure (safeFetchJson returns null on error).
+/**
+ * POST/PUT/DELETE helper for the ungoverned writes on these pages, kept because a
+ * dozen call sites read only `data` and should not each grow envelope handling.
+ *
+ * It now delegates to `mutateJson` instead of `safeFetchJson`. `safeFetchJson`
+ * collapses every non-2xx into `null`, so this helper could only ever throw one
+ * sentence - "Request failed. Please try again." - which is exactly wrong in front
+ * of the approval gate: its 422 says which rule was broken ("Delete legal clause
+ * needs a written reason before it can be requested"), and telling the user to try
+ * again invites a retry of something that will never succeed. `mutateJson` throws
+ * with the server's own message, which the `catch (err) => show(err?.message)`
+ * blocks below already display, so every existing caller gets the real reason for
+ * free.
+ *
+ * Returns `data` unchanged so no caller needed touching. The three governed sites
+ * call `mutateJson` directly instead, because there the *message* is the result -
+ * it names the approvals still needed and the request id - and `data` alone cannot.
+ */
 const mutate = async (url: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown) => {
-  const json = await safeFetchJson(url, {
-    method,
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  });
-  if (json === null) throw new Error('Request failed. Please try again.');
-  return (json as any)?.data;
+  const envelope = await mutateJson(url, method, body);
+  return envelope.data;
 };
 
 const LoadingSkeleton: React.FC = () => (
@@ -207,6 +221,9 @@ export const PoContractsPage: React.FC = () => {
   const [form, setForm] = useState<any>({});
   const [saving, setSaving] = useState(false);
   const [detail, setDetail] = useState<any | null>(null);
+  // Termination is the one contract lifecycle step behind the approval gate, so it
+  // needs a reason typed before the call is made. The other five stay direct.
+  const [terminating, setTerminating] = useState<any | null>(null);
   const { show, node: toastNode } = useToast();
 
   const load = useCallback(async () => {
@@ -234,6 +251,35 @@ export const PoContractsPage: React.FC = () => {
     try {
       await mutate(`/api/v1/procurement/contracts/${id}/${path}`, 'POST', body);
       show(label);
+      await load();
+    } catch (err: any) {
+      show(err?.message || 'Action failed', 'err');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /**
+   * Requests termination. Deliberately not `runAction`.
+   *
+   * `runAction` sends no body, which this route answers with 422 because the gate
+   * requires a written justification, and then prints the caller's fixed label
+   * regardless of what came back. Under that path Terminate showed "Contract
+   * terminated" for a call that had failed outright - and would still have shown it
+   * had the call succeeded, where the contract is also not terminated but merely
+   * queued for two signatures. So the reason travels in the body, and the toast is
+   * the server's sentence naming the approvers and the request id.
+   *
+   * `load()` still runs, and the row deliberately comes back with its old status:
+   * the contract really is unchanged, and dropping or greying it here would invent a
+   * termination that a refresh would then undo.
+   */
+  const requestTerminate = async (contract: any, reason: string) => {
+    setBusyId(contract.id);
+    try {
+      const envelope = await mutateJson(`/api/v1/procurement/contracts/${contract.id}/terminate`, 'POST', { reason });
+      show(pendingApprovalMessage(envelope, 'Terminate contract'));
+      setTerminating(null);
       await load();
     } catch (err: any) {
       show(err?.message || 'Action failed', 'err');
@@ -354,7 +400,7 @@ export const PoContractsPage: React.FC = () => {
                           {status === 'UNDER_REVIEW' && <ActionButton onClick={() => runAction(c.id, 'approve', 'Contract approved')} icon={CheckCircle2} variant="primary" disabled={busy}>Approve</ActionButton>}
                           {status === 'APPROVED' && <ActionButton onClick={() => runAction(c.id, 'activate', 'Contract activated')} icon={PlayCircle} variant="primary" disabled={busy}>Activate</ActionButton>}
                           {(status === 'ACTIVE' || status === 'EXPIRED') && <ActionButton onClick={() => runAction(c.id, 'renew', 'Contract renewed')} icon={RotateCcw} disabled={busy}>Renew</ActionButton>}
-                          {status !== 'TERMINATED' && <ActionButton onClick={() => runAction(c.id, 'terminate', 'Contract terminated')} icon={Ban} variant="danger" disabled={busy}>Terminate</ActionButton>}
+                          {status !== 'TERMINATED' && <ActionButton onClick={() => setTerminating(c)} icon={Ban} variant="danger" disabled={busy}>Terminate</ActionButton>}
                         </div>
                       </td>
                     </tr>
@@ -424,6 +470,19 @@ export const PoContractsPage: React.FC = () => {
         </Modal>
       )}
 
+      {terminating && (
+        <ConfirmActionModal
+          title="Terminate Contract"
+          targetLabel={`${terminating.title}${terminating.contractNumber ? ` · ${terminating.contractNumber}` : ''}`}
+          consequence="Early termination usually carries a financial penalty, so legal and the budget owner both have to agree."
+          reasonPlaceholder="Why is this contract being ended early? The approvers read this before signing."
+          icon={Ban}
+          busy={busyId === terminating.id}
+          onCancel={() => setTerminating(null)}
+          onConfirm={reason => requestTerminate(terminating, reason)}
+        />
+      )}
+
       {detail && <ContractDetailDrawer contract={detail} onClose={() => setDetail(null)} onChanged={load} show={show} />}
     </div>
   );
@@ -436,6 +495,9 @@ const ContractDetailDrawer: React.FC<{ contract: any; onClose: () => void; onCha
   const [form, setForm] = useState<any>({});
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Deletion is gated; editing a clause is not. Held separately from `clauseForm`
+  // so the edit dialog and the approval request cannot both be open at once.
+  const [deletingClause, setDeletingClause] = useState<any | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -467,11 +529,29 @@ const ContractDetailDrawer: React.FC<{ contract: any; onClose: () => void; onCha
     }
   };
 
-  const removeClause = async (cl: any) => {
+  /**
+   * Requests deletion of a clause. Nothing is removed by this call.
+   *
+   * The previous version sent a bodiless DELETE and then showed "Clause deleted".
+   * Both halves were wrong: the gate rejects a request with no justification, so the
+   * call 422'd, and even on success the clause is still attached to the contract
+   * until legal signs. The old toast therefore told the user a contract's wording had
+   * changed when it had not - the worst direction for this particular error, because
+   * someone who believes an indemnity clause is gone stops relying on it.
+   *
+   * The reason goes in the query string rather than a DELETE body: the handler takes
+   * either, but intermediaries are entitled to strip a body from a DELETE and a query
+   * parameter always arrives.
+   */
+  const requestClauseDelete = async (cl: any, reason: string) => {
     setBusyId(cl.id);
     try {
-      await mutate(`/api/v1/procurement/clauses/${cl.id}`, 'DELETE');
-      show('Clause deleted');
+      const envelope = await mutateJson(
+        `/api/v1/procurement/clauses/${cl.id}?reason=${encodeURIComponent(reason)}`, 'DELETE');
+      show(pendingApprovalMessage(envelope, 'Delete legal clause'));
+      setDeletingClause(null);
+      // Reloaded, not spliced out of `clauses`: the clause is still on the contract
+      // and must keep showing, or the drawer would disagree with the server.
       await load();
       onChanged();
     } catch (err: any) {
@@ -524,7 +604,7 @@ const ContractDetailDrawer: React.FC<{ contract: any; onClose: () => void; onCha
                     </div>
                     <div className="flex items-center space-x-1.5">
                       <ActionButton onClick={() => openEdit(cl)} icon={Pencil} disabled={busyId === cl.id}>Edit</ActionButton>
-                      <ActionButton onClick={() => removeClause(cl)} icon={Trash2} variant="danger" disabled={busyId === cl.id}>Delete</ActionButton>
+                      <ActionButton onClick={() => setDeletingClause(cl)} icon={Trash2} variant="danger" disabled={busyId === cl.id}>Delete</ActionButton>
                     </div>
                   </div>
                   <p className="text-xs text-slate-600">{cl.content}</p>
@@ -562,6 +642,19 @@ const ContractDetailDrawer: React.FC<{ contract: any; onClose: () => void; onCha
               <ActionButton onClick={saveClause} icon={CheckCircle2} variant="primary" disabled={saving}>{saving ? 'Saving…' : 'Save'}</ActionButton>
             </div>
           </Modal>
+        )}
+
+        {deletingClause && (
+          <ConfirmActionModal
+            title="Delete Legal Clause"
+            targetLabel={`${deletingClause.clauseType} · ${contract.title}`}
+            consequence="Clauses are referenced by live contracts; removing one changes what those contracts mean."
+            reasonPlaceholder="Why should this clause come out of the contract? Legal reads this before signing."
+            icon={Trash2}
+            busy={busyId === deletingClause.id}
+            onCancel={() => setDeletingClause(null)}
+            onConfirm={reason => requestClauseDelete(deletingClause, reason)}
+          />
         )}
       </div>
     </div>
@@ -772,6 +865,9 @@ const VendorDetailDrawer: React.FC<{ vendor: any; onClose: () => void; onChanged
   const [perfForm, setPerfForm] = useState<{ performanceScore: string; slaComplianceRate: string; notes: string }>({ performanceScore: '', slaComplianceRate: '', notes: '' });
   const [statusOpen, setStatusOpen] = useState(false);
   const [statusVal, setStatusVal] = useState('ACTIVE');
+  // Only deletion is gated here. Editing an obligation and marking one complete are
+  // ordinary writes, so this is kept apart from `oblForm`.
+  const [deletingObl, setDeletingObl] = useState<any | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -821,11 +917,30 @@ const VendorDetailDrawer: React.FC<{ vendor: any; onClose: () => void; onChanged
     }
   };
 
-  const removeObl = async (o: any) => {
+  /**
+   * Requests deletion of an obligation. The obligation is still being tracked when
+   * this returns.
+   *
+   * Before this, the button fired a bodiless DELETE - which the gate rejects for
+   * having no justification - and then announced "Obligation deleted" whatever came
+   * back. That claim is the one a reviewer cannot check later: a deleted obligation
+   * simply stops appearing, so a user told it was deleted, when it was not, keeps a
+   * duty on the vendor that nobody is watching for, and the reverse belief is just as
+   * costly. Now the reason is collected first and the toast repeats the server's own
+   * account of what is pending.
+   *
+   * Reason as a query parameter, not a DELETE body, so a proxy that drops bodies on
+   * DELETE cannot turn a justified request back into a 422.
+   */
+  const requestOblDelete = async (o: any, reason: string) => {
     setBusyId(o.id);
     try {
-      await mutate(`/api/v1/procurement/obligations/${o.id}`, 'DELETE');
-      show('Obligation deleted');
+      const envelope = await mutateJson(
+        `/api/v1/procurement/obligations/${o.id}?reason=${encodeURIComponent(reason)}`, 'DELETE');
+      show(pendingApprovalMessage(envelope, 'Delete contract obligation'));
+      setDeletingObl(null);
+      // Refetched rather than filtered out of `obligations`: the row is still live on
+      // the server, and hiding it would make a pending request look like a done one.
       await load();
       onChanged();
     } catch (err: any) {
@@ -947,7 +1062,7 @@ const VendorDetailDrawer: React.FC<{ vendor: any; onClose: () => void; onChanged
                     </div>
                     <div className="flex items-center space-x-1.5">
                       <ActionButton onClick={() => openEditObl(o)} icon={Pencil} disabled={busyId === o.id}>Edit</ActionButton>
-                      <ActionButton onClick={() => removeObl(o)} icon={Trash2} variant="danger" disabled={busyId === o.id}>Delete</ActionButton>
+                      <ActionButton onClick={() => setDeletingObl(o)} icon={Trash2} variant="danger" disabled={busyId === o.id}>Delete</ActionButton>
                     </div>
                   </div>
                   {o.description && <p className="text-xs text-slate-600">{o.description}</p>}
@@ -996,6 +1111,19 @@ const VendorDetailDrawer: React.FC<{ vendor: any; onClose: () => void; onChanged
               <ActionButton onClick={saveObl} icon={CheckCircle2} variant="primary" disabled={saving}>{saving ? 'Saving…' : 'Save'}</ActionButton>
             </div>
           </Modal>
+        )}
+
+        {deletingObl && (
+          <ConfirmActionModal
+            title="Delete Contract Obligation"
+            targetLabel={`${deletingObl.title} · ${vendor.name}`}
+            consequence="A deleted obligation stops being monitored, which is indistinguishable from a met obligation in every later report."
+            reasonPlaceholder="Why should this obligation stop being tracked? Legal reads this before signing."
+            icon={Trash2}
+            busy={busyId === deletingObl.id}
+            onCancel={() => setDeletingObl(null)}
+            onConfirm={reason => requestOblDelete(deletingObl, reason)}
+          />
         )}
 
         {perfOpen && (

@@ -13,10 +13,17 @@ import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.LockedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.List;
@@ -118,6 +125,87 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleMaxUploadSize(MaxUploadSizeExceededException ex) {
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
                 .body(ApiResponse.failure("File size exceeds maximum allowed limit (100MB)", "FILE_TOO_LARGE"));
+    }
+
+    // ------------------------------------------------------------------
+    // Request-binding failures.
+    //
+    // These are all caller mistakes, and every one of them used to fall
+    // through to handleGenericException and come back as HTTP 500. This class
+    // does not extend ResponseEntityExceptionHandler, so Spring's own
+    // 400/415/406 mappings never applied - the catch-all won instead.
+    //
+    // Reporting a caller mistake as a server fault is a governance defect, not
+    // just a cosmetic one: in the audit trail "the request was malformed" and
+    // "the platform broke" become indistinguishable, and any alert gated on
+    // 5xx fires on ordinary user typos.
+    // ------------------------------------------------------------------
+
+    /** A required query parameter, header, cookie, or multipart part was not sent. */
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMissingParameter(
+            MissingServletRequestParameterException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.failure("Required request parameter '" + ex.getParameterName()
+                        + "' (" + ex.getParameterType() + ") is missing.", "MISSING_PARAMETER"));
+    }
+
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMissingPart(MissingServletRequestPartException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.failure("Required multipart file part '" + ex.getRequestPartName()
+                        + "' is missing.", "MISSING_PARAMETER"));
+    }
+
+    /**
+     * Catches the remaining {@link ServletRequestBindingException} subtypes -
+     * missing request header, missing cookie, missing path variable, missing
+     * matrix variable - so none of them can reach the catch-all either.
+     */
+    @ExceptionHandler(ServletRequestBindingException.class)
+    public ResponseEntity<ApiResponse<Void>> handleBindingFailure(ServletRequestBindingException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.failure("Request is missing required data: " + ex.getMessage(),
+                        "MISSING_PARAMETER"));
+    }
+
+    /**
+     * A supplied value could not be converted to the declared type - most often
+     * a path variable that is not a valid UUID, or a query parameter that is
+     * not a valid enum constant or number.
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<Void>> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        String expected = ex.getRequiredType() == null ? "the expected type"
+                : ex.getRequiredType().getSimpleName();
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.failure("Parameter '" + ex.getName() + "' has an invalid value "
+                        + "'" + ex.getValue() + "'; expected " + expected + ".", "INVALID_PARAMETER"));
+    }
+
+    /** Body present but unparseable, or absent when the handler requires one. */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<Void>> handleUnreadableBody(HttpMessageNotReadableException ex) {
+        log.warn("Malformed request body: {}", ex.getMostSpecificCause().getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.failure("Request body is missing or is not valid JSON.",
+                        "MALFORMED_REQUEST_BODY"));
+    }
+
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleUnsupportedMediaType(
+            HttpMediaTypeNotSupportedException ex) {
+        return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
+                .body(ApiResponse.failure("Content type " + ex.getContentType()
+                        + " is not supported by this endpoint. Supported: "
+                        + ex.getSupportedMediaTypes() + ".", "UNSUPPORTED_MEDIA_TYPE"));
+    }
+
+    @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNotAcceptable(HttpMediaTypeNotAcceptableException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_ACCEPTABLE)
+                .body(ApiResponse.failure("This endpoint cannot produce any of the requested media "
+                        + "types. Supported: " + ex.getSupportedMediaTypes() + ".", "NOT_ACCEPTABLE"));
     }
 
     /** Unmatched routes must be a 404, not a 500. */

@@ -15,6 +15,7 @@ import com.photonicomega.facilities.module.compliance.domain.DisposalRequest;
 import com.photonicomega.facilities.module.compliance.domain.DisposalStatus;
 import com.photonicomega.facilities.module.compliance.repository.DisposalRequestRepository;
 import com.photonicomega.facilities.module.compliance.service.ComplianceService;
+import com.photonicomega.facilities.module.governance.domain.GovernanceRoles;
 import com.photonicomega.facilities.module.documents.domain.ClassificationLevel;
 import com.photonicomega.facilities.module.documents.domain.Document;
 import com.photonicomega.facilities.module.documents.domain.DocumentGrant;
@@ -61,6 +62,7 @@ import java.util.Set;
 public class BootstrapAdmin implements CommandLineRunner {
 
     private final UserRepository userRepository;
+    private final SeededRoleBinder seededRoleBinder;
     private final PasswordEncoder passwordEncoder;
     private final DocumentRepository documentRepository;
     private final DocumentGrantRepository documentGrantRepository;
@@ -86,6 +88,7 @@ public class BootstrapAdmin implements CommandLineRunner {
         seedFacilitiesManager();
         seedFacilitiesOfficer();
         seedComplianceOfficer();
+        seedGovernanceApprovers();
         seedComplianceSampleData();
         seedLegalOfficer();
         seedLegalSampleData();
@@ -95,8 +98,43 @@ public class BootstrapAdmin implements CommandLineRunner {
         seedEmployeeSampleData();
     }
 
+    /**
+     * Whether a bootstrap account can be created, checked against the database's
+     * real uniqueness rather than the application's view of it.
+     *
+     * <p>Every seeder used to guard with {@code findByEmailAndDeletedFalse},
+     * which is blind in exactly the wrong direction. Soft-deleting a seeded
+     * account clears it from that query while its row goes on occupying the
+     * unique {@code idx_users_email} index and the unique {@code employee_id}
+     * column. The next startup therefore concluded the account was missing,
+     * tried to INSERT it, hit the constraint, and threw out of
+     * {@code CommandLineRunner.run} - which aborts the entire application. One
+     * deleted default account and the backend would never boot again.
+     *
+     * <p>Skipping rather than resurrecting is deliberate. If an administrator
+     * removed a default account, quietly recreating it on the next restart would
+     * hand back credentials somebody had decided to revoke. So this logs loudly
+     * and leaves the account deleted.
+     */
+    private boolean canSeed(String email, String employeeId, String label) {
+        if (userRepository.existsByEmail(email)) {
+            if (!userRepository.existsByEmailAndDeletedFalse(email)) {
+                log.warn("Not seeding {} ({}): that account exists but has been deleted. "
+                        + "It will not be recreated - restore it deliberately if it is needed.",
+                        label, email);
+            }
+            return false;
+        }
+        if (employeeId != null && userRepository.existsByEmployeeId(employeeId)) {
+            log.warn("Not seeding {} ({}): employee id {} is already taken by another account.",
+                    label, email, employeeId);
+            return false;
+        }
+        return true;
+    }
+
     private void seedAdmin() {
-        if (userRepository.findByEmailAndDeletedFalse("admin@photonicomega.com").isPresent()) {
+        if (!canSeed("admin@photonicomega.com", "ADMIN-001", "bootstrap admin")) {
             return;
         }
         log.info("Creating bootstrap admin user...");
@@ -138,7 +176,7 @@ public class BootstrapAdmin implements CommandLineRunner {
     }
 
     private void seedFacilitiesManager() {
-        if (userRepository.findByEmailAndDeletedFalse("fm@photonicomega.com").isPresent()) {
+        if (!canSeed("fm@photonicomega.com", "FM-001", "facilities manager")) {
             return;
         }
         log.info("Creating bootstrap facilities manager user...");
@@ -177,7 +215,7 @@ public class BootstrapAdmin implements CommandLineRunner {
     }
 
     private void seedFacilitiesOfficer() {
-        if (userRepository.findByEmailAndDeletedFalse("fo@photonicomega.com").isPresent()) {
+        if (!canSeed("fo@photonicomega.com", "FO-001", "facilities officer")) {
             return;
         }
         log.info("Creating bootstrap facilities officer user...");
@@ -216,7 +254,7 @@ public class BootstrapAdmin implements CommandLineRunner {
     }
 
     private void seedComplianceOfficer() {
-        if (userRepository.findByEmailAndDeletedFalse("co@photonicomega.com").isPresent()) {
+        if (!canSeed("co@photonicomega.com", "CO-001", "compliance officer")) {
             return;
         }
         log.info("Creating bootstrap compliance officer user...");
@@ -252,6 +290,134 @@ public class BootstrapAdmin implements CommandLineRunner {
                 .build());
 
         log.info("Bootstrap compliance officer user created.");
+    }
+
+    /**
+     * Seeds the governance role-holders that the two-person rules depend on.
+     *
+     * <p>This is not cosmetic, and it is not a convenience. Every rule in
+     * {@link com.photonicomega.facilities.module.governance.domain.SensitiveAction}
+     * is expressed in role names, and a rule naming a role that nobody holds is
+     * enforced and unsatisfiable at the same time: the request is accepted, the
+     * approvers are notified, and there is no one to notify. It fails closed, which
+     * is the safe direction and still leaves the action permanently stuck.
+     *
+     * <p>The three records approvers below were added first, for
+     * {@code DOCUMENT_DISPOSE}. That was reasoned out by hand for one action and,
+     * predictably, missed the others - nine of the fifteen were unapprovable. The
+     * arithmetic is now enforced by {@code ApprovalQuorumReachableTest} instead of
+     * re-derived per action, because the deadlock is invisible from inside any single
+     * one of them: the enum is right, the gate is right, the executor is right, and
+     * the action still cannot happen.
+     *
+     * <p>Two security officers rather than one is deliberate.
+     * {@code BACKUP_RESTORE} needs two distinct signatures from
+     * {@code SUPER_ADMIN} or {@code SECURITY_OFFICER} and forbids self-approval, so
+     * with one super administrator and one security officer a restore requested by
+     * the administrator has exactly one eligible signer and stalls. A two-person rule
+     * needs three people to survive one of them being the requester - or being on
+     * leave, which is the same problem arriving less predictably.
+     *
+     * <p>None of these accounts is an administrator, and the administrator accounts
+     * appear in no records approver set. {@code sysadmin@} in particular can
+     * <em>request</em> account deactivations, role changes, restores and AI changes
+     * and can approve none of them, and holds no document access beyond its own
+     * department - administering the platform confers no authority over what it
+     * stores. {@code DocumentApproverCanReadRecordTest} asserts that directly, so a
+     * later convenience fix cannot quietly undo it.
+     */
+    private void seedGovernanceApprovers() {
+        // --- Records & legal authorities. Approve document disposal, deletion,
+        // declassification and retention overrides. All read across departments
+        // (DocumentAccessPolicy) because they can be asked about any document.
+        seedApprover("compliance.manager@photonicomega.com", "ComplianceMgr2026!",
+                "Compliance", "Manager", "CM-001", "Compliance", "Compliance Manager",
+                GovernanceRoles.COMPLIANCE_MANAGER, "Compliance Manager",
+                "Second-signature authority over records disposals, deletions and retention overrides.");
+        seedApprover("dpo@photonicomega.com", "DataProtect2026!",
+                "Data Protection", "Officer", "DPO-001", "Compliance", "Data Protection Officer",
+                GovernanceRoles.DATA_PROTECTION_OFFICER, "Data Protection Officer",
+                "Data-protection authority; approves disposals, deletions, retention overrides and declassification.");
+        seedApprover("counsel@photonicomega.com", "LegalCounsel2026!",
+                "Legal", "Counsel", "LC-001", "Legal", "Legal Counsel",
+                GovernanceRoles.LEGAL_COUNSEL, "Legal Counsel",
+                "Senior legal authority; approves contract terminations, clause/obligation deletions, and records disposals.");
+
+        // --- Records officer. Raises disposals and retention overrides; never
+        // approves one. The compliance officer above was standing in for this role,
+        // which is why its seeded position reads "Records/Compliance Officer".
+        seedApprover("records@photonicomega.com", "Records2026!",
+                "Records", "Officer", "RO-001", "Compliance", "Records Officer",
+                GovernanceRoles.RECORDS_OFFICER, "Records Officer",
+                "Custodian of the retention schedule; raises disposals, deletions and retention "
+                        + "overrides for a records authority to countersign.");
+
+        // --- Budget owner. CONTRACT_TERMINATE needs two signatures from
+        // LEGAL_COUNSEL or DEPARTMENT_HEAD - "legal and the budget owner both have to
+        // agree" - so with only legal counsel seeded it needed two people and had one.
+        seedApprover("dept.head@photonicomega.com", "DeptHead2026!",
+                "Department", "Head", "DH-001", "Operations", "Department Head",
+                GovernanceRoles.DEPARTMENT_HEAD, "Department Head",
+                "Budget owner; co-signs contract terminations and may raise document deletions "
+                        + "for records authorities to countersign.");
+
+        // --- Security. Approves the identity, access, platform and AI actions. The
+        // second officer is what makes BACKUP_RESTORE's two-signature rule reachable.
+        seedApprover("security@photonicomega.com", "Security2026!",
+                "Security", "Officer", "SEC-001", "Security", "Security Officer",
+                GovernanceRoles.SECURITY_OFFICER, "Security Officer",
+                "Approves session revocations, IP unblocks, account deactivations, role changes, "
+                        + "database restores and AI configuration changes.");
+        seedApprover("infosec@photonicomega.com", "InfoSec2026!",
+                "Information Security", "Officer", "SEC-002", "Security",
+                "Information Security Officer",
+                GovernanceRoles.SECURITY_OFFICER, "Security Officer",
+                "Approves session revocations, IP unblocks, account deactivations, role changes, "
+                        + "database restores and AI configuration changes.");
+
+        // --- Platform administrator. Requests; approves nothing. Holds no document
+        // access outside its own department, by policy and by test.
+        seedApprover("sysadmin@photonicomega.com", "SysAdmin2026!",
+                "Platform", "Administrator", "SA-001", "IT", "IT Systems Administrator",
+                GovernanceRoles.SYSTEM_ADMINISTRATOR, "System Administrator",
+                "Operates the platform. May request account deactivations, role changes, session "
+                        + "revocations, IP unblocks, database restores and AI configuration changes; "
+                        + "approves none of them, and holds no authority over the company's records.");
+    }
+
+    /**
+     * Creates one single-role user, idempotently. Centralised rather than
+     * copy-pasted per approver so the builder sequence exists in exactly one
+     * place - one thing to get right instead of eight.
+     *
+     * <p>The role is bound by {@link SeededRoleBinder} rather than passed through the
+     * builder here. A role shared by several holders is the normal case - two security
+     * officers exist so that a two-signature rule stays reachable when one of them is
+     * the requester - and binding a shared role needs a transaction that this class
+     * cannot open on itself. {@code SeededRoleBinder} documents why both of the
+     * obvious alternatives abort startup.
+     */
+    private void seedApprover(String email, String rawPassword, String firstName, String lastName,
+                              String employeeId, String department, String position,
+                              String roleName, String roleDisplay, String roleDescription) {
+        if (!canSeed(email, employeeId, "governance role-holder " + roleName)) {
+            return;
+        }
+        log.info("Creating governance role-holder {} with role {}...", email, roleName);
+
+        seededRoleBinder.saveWithRole(User.builder()
+                .email(email)
+                .passwordHash(passwordEncoder.encode(rawPassword))
+                .firstName(firstName)
+                .lastName(lastName)
+                .employeeId(employeeId)
+                .department(department)
+                .position(position)
+                .status(UserStatus.ACTIVE)
+                .emailVerified(true)
+                .build(), roleName, roleDisplay, roleDescription);
+
+        log.info("Governance role-holder {} created.", email);
     }
 
     /**
@@ -388,7 +554,7 @@ public class BootstrapAdmin implements CommandLineRunner {
     }
 
     private void seedLegalOfficer() {
-        if (userRepository.findByEmailAndDeletedFalse("legal@photonicomega.com").isPresent()) {
+        if (!canSeed("legal@photonicomega.com", "LG-001", "legal officer")) {
             return;
         }
         log.info("Creating bootstrap legal officer user...");
@@ -472,7 +638,7 @@ public class BootstrapAdmin implements CommandLineRunner {
     }
 
     private void seedContractOfficer() {
-        if (userRepository.findByEmailAndDeletedFalse("contract@photonicomega.com").isPresent()) {
+        if (!canSeed("contract@photonicomega.com", "CTO-001", "contract officer")) {
             return;
         }
         log.info("Creating bootstrap contract officer user...");
@@ -603,7 +769,7 @@ public class BootstrapAdmin implements CommandLineRunner {
     }
 
     private void seedEmployee() {
-        if (userRepository.findByEmailAndDeletedFalse("employee@photonicomega.com").isPresent()) {
+        if (!canSeed("employee@photonicomega.com", "EMP-001", "employee")) {
             return;
         }
         log.info("Creating bootstrap employee user...");

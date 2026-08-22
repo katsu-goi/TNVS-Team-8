@@ -88,7 +88,7 @@ import {
   EmpProfilePage,
   EmpSettingsPage,
 } from './components/employee/EmployeePages';
-import { useAuthStore, getDashboardPath, isSuperAdmin } from './stores/authStore';
+import { useAuthStore, getDashboardPath, isSuperAdmin, hasAnyRole, ROLE_FAMILIES } from './stores/authStore';
 
 class ErrorBoundary extends React.Component<
   { fallback: React.ReactNode; children: React.ReactNode },
@@ -146,12 +146,20 @@ const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return <>{children}</>;
 };
 
+/*
+ * The six dashboard guards below take their role lists from ROLE_FAMILIES, the
+ * same constant getDashboardPath uses. That is deliberate and load-bearing: a
+ * guard that admits less than getDashboardPath routes produces an infinite
+ * redirect loop, not an error - the guard sends the user to '/', AdminRoute asks
+ * getDashboardPath where they belong, gets this surface back, and returns them to
+ * the guard that just rejected them. Keep both sides reading the same constant.
+ */
+
 const FacilitiesRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
-  if (!roles.includes('FACILITIES_MANAGER') && !roles.includes('ROLE_FACILITIES_MANAGER')) return <Navigate to="/" replace />;
+  if (!hasAnyRole(user, ROLE_FAMILIES.facilities)) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
 
@@ -159,17 +167,21 @@ const FacilitiesOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ child
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
-  if (!roles.includes('FACILITIES_OFFICER') && !roles.includes('ROLE_FACILITIES_OFFICER')) return <Navigate to="/" replace />;
+  if (!hasAnyRole(user, ROLE_FAMILIES.facilitiesOfficer)) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
 
+/**
+ * Admits the records family, not COMPLIANCE_OFFICER alone. The officer raises a
+ * disposal and is forbidden from approving it, so the roles that give the second
+ * signature - COMPLIANCE_MANAGER, DATA_PROTECTION_OFFICER - have to be able to
+ * reach this surface or no disposal can ever be approved.
+ */
 const ComplianceOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
-  if (!roles.includes('COMPLIANCE_OFFICER') && !roles.includes('ROLE_COMPLIANCE_OFFICER')) return <Navigate to="/" replace />;
+  if (!hasAnyRole(user, ROLE_FAMILIES.compliance)) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
 
@@ -177,8 +189,7 @@ const LegalOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ children }
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
-  if (!roles.includes('LEGAL_OFFICER') && !roles.includes('ROLE_LEGAL_OFFICER')) return <Navigate to="/" replace />;
+  if (!hasAnyRole(user, ROLE_FAMILIES.legal)) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
 
@@ -186,8 +197,7 @@ const ContractOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ childre
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
-  if (!roles.includes('CONTRACT_OFFICER') && !roles.includes('ROLE_CONTRACT_OFFICER')) return <Navigate to="/" replace />;
+  if (!hasAnyRole(user, ROLE_FAMILIES.procurement)) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
 
@@ -195,8 +205,7 @@ const EmployeeRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
-  if (!roles.includes('EMPLOYEE') && !roles.includes('ROLE_EMPLOYEE')) return <Navigate to="/" replace />;
+  if (!hasAnyRole(user, ROLE_FAMILIES.employee)) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
 

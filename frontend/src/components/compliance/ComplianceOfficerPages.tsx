@@ -4,16 +4,29 @@ import {
   ScrollText, User, Settings, Filter, CheckCircle2, Trash2, Plus,
   X, BellRing, Bell, ShieldAlert, Ban,
 } from 'lucide-react';
-import { safeFetchJson } from '../../api/client';
+import { safeFetchJson, mutateJson } from '../../api/client';
+import { MIN_REASON_LENGTH } from '../governance/ConfirmActionModal';
 
-// POST/PUT helper that surfaces failure (safeFetchJson returns null on error).
+/**
+ * POST/PUT helper. Delegates to `mutateJson` so the server's own sentence reaches
+ * the toast.
+ *
+ * The previous body built this on `safeFetchJson`, which collapses every non-2xx
+ * into `null`, and then threw a fixed "Request failed. Please try again." That was
+ * survivable while the writes here were unconditional. It is not now: a disposal
+ * raised with too short a justification comes back 422 with a message naming the
+ * ten-character minimum, and flattening it to "try again" invites the user to
+ * resend the same too-short reason forever while the one instruction that would
+ * fix it is thrown away. `mutateJson` throws an Error carrying the server's
+ * message instead, and every catch below already shows `err.message`.
+ *
+ * Still returns `data` rather than the envelope, because the callers in this file
+ * read fields off the DTO (a disposal decision's `status`) and none of them needs
+ * the envelope message on the success path.
+ */
 const mutate = async (url: string, method: 'POST' | 'PUT', body?: unknown) => {
-  const json = await safeFetchJson(url, {
-    method,
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  });
-  if (json === null) throw new Error('Request failed. Please try again.');
-  return (json as any)?.data;
+  const envelope = await mutateJson(url, method, body);
+  return envelope?.data;
 };
 
 const LoadingSkeleton: React.FC = () => (
@@ -169,12 +182,24 @@ export const CoDocumentsPage: React.FC = () => {
   const submitDisposal = async () => {
     if (!disposalDoc) return;
     const reason = disposalReason.trim();
-    if (!reason) { show('A disposal reason is required', 'err'); return; }
+    // Non-blank used to be the whole rule, and it no longer matches the server.
+    // `ApprovalGateService.request` refuses a justification under ten trimmed
+    // characters, so a reason like "expired" cleared this check and then came back
+    // 422 - which the catch in runAction reports as a failed action, with nothing on
+    // screen tying it to the reason box the user just filled in.
+    if (reason.length < MIN_REASON_LENGTH) {
+      show(`A disposal reason of at least ${MIN_REASON_LENGTH} characters is required — the approver reads it before deciding`, 'err');
+      return;
+    }
     const doc = disposalDoc;
     setDisposalDoc(null);
     setDisposalReason('');
     await runAction(doc.id, 'disposal', 'Disposal requested', { reason });
   };
+
+  // Same rule the server enforces, checked while typing so the Submit button is
+  // dead until the reason can actually be accepted.
+  const disposalReasonTooShort = disposalReason.trim().length < MIN_REASON_LENGTH;
 
   const statuses = ['', 'PENDING_REVIEW', 'APPROVED', 'ARCHIVED', 'REJECTED'];
 
@@ -275,10 +300,13 @@ export const CoDocumentsPage: React.FC = () => {
               <textarea value={disposalReason} onChange={e => setDisposalReason(e.target.value)} rows={3}
                 placeholder="Why should this document be disposed of?"
                 className="mt-1 w-full text-sm border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-200" />
+              {/* States the server's minimum where the user is typing, rather than
+                  letting them find it out from a 422 after the dialog has closed. */}
+              <p className="text-[11px] text-slate-400 mt-1">Minimum {MIN_REASON_LENGTH} characters. This is stored with the request and read by the approver.</p>
             </div>
             <div className="flex justify-end space-x-2 pt-1">
               <ActionButton onClick={() => setDisposalDoc(null)}>Cancel</ActionButton>
-              <ActionButton onClick={submitDisposal} icon={Trash2} variant="danger">Submit Request</ActionButton>
+              <ActionButton onClick={submitDisposal} icon={Trash2} variant="danger" disabled={disposalReasonTooShort}>Submit Request</ActionButton>
             </div>
           </div>
         </div>
@@ -682,8 +710,25 @@ export const CoDisposalApprovalsPage: React.FC = () => {
     const { req, approve } = decision;
     setSaving(true);
     try {
-      await mutate(`/api/v1/compliance/disposals/${req.id}/${approve ? 'approve' : 'reject'}`, 'POST', { notes: notes.trim() });
-      show(approve ? 'Disposal approved — document deleted' : 'Disposal rejected');
+      const result = await mutate(`/api/v1/compliance/disposals/${req.id}/${approve ? 'approve' : 'reject'}`, 'POST', { notes: notes.trim() });
+      // This used to say "Disposal approved — document deleted" on every approval.
+      // It is one signature, not the outcome: `ComplianceService.decideDisposal`
+      // records the vote through `approvalGate.decide` and only calls
+      // `approvalGate.execute` once the request reaches the quorum in
+      // `SensitiveAction`. Short of quorum the document is untouched and the row
+      // stays PENDING, so the old message told an approver a record was gone while
+      // it was still there — and an approver who believes that stops looking for it.
+      // The returned DisposalStatus is the only thing that distinguishes the three
+      // outcomes; the count is deliberately not assumed, because DOCUMENT_DISPOSE
+      // needing one approval today is a value that will change.
+      const status = String(result?.status || '').toUpperCase();
+      if (status === 'APPROVED') {
+        show('Disposal approved — the document has been deleted');
+      } else if (status === 'REJECTED') {
+        show('Disposal rejected — the document has been kept');
+      } else {
+        show('Your decision was recorded. The disposal is still pending further approvals — nothing has been deleted yet');
+      }
       setDecision(null);
       setNotes('');
       await load();
@@ -798,9 +843,16 @@ export const CoDisposalApprovalsPage: React.FC = () => {
               </div>
               <button onClick={() => setDecision(null)} className="p-1 text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
             </div>
+            {/* Was "Approving will permanently soft-delete the document", which is
+                only true on the signature that completes the quorum — on any earlier
+                one it promises a deletion that does not happen. Worded to hold in
+                both cases, and it names the four-eyes rule because the gate rejects
+                the requester's own approval and that refusal is otherwise a surprise. */}
             {decision.approve && (
               <p className="text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded-xl px-3 py-2">
-                Approving will permanently soft-delete the document. This cannot be undone from this screen.
+                This records your approval signature. The document is permanently soft-deleted once the required
+                number of signatures exists — which may be this one — and the officer who requested the disposal
+                cannot be one of them. Deletion cannot be undone from this screen.
               </p>
             )}
             <div>

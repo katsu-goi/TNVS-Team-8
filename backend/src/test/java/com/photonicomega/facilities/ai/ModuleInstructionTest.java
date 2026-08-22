@@ -64,6 +64,14 @@ class ModuleInstructionTest {
     private String adminToken;
     private String employeeToken;
 
+    /**
+     * A seeded approver who is not the requester. Named as a constant because the
+     * rollback loop below only proves anything if the account signing it is somebody
+     * other than the account that asked - which is the one property of a two-person
+     * rule that cannot be asserted by looking at either half on its own.
+     */
+    private static final String SEEDED_SECURITY_OFFICER = "security@photonicomega.com";
+
     @BeforeEach
     void seedUsersAndMintTokens() {
         moduleInstructionService.reset();
@@ -221,9 +229,21 @@ class ModuleInstructionTest {
                 .andExpect(jsonPath("$.data.moduleApplied").value(false));
     }
 
+    /**
+     * The rollback route used to restore an earlier version on the spot. It is now
+     * gated, and these three tests replace the single test that asserted the old
+     * behaviour.
+     *
+     * <p>Worth being explicit about why the old test had to go rather than be adjusted:
+     * it asserted that one administrator, acting alone, could change what the assistant
+     * tells every user in the company, with no second signature and no written reason.
+     * It passed for as long as that was true. A test that goes red when a control is
+     * added is doing its job - it is the specification of the behaviour that was
+     * deliberately removed, and leaving it green would have meant leaving the bypass.
+     */
     @Test
-    @DisplayName("Restore returns the content of a previous version as a new version, keeping audit history")
-    void restorePreviousVersion() throws Exception {
+    @DisplayName("Requesting a rollback restores nothing on its own")
+    void rollbackRequestRestoresNothingByItself() throws Exception {
         String update = """
                 {"content": "REPLACED CONTENT", "changeSummary": "test"}""";
         mockMvc.perform(put("/v1/ai/instructions/reservations")
@@ -233,14 +253,102 @@ class ModuleInstructionTest {
                 .andExpect(jsonPath("$.data.version").value("1.0.1"));
 
         mockMvc.perform(post("/v1/ai/instructions/reservations/restore/1.0.0")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"the replacement text drops the conflict-detection rule\"}")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.version").value("1.0.2"))
-                .andExpect(jsonPath("$.data.versions[0].version").value("1.0.1"));
+                .andExpect(jsonPath("$.data.pendingApproval").value(true))
+                .andExpect(jsonPath("$.data.action").value("AI_INSTRUCTION_ROLLBACK"))
+                .andExpect(jsonPath("$.data.status").value("PENDING"))
+                // The approver has to be told what they are deciding about without
+                // opening the editor, so the label names both versions and the module.
+                .andExpect(jsonPath("$.data.targetLabel").value(
+                        org.hamcrest.Matchers.containsString("v1.0.1 back to v1.0.0")));
 
-        String content = moduleInstructionService.getActiveContent("reservations").orElse("");
-        assertTrue(content.contains("Facility Reservation"));
-        assertFalse(content.contains("REPLACED CONTENT"));
+        // The assertion that matters. A request is not a rollback: until somebody else
+        // signs it, the module is still running the text the requester wanted gone.
+        String live = moduleInstructionService.getActiveContent("reservations").orElse("");
+        assertTrue(live.contains("REPLACED CONTENT"),
+                "the rollback was requested, not approved, so the replacement content must "
+                        + "still be live - if it is not, the route is still performing the act "
+                        + "itself and the approval is decoration");
+        assertEquals("1.0.1", moduleInstructionService.get("reservations").orElseThrow().getVersion(),
+                "requesting a rollback must not bump the version");
+    }
+
+    @Test
+    @DisplayName("A rollback request with no written reason is refused")
+    void rollbackWithoutAWrittenReasonIsRefused() throws Exception {
+        // The reason is not paperwork. It is the only thing the approver reads before
+        // deciding, and the only record of why the change was wanted once everyone
+        // involved has moved on. A gate that accepts a blank one collects signatures
+        // against no stated purpose.
+        mockMvc.perform(post("/v1/ai/instructions/reservations/restore/1.0.0")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isUnprocessableEntity());
+
+        mockMvc.perform(post("/v1/ai/instructions/reservations/restore/1.0.0")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"   \"}")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isUnprocessableEntity());
+    }
+
+    @Test
+    @DisplayName("A rollback is carried out only after a second person approves it")
+    void rollbackHappensOnlyAfterSomebodyElseApprovesAndExecutes() throws Exception {
+        String update = """
+                {"content": "REPLACED CONTENT", "changeSummary": "test"}""";
+        mockMvc.perform(put("/v1/ai/instructions/reservations")
+                        .contentType(MediaType.APPLICATION_JSON).content(update)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        String raised = mockMvc.perform(post("/v1/ai/instructions/reservations/restore/1.0.0")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"restoring the conflict-detection rule\"}")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String approvalId = objectMapper.readTree(raised).path("data").path("approvalRequestId").asText();
+        assertFalse(approvalId.isBlank(), "the route must return the id of the request it raised, "
+                + "or the approver has nothing to open");
+
+        // The requester cannot sign their own request, so a second person has to. The
+        // seeded security officer is an eligible approver for this action; the
+        // administrator who asked for it is not, and asserting that first is the point.
+        mockMvc.perform(post("/v1/governance/approvals/" + approvalId + "/approve")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isUnprocessableEntity());
+
+        String approverToken = token(SEEDED_SECURITY_OFFICER);
+        mockMvc.perform(post("/v1/governance/approvals/" + approvalId + "/approve")
+                        .header("Authorization", "Bearer " + approverToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("APPROVED"));
+
+        // Still nothing restored: approving authorises the act, executing performs it.
+        assertTrue(moduleInstructionService.getActiveContent("reservations").orElse("")
+                        .contains("REPLACED CONTENT"),
+                "approval alone must not change the instructions");
+
+        mockMvc.perform(post("/v1/governance/approvals/" + approvalId + "/execute")
+                        .header("Authorization", "Bearer " + approverToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("EXECUTED"));
+
+        // Now, and only now, the old text is back - as a new version, so the history
+        // still shows that the replacement happened and was undone.
+        String restored = moduleInstructionService.getActiveContent("reservations").orElse("");
+        assertTrue(restored.contains("Facility Reservation"),
+                "after execution the earlier content must be live again");
+        assertFalse(restored.contains("REPLACED CONTENT"),
+                "after execution the replacement content must be gone");
+        ModuleInstructionService.ModuleInstructionDto after =
+                moduleInstructionService.get("reservations").orElseThrow();
+        assertEquals("1.0.2", after.getVersion(),
+                "the rollback must land as a new version rather than rewriting history");
+        assertEquals("1.0.1", after.getVersions().get(0).getVersion(),
+                "the version that was rolled back from must remain in the audit history");
     }
 
     // ------------------------------------------------------------------

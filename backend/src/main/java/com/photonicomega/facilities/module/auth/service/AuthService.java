@@ -32,6 +32,7 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final RefreshTokenRevoker refreshTokenRevoker;
     private final JwtTokenProvider jwtTokenProvider;
     private final AuthenticationManager authenticationManager;
     private final UserDetailsService userDetailsService;
@@ -117,12 +118,40 @@ public class AuthService {
                 .orElseThrow(() -> AuthenticationException.invalidToken());
 
         if (token.isExpired()) {
-            token.revoke();
-            refreshTokenRepository.save(token);
+            // Via the revoker, not an inline save: the throw below rolls this
+            // transaction back and would discard a save made here. Harmless in this
+            // branch, since an expired token is refused by isExpired() next time
+            // regardless, but leaving one of the two paths wrong is how the pattern
+            // gets copied back into the path where it does matter.
+            refreshTokenRevoker.revokeInOwnTransaction(token.getId());
             throw AuthenticationException.invalidToken();
         }
 
         User user = token.getUser();
+
+        // The account's standing is re-checked on every renewal, not only at login.
+        //
+        // This is load-bearing. A refresh hands back a new access token AND a rotated
+        // refresh token, so the holder can repeat it indefinitely without ever
+        // presenting a password again. Checking status only in login() therefore meant
+        // that deactivating, suspending or deleting an account stopped nothing: the
+        // console showed INACTIVE, the audit trail recorded a properly authorised
+        // deactivation, and the person carried on working for as long as their client
+        // kept refreshing. An approved USER_DEACTIVATE bought precisely nothing.
+        //
+        // The token is revoked through RefreshTokenRevoker rather than saved here,
+        // because this class is @Transactional and AuthenticationException is
+        // unchecked: an inline save is rolled back by the throw on the next line, so
+        // the token would be refused every time yet never actually revoked - and
+        // reactivating the account later would revive every session open when it was
+        // closed. isAccountActive() covers both the status and the soft-delete flag.
+        if (!user.isAccountActive()) {
+            refreshTokenRevoker.revokeInOwnTransaction(token.getId());
+            log.warn("Refused and revoked a refresh token for {}: account is {}{}",
+                    user.getEmail(), user.getStatus(), user.isDeleted() ? " and deleted" : "");
+            throw AuthenticationException.invalidToken();
+        }
+
         UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
 
         if (!jwtTokenProvider.isRefreshTokenValid(refreshTokenStr, userDetails)) {

@@ -15,6 +15,8 @@ import com.photonicomega.facilities.module.documents.domain.Document;
 import com.photonicomega.facilities.module.documents.domain.DocumentStatus;
 import com.photonicomega.facilities.module.documents.repository.DocumentRepository;
 import com.photonicomega.facilities.module.documents.service.DocumentAccessPolicy;
+import com.photonicomega.facilities.module.governance.domain.SensitiveAction;
+import com.photonicomega.facilities.module.governance.service.GovernedActionGateway;
 import com.photonicomega.facilities.module.legal.domain.*;
 import com.photonicomega.facilities.module.legal.repository.LegalCaseRepository;
 import com.photonicomega.facilities.module.legal.repository.LegalNoticeRepository;
@@ -58,6 +60,7 @@ public class LegalOfficerController {
     private final AuditLogRepository auditLogRepository;
     private final UserRepository userRepository;
     private final LegalService legalService;
+    private final GovernedActionGateway governedActions;
     private final DocumentAccessPolicy documentAccessPolicy;
 
     // --- Dashboard ---
@@ -208,12 +211,42 @@ public class LegalOfficerController {
         return ResponseEntity.ok(ApiResponse.success(toContractDto(c), "Contract renewed"));
     }
 
+    /**
+     * Requests termination of a contract. Does not terminate it.
+     *
+     * <p>Termination ends the commercial relationship and, in this system, is the
+     * event other departments read to stop paying, stop scheduling and stop
+     * accepting deliveries. It was previously a single click by one officer with no
+     * reason recorded, which made an accidental termination indistinguishable from
+     * an intended one - and the difference is only visible in someone's memory.
+     *
+     * <p>{@code POST} with the same path and the same envelope as before, so the
+     * screen is unchanged. What differs is that the contract is still ACTIVE when
+     * this returns: the status change happens in
+     * {@code ContractTerminateExecutor}, once
+     * {@link SensitiveAction#CONTRACT_TERMINATE} has been signed off.
+     */
     @PostMapping("/contracts/{id}/terminate")
-    @Operation(summary = "Terminate a contract")
+    @Operation(summary = "Request termination of a contract (requires approval; terminates nothing)")
     public ResponseEntity<ApiResponse<Map<String, Object>>> terminateContract(
-            @PathVariable UUID id, @AuthenticationPrincipal UserDetails userDetails) {
-        Contract c = legalService.terminateContract(id, resolveUser(userDetails));
-        return ResponseEntity.ok(ApiResponse.success(toContractDto(c), "Contract terminated"));
+            @PathVariable UUID id,
+            @RequestBody(required = false) Map<String, Object> body,
+            @RequestParam(required = false) String reason,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        // Loaded before the request is raised so a mistyped id fails now, with a
+        // 404 the requester can act on, rather than after an approver has spent a
+        // signature on a contract that does not exist.
+        Contract contract = contractRepository.findById(id)
+                .orElseThrow(() -> new BusinessRuleViolationException(
+                        "Contract " + id + " does not exist, so its termination cannot be requested."));
+        if (contract.getStatus() == ContractStatus.TERMINATED) {
+            throw new BusinessRuleViolationException("Contract is already terminated.");
+        }
+
+        GovernedActionGateway.Raised raised = governedActions.raise(
+                SensitiveAction.CONTRACT_TERMINATE, "Contract", id.toString(),
+                contract.getTitle(), body, reason, resolveUser(userDetails));
+        return ResponseEntity.ok(ApiResponse.success(raised.dto(), raised.message()));
     }
 
     // --- Clauses ---
@@ -236,12 +269,46 @@ public class LegalOfficerController {
         return ResponseEntity.ok(ApiResponse.success(toClauseDto(clause), "Clause updated"));
     }
 
+    /**
+     * Requests deletion of a contract clause. Does not delete it.
+     *
+     * <p>A clause is the contract. Removing one silently changes what the company has
+     * agreed to, and unlike a document there is no archived copy and no retention
+     * policy holding it - once the row is gone the obligation it recorded is
+     * unrecoverable, and the contract still reads as though it was never there.
+     *
+     * <p>The response is still {@code 200} with the same envelope, so the existing
+     * drawer works unchanged. The clause is still present when this returns;
+     * {@code LegalClauseDeleteExecutor} removes it after
+     * {@link SensitiveAction#LEGAL_CLAUSE_DELETE} is approved.
+     */
     @DeleteMapping("/clauses/{id}")
-    @Operation(summary = "Delete a contract clause")
-    public ResponseEntity<ApiResponse<String>> deleteClause(
-            @PathVariable UUID id, @AuthenticationPrincipal UserDetails userDetails) {
-        legalService.deleteClause(id, resolveUser(userDetails));
-        return ResponseEntity.ok(ApiResponse.success("Clause deleted"));
+    @Operation(summary = "Request deletion of a contract clause (requires approval; deletes nothing)")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> deleteClause(
+            @PathVariable UUID id,
+            @RequestBody(required = false) Map<String, Object> body,
+            @RequestParam(required = false) String reason,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        ContractClause clause = contractClauseRepository.findById(id)
+                .orElseThrow(() -> new BusinessRuleViolationException(
+                        "Clause " + id + " does not exist, so its deletion cannot be requested."));
+
+        GovernedActionGateway.Raised raised = governedActions.raise(
+                SensitiveAction.LEGAL_CLAUSE_DELETE, "ContractClause", id.toString(),
+                describeClause(clause), body, reason, resolveUser(userDetails));
+        return ResponseEntity.ok(ApiResponse.success(raised.dto(), raised.message()));
+    }
+
+    /**
+     * A label an approver can recognise without opening the contract.
+     *
+     * <p>The clause type alone ("INDEMNITY") is not enough to decide on - there may
+     * be several, in different contracts - so the parent contract is named too.
+     */
+    private String describeClause(ContractClause clause) {
+        String type = clause.getClauseType() == null ? "Clause" : clause.getClauseType().toString();
+        Contract parent = clause.getContract();
+        return parent == null ? type : type + " in contract '" + parent.getTitle() + "'";
     }
 
     // --- Legal cases ---

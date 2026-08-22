@@ -15,6 +15,8 @@ import com.photonicomega.facilities.module.documents.domain.Document;
 import com.photonicomega.facilities.module.documents.domain.DocumentStatus;
 import com.photonicomega.facilities.module.documents.repository.DocumentRepository;
 import com.photonicomega.facilities.module.documents.service.DocumentAccessPolicy;
+import com.photonicomega.facilities.module.governance.domain.SensitiveAction;
+import com.photonicomega.facilities.module.governance.service.GovernedActionGateway;
 import com.photonicomega.facilities.module.legal.domain.LegalCase;
 import com.photonicomega.facilities.module.legal.repository.LegalCaseRepository;
 import com.photonicomega.facilities.module.procurement.domain.*;
@@ -64,6 +66,7 @@ public class ProcurementOfficerController {
     private final AuditLogRepository auditLogRepository;
     private final UserRepository userRepository;
     private final ProcurementService procurementService;
+    private final GovernedActionGateway governedActions;
     private final DocumentAccessPolicy documentAccessPolicy;
 
     // --- Dashboard ---
@@ -261,12 +264,45 @@ public class ProcurementOfficerController {
         return ResponseEntity.ok(ApiResponse.success(toContractDto(c), "Contract renewed"));
     }
 
+    /**
+     * Requests termination of a contract. Does not terminate it.
+     *
+     * <p>This is the procurement-side door onto the same act the legal officer's screen
+     * raises, and it was the unguarded one: a contract officer could move a live
+     * agreement to TERMINATED from a contract list with no written reason and no second
+     * signature, which leaves an accidental termination and an intended one looking
+     * identical in the record. Termination is what the rest of the application reads to
+     * stop paying, stop scheduling and stop chasing the vendor, so a wrong one shows up
+     * as work quietly not happening rather than as an error anyone is shown, and putting
+     * the status back afterwards does not undo the penalty an exit clause has already
+     * triggered or recall the notice the vendor has already received.
+     *
+     * <p>The verb, the path and the envelope are unchanged, so the existing screen keeps
+     * working. What differs is that the contract still holds its current status when
+     * this returns; {@code ContractTerminateExecutor} makes the status change once
+     * {@link SensitiveAction#CONTRACT_TERMINATE} has collected its approvals.
+     */
     @PostMapping("/contracts/{id}/terminate")
-    @Operation(summary = "Terminate a contract")
+    @Operation(summary = "Request termination of a contract (requires approval; terminates nothing)")
     public ResponseEntity<ApiResponse<Map<String, Object>>> terminateContract(
-            @PathVariable UUID id, @AuthenticationPrincipal UserDetails userDetails) {
-        Contract c = procurementService.terminateContract(id, resolveUser(userDetails));
-        return ResponseEntity.ok(ApiResponse.success(toContractDto(c), "Contract terminated"));
+            @PathVariable UUID id,
+            @RequestBody(required = false) Map<String, Object> body,
+            @RequestParam(required = false) String reason,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        // Loaded before the request is raised so a mistyped id fails now, with a
+        // message the requester can act on, rather than after an approver has spent
+        // a signature on a contract that does not exist.
+        Contract contract = contractRepository.findById(id)
+                .orElseThrow(() -> new BusinessRuleViolationException(
+                        "Contract " + id + " does not exist, so its termination cannot be requested."));
+        if (contract.getStatus() == ContractStatus.TERMINATED) {
+            throw new BusinessRuleViolationException("Contract is already terminated.");
+        }
+
+        GovernedActionGateway.Raised raised = governedActions.raise(
+                SensitiveAction.CONTRACT_TERMINATE, "Contract", id.toString(),
+                contract.getTitle(), body, reason, resolveUser(userDetails));
+        return ResponseEntity.ok(ApiResponse.success(raised.dto(), raised.message()));
     }
 
     // --- Clauses ---
@@ -289,12 +325,54 @@ public class ProcurementOfficerController {
         return ResponseEntity.ok(ApiResponse.success(toClauseDto(clause), "Clause updated"));
     }
 
+    /**
+     * Requests deletion of a contract clause. Does not delete it.
+     *
+     * <p>A clause is the part of the agreement stating what the vendor owes and what
+     * follows when they miss it, so removing one narrows the company's rights while the
+     * contract stays active and continues to read as complete. That is what makes a
+     * wrong deletion worth a second reader: afterwards nothing on the contract indicates
+     * a clause was ever there, so the loss is invisible until the one situation where
+     * the clause mattered arrives, and in a dispute the text that would have settled it
+     * is the text that is gone. Procurement can raise this because procurement
+     * negotiates the wording; legal signs it because legal owns what the wording means.
+     *
+     * <p>Same {@code DELETE}, same path, still {@code 200} with the same envelope, so
+     * the existing screen is unaffected apart from reading a pending request instead of
+     * a confirmation. The clause is still attached to its contract when this returns;
+     * {@code LegalClauseDeleteExecutor} soft-deletes it after
+     * {@link SensitiveAction#LEGAL_CLAUSE_DELETE} is approved.
+     */
     @DeleteMapping("/clauses/{id}")
-    @Operation(summary = "Delete a contract clause")
-    public ResponseEntity<ApiResponse<String>> deleteClause(
-            @PathVariable UUID id, @AuthenticationPrincipal UserDetails userDetails) {
-        procurementService.deleteClause(id, resolveUser(userDetails));
-        return ResponseEntity.ok(ApiResponse.success("Clause deleted"));
+    @Operation(summary = "Request deletion of a contract clause (requires approval; deletes nothing)")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> deleteClause(
+            @PathVariable UUID id,
+            @RequestBody(required = false) Map<String, Object> body,
+            @RequestParam(required = false) String reason,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        ContractClause clause = contractClauseRepository.findById(id)
+                .orElseThrow(() -> new BusinessRuleViolationException(
+                        "Clause " + id + " does not exist, so its deletion cannot be requested."));
+
+        GovernedActionGateway.Raised raised = governedActions.raise(
+                SensitiveAction.LEGAL_CLAUSE_DELETE, "ContractClause", id.toString(),
+                describeClause(clause), body, reason, resolveUser(userDetails));
+        return ResponseEntity.ok(ApiResponse.success(raised.dto(), raised.message()));
+    }
+
+    /**
+     * A label an approver can recognise without opening the contract.
+     *
+     * <p>The clause type alone ("Indemnity") is not enough to decide on, because there
+     * is usually one on every contract, so the owning contract is named too. The title
+     * is read back through the repository rather than off the clause's lazy association,
+     * which is the same reason {@link #resolveVendorName} exists.
+     */
+    private String describeClause(ContractClause clause) {
+        String type = clause.getClauseType() == null ? "Clause" : clause.getClauseType();
+        Contract parent = clause.getContract();
+        String title = parent == null ? null : resolveContractTitle(parent.getId());
+        return title == null ? type : type + " in contract '" + title + "'";
     }
 
     // --- Vendors ---
@@ -411,12 +489,54 @@ public class ProcurementOfficerController {
         return ResponseEntity.ok(ApiResponse.success(toObligationDto(o), "Obligation status updated"));
     }
 
+    /**
+     * Requests deletion of a tracked vendor obligation. Does not delete it.
+     *
+     * <p>An obligation is the record that somebody is still owed something, and the
+     * overdue counters, the notice feed and the vendor performance figures in this
+     * module are all derived from the set of obligations that exist. A deletion
+     * therefore does not read as a gap anywhere: the dashboard stops counting it, the
+     * vendor's SLA compliance rises, and the resulting picture cannot be told apart from
+     * a vendor that delivered on time. Moving the obligation to COMPLETED at least makes
+     * a claim a reviewer can go and check, whereas deleting it takes the deliverable,
+     * its due date and the evidence that it was ever expected out of the record
+     * together, which is why one person should not be able to do it alone.
+     *
+     * <p>The verb, path and envelope are unchanged; the body now carries the pending
+     * request rather than a confirmation string. The obligation is untouched when this
+     * returns, and {@code ObligationDeleteExecutor} removes it once
+     * {@link SensitiveAction#OBLIGATION_DELETE} has been approved.
+     */
     @DeleteMapping("/obligations/{id}")
-    @Operation(summary = "Delete a vendor obligation")
-    public ResponseEntity<ApiResponse<String>> deleteObligation(
-            @PathVariable UUID id, @AuthenticationPrincipal UserDetails userDetails) {
-        procurementService.deleteObligation(id, resolveUser(userDetails));
-        return ResponseEntity.ok(ApiResponse.success("Obligation deleted"));
+    @Operation(summary = "Request deletion of a vendor obligation (requires approval; deletes nothing)")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> deleteObligation(
+            @PathVariable UUID id,
+            @RequestBody(required = false) Map<String, Object> body,
+            @RequestParam(required = false) String reason,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        VendorObligation obligation = vendorObligationRepository.findById(id)
+                .orElseThrow(() -> new BusinessRuleViolationException(
+                        "Obligation " + id + " does not exist, so its deletion cannot be requested."));
+
+        GovernedActionGateway.Raised raised = governedActions.raise(
+                SensitiveAction.OBLIGATION_DELETE, "ContractObligation", id.toString(),
+                describeObligation(obligation), body, reason, resolveUser(userDetails));
+        return ResponseEntity.ok(ApiResponse.success(raised.dto(), raised.message()));
+    }
+
+    /**
+     * A label an approver can recognise without opening the vendor.
+     *
+     * <p>Obligation titles repeat across vendors, since "Monthly service report" is what
+     * half of them owe, so the counterparty is named alongside the title. An approver
+     * deciding whether to stop monitoring a deliverable needs to know whose deliverable
+     * it is before anything else about it.
+     */
+    private String describeObligation(VendorObligation obligation) {
+        String title = obligation.getTitle() == null ? "Obligation" : obligation.getTitle();
+        Vendor vendor = obligation.getVendor();
+        String vendorName = vendor == null ? null : resolveVendorName(vendor.getId());
+        return vendorName == null ? title : title + " owed by vendor '" + vendorName + "'";
     }
 
     // --- Documents ---
@@ -623,6 +743,11 @@ public class ProcurementOfficerController {
     private String resolveVendorName(UUID vendorId) {
         if (vendorId == null) return null;
         return vendorRepository.findById(vendorId).map(Vendor::getName).orElse(null);
+    }
+
+    private String resolveContractTitle(UUID contractId) {
+        if (contractId == null) return null;
+        return contractRepository.findById(contractId).map(Contract::getTitle).orElse(null);
     }
 
     private User resolveUser(UserDetails userDetails) {

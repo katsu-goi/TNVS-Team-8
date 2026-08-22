@@ -1,8 +1,12 @@
 package com.photonicomega.facilities.ai;
 
 import com.photonicomega.facilities.common.dto.ApiResponse;
+import com.photonicomega.facilities.exception.BusinessRuleViolationException;
 import com.photonicomega.facilities.module.auth.domain.User;
 import com.photonicomega.facilities.module.auth.repository.UserRepository;
+import com.photonicomega.facilities.module.governance.domain.SensitiveAction;
+import com.photonicomega.facilities.module.governance.service.GovernedActionGateway;
+import io.swagger.v3.oas.annotations.Operation;
 import lombok.Builder;
 import org.springframework.security.access.prepost.PreAuthorize;
 import lombok.Data;
@@ -43,6 +47,7 @@ public class AiController {
     private final ModuleAiConfigService moduleAiConfigService;
     private final AiChatService aiChatService;
     private final ModelFetcher modelFetcher;
+    private final GovernedActionGateway governedActions;
     private final com.photonicomega.facilities.module.auth.repository.UserRepository userRepository;
     private final jakarta.servlet.http.HttpServletRequest request;
     private final RestTemplate restTemplate = new RestTemplate();
@@ -108,13 +113,65 @@ public class AiController {
         return ResponseEntity.ok(ApiResponse.success(id, "Default AI provider set successfully"));
     }
 
+    /**
+     * Requests deletion of a configured AI provider. Does not delete it.
+     *
+     * <p>A provider is the endpoint and the key every AI module sends its work to, and
+     * removing one does not disable the modules pointing at it. Document
+     * classification, contract risk analysis and visitor ID parsing carry on
+     * reporting themselves Active while producing nothing, so the first sign of a
+     * wrong deletion is a user asking why a document was never classified rather than
+     * an error anyone is paged about. It is also awkward to undo: the module bindings
+     * that name the provider are rows in {@code ai_module_config} and outlive it, so
+     * the broken configuration survives a restart while no longer naming anything that
+     * can be looked up, and the provider itself is held in memory with its API key,
+     * which is recorded nowhere else - putting it back means finding that secret
+     * again.
+     *
+     * <p>The verb, the path and the envelope are unchanged and the status is still
+     * {@code 200}, so the AI Services console keeps working. The provider is still
+     * configured when this returns; {@code AiProviderDeleteExecutor} removes it once
+     * {@link SensitiveAction#AI_PROVIDER_DELETE} has been signed off, and that
+     * executor refuses the deletion outright if the provider is the default or any
+     * module still routes through it.
+     */
     @DeleteMapping("/providers/{id}")
-    public ResponseEntity<ApiResponse<String>> deleteProvider(@PathVariable String id) {
-        boolean removed = aiStateService.deleteProvider(id);
-        if (removed) {
-            moduleAiConfigService.broadcastProviderChange("PROVIDER_DELETED");
-        }
-        return ResponseEntity.ok(ApiResponse.success(id, removed ? "AI Provider deleted" : "Provider not found"));
+    @Operation(summary = "Request deletion of an AI provider (requires approval; deletes nothing)")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> deleteProvider(
+            @PathVariable String id,
+            @RequestBody(required = false) Map<String, Object> body,
+            @RequestParam(required = false) String reason,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        // Resolved before the request is raised so a mistyped or already-removed id
+        // fails now, with something the requester can act on, rather than after an
+        // approver has spent a signature on a provider that is not there. Providers
+        // live in AiStateManagementService rather than a table, so this list is the
+        // only place they exist.
+        AiStateManagementService.ProviderDto provider = aiStateService.getProviders().stream()
+                .filter(candidate -> id.equals(candidate.getId()))
+                .findFirst()
+                .orElseThrow(() -> new BusinessRuleViolationException(
+                        "AI provider " + id + " is not configured, so its deletion cannot be requested."));
+
+        GovernedActionGateway.Raised raised = governedActions.raise(
+                SensitiveAction.AI_PROVIDER_DELETE, "AiProvider", id,
+                describeProvider(provider), body, reason, resolveUser(userDetails));
+        return ResponseEntity.ok(ApiResponse.success(raised.dto(), raised.message()));
+    }
+
+    /**
+     * A label an approver can recognise without opening the AI Services console.
+     *
+     * <p>The id is a generated string, so the provider's name and type are named
+     * instead, along with whether it is the default. That last fact decides the
+     * request on its own - the default is what every module without an explicit
+     * binding falls back to - and it is the one thing an approver reading a provider
+     * name would have no way to guess.
+     */
+    private String describeProvider(AiStateManagementService.ProviderDto provider) {
+        String name = provider.getName() == null ? "unnamed provider" : provider.getName();
+        String type = provider.getType() == null ? "unknown type" : provider.getType();
+        return name + " (" + type + ")" + (provider.isDefault() ? " - the system default provider" : "");
     }
 
     @GetMapping("/modules")
@@ -562,18 +619,83 @@ public class AiController {
         return ResponseEntity.ok(ApiResponse.success(updated, "Module AI instruction toggle state updated"));
     }
 
+    /**
+     * Requests a rollback of one module's AI instructions to a version that module ran
+     * before. Restores nothing.
+     *
+     * <p>A module's instruction set is what the assistant follows when it advises every
+     * user on every screen in that module, so replacing it changes the advice the whole
+     * company acts on, and it takes effect on the next AI request - there is no build,
+     * no deployment and no diff anyone reviews on the way. A wrong rollback is quiet by
+     * construction: the screens look identical afterwards, the recommendations are
+     * still confident and still plausible, and what actually changed is which risks get
+     * flagged and which get passed over, so it surfaces weeks later as a contract
+     * nobody was warned about rather than as a failure. The displaced content is
+     * recoverable, but only for a while - the history keeps the twenty most recent
+     * versions per module and is held in memory, so every rollback moves the oldest
+     * surviving version one step nearer the end of that list.
+     *
+     * <p>The verb, the path and the envelope are unchanged and the status is still
+     * {@code 200}, so the instruction editor keeps working. The module is still running
+     * its current version when this returns; {@code AiInstructionRollbackExecutor}
+     * performs the restore once {@link SensitiveAction#AI_INSTRUCTION_ROLLBACK} has
+     * been approved. That executor takes its target version from the payload assembled
+     * here out of the URL, and looks the content up from the module's own history, so
+     * what gets approved is provably a return to instructions this module already ran
+     * and not new text wearing the word rollback.
+     */
     @PostMapping("/instructions/{moduleKey}/restore/{version}")
-    public ResponseEntity<ApiResponse<ModuleInstructionService.ModuleInstructionDto>> restoreModuleInstruction(
+    @Operation(summary = "Request a rollback of a module's AI instructions to an earlier version "
+            + "(requires approval; restores nothing)")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> restoreModuleInstruction(
             @PathVariable String moduleKey,
             @PathVariable String version,
+            @RequestBody(required = false) Map<String, Object> body,
+            @RequestParam(required = false) String reason,
             @AuthenticationPrincipal UserDetails admin) {
-        ModuleInstructionService.ModuleInstructionDto restored = moduleInstructionService.restoreVersion(
-                moduleKey, version, admin != null ? admin.getUsername() : null);
-        if (restored == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(ApiResponse.failure("Module instruction or version not found", "MODULE_VERSION_NOT_FOUND"));
+        // Both halves of the target come out of the URL, and both are checked before the
+        // request is raised: an unknown module key or a version that is not in this
+        // module's history would otherwise fail inside the executor, which is after an
+        // approver has already signed for it.
+        ModuleInstructionService.ModuleInstructionDto instruction = moduleInstructionService.get(moduleKey)
+                .orElseThrow(() -> new BusinessRuleViolationException(
+                        "AI module '" + moduleKey + "' does not exist, so a rollback of its "
+                                + "instructions cannot be requested."));
+
+        List<String> history = instruction.getVersions() == null ? List.of()
+                : instruction.getVersions().stream()
+                        .map(ModuleInstructionService.InstructionVersion::getVersion)
+                        .collect(Collectors.toList());
+        if (!history.contains(version)) {
+            throw new BusinessRuleViolationException(
+                    "Module '" + moduleKey + "' has no version " + version + " to roll back to. It is "
+                            + "on v" + instruction.getVersion() + (history.isEmpty()
+                            ? " and has never been edited, so no earlier version exists."
+                            : " and the versions it can be restored to are: "
+                                    + String.join(", ", history) + "."));
         }
-        return ResponseEntity.ok(ApiResponse.success(restored, "Module AI instruction version restored"));
+
+        GovernedActionGateway.Raised raised = governedActions.raiseWithPayload(
+                SensitiveAction.AI_INSTRUCTION_ROLLBACK, "AiModuleInstruction", moduleKey,
+                describeInstructionRollback(instruction, version), body, reason,
+                "{\"version\":\"" + version + "\"}", resolveUser(admin));
+        return ResponseEntity.ok(ApiResponse.success(raised.dto(), raised.message()));
+    }
+
+    /**
+     * A label an approver can decide on without opening the instruction editor.
+     *
+     * <p>The module key alone ("contract_management") does not say which of several
+     * modules a reader is looking at in a queue of requests, and a version number
+     * alone says nothing at all, so the module's display name is given with the key and
+     * the two versions are named in the direction the change runs: the one the module
+     * is running now, and the one it is being asked to go back to.
+     */
+    private String describeInstructionRollback(
+            ModuleInstructionService.ModuleInstructionDto instruction, String version) {
+        String name = instruction.getName() == null ? instruction.getModuleKey() : instruction.getName();
+        return name + " AI instructions (module '" + instruction.getModuleKey() + "'), v"
+                + instruction.getVersion() + " back to v" + version;
     }
 
     @GetMapping("/modules/detect")

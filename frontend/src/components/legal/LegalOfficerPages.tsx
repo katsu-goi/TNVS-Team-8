@@ -5,17 +5,28 @@ import {
   X, BellRing, Bell, ShieldAlert, Ban, Gavel, Send, PlayCircle,
   RotateCcw, Pencil, ChevronRight,
 } from 'lucide-react';
-import { safeFetchJson } from '../../api/client';
+import { safeFetchJson, mutateJson } from '../../api/client';
+import { ConfirmActionModal, pendingApprovalMessage } from '../governance/ConfirmActionModal';
 
-// POST/PUT helper that surfaces failure (safeFetchJson returns null on error).
-const mutate = async (url: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown) => {
-  const json = await safeFetchJson(url, {
-    method,
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  });
-  if (json === null) throw new Error('Request failed. Please try again.');
-  return (json as any)?.data;
-};
+/**
+ * Every write on these pages goes through here.
+ *
+ * The previous body called `safeFetchJson`, which returns `null` for any non-2xx, and
+ * so had nothing left to report but a single invented sentence: "Request failed.
+ * Please try again." That is the worst possible thing to say in front of the approval
+ * gate, because the gate's refusals are all instructions - "Delete legal clause needs
+ * a written reason before it can be requested", "You raised this request, so you
+ * cannot also approve it", "Your role is not permitted to approve termination of a
+ * contract. Required: LEGAL_COUNSEL or DEPARTMENT_HEAD." Told to try again, the user
+ * repeats the identical call and it fails identically; the control looks broken
+ * instead of deliberate. `mutateJson` throws with the server's own sentence, and the
+ * `catch` blocks below already surface `err.message`, so they now say something true.
+ *
+ * Still returns `.data`, so the ~15 callers here are untouched. The two governed sites
+ * call `mutateJson` directly because they need `.message` as well as the data.
+ */
+const mutate = async (url: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown) =>
+  (await mutateJson(url, method, body)).data;
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -179,6 +190,7 @@ export const LoContractsPage: React.FC = () => {
   const [form, setForm] = useState<any>({});
   const [saving, setSaving] = useState(false);
   const [detail, setDetail] = useState<any | null>(null);
+  const [terminating, setTerminating] = useState<any | null>(null); // contract awaiting the reason for a termination request
   const { show, node: toastNode } = useToast();
 
   const load = useCallback(async () => {
@@ -197,11 +209,42 @@ export const LoContractsPage: React.FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
+  // Still correct for submit-review, approve, activate and renew: those four really do
+  // change the contract, so a fixed label and a reload describe what happened. Terminate
+  // no longer belongs here - see requestTermination.
   const runAction = async (id: string, path: string, label: string, body?: unknown) => {
     setBusyId(id);
     try {
       await mutate(`/api/v1/legal/contracts/${id}/${path}`, 'POST', body);
       show(label);
+      await load();
+    } catch (err: any) {
+      show(err?.message || 'Action failed', 'err');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /**
+   * Raises a termination request. Does not terminate the contract.
+   *
+   * The button used to call `runAction(c.id, 'terminate', 'Contract terminated')`, which
+   * was wrong twice over. It sent no body, and the gate rejects a request with no
+   * justification, so the call was a guaranteed 422 the user never saw. And "Contract
+   * terminated" was untrue even on a 200: CONTRACT_TERMINATE needs two approvals from
+   * LEGAL_COUNSEL or DEPARTMENT_HEAD before ContractTerminateExecutor touches the status.
+   */
+  const requestTermination = async (reason: string) => {
+    if (!terminating) return;
+    const id = terminating.id;
+    setBusyId(id);
+    try {
+      const env = await mutateJson(`/api/v1/legal/contracts/${id}/terminate`, 'POST', { reason });
+      setTerminating(null);
+      show(pendingApprovalMessage(env, 'Terminate contract'));
+      // Reload, but expect nothing to move: the row comes back ACTIVE and still offering
+      // Terminate. Faking the TERMINATED badge or hiding the button would assert an
+      // outcome the approvers have not granted, and the next reload would contradict it.
       await load();
     } catch (err: any) {
       show(err?.message || 'Action failed', 'err');
@@ -320,7 +363,7 @@ export const LoContractsPage: React.FC = () => {
                           {status === 'UNDER_REVIEW' && <ActionButton onClick={() => runAction(c.id, 'approve', 'Contract approved')} icon={CheckCircle2} variant="primary" disabled={busy}>Approve</ActionButton>}
                           {status === 'APPROVED' && <ActionButton onClick={() => runAction(c.id, 'activate', 'Contract activated')} icon={PlayCircle} variant="primary" disabled={busy}>Activate</ActionButton>}
                           {(status === 'ACTIVE' || status === 'EXPIRED') && <ActionButton onClick={() => runAction(c.id, 'renew', 'Contract renewed')} icon={RotateCcw} disabled={busy}>Renew</ActionButton>}
-                          {status !== 'TERMINATED' && <ActionButton onClick={() => runAction(c.id, 'terminate', 'Contract terminated')} icon={Ban} variant="danger" disabled={busy}>Terminate</ActionButton>}
+                          {status !== 'TERMINATED' && <ActionButton onClick={() => setTerminating(c)} icon={Ban} variant="danger" disabled={busy}>Terminate</ActionButton>}
                         </div>
                       </td>
                     </tr>
@@ -383,6 +426,19 @@ export const LoContractsPage: React.FC = () => {
         </Modal>
       )}
 
+      {terminating && (
+        <ConfirmActionModal
+          title="Terminate Contract"
+          targetLabel={`${terminating.contractNumber || ''} · ${terminating.title}`}
+          consequence="Early termination usually carries a financial penalty, so legal and the budget owner both have to agree."
+          reasonPlaceholder="Why must this contract end before its end date? Both approvers read this before signing."
+          icon={Ban}
+          busy={busyId === terminating.id}
+          onCancel={() => setTerminating(null)}
+          onConfirm={requestTermination}
+        />
+      )}
+
       {detail && <ContractDetailDrawer contract={detail} onClose={() => setDetail(null)} onChanged={load} show={show} />}
     </div>
   );
@@ -395,6 +451,7 @@ const ContractDetailDrawer: React.FC<{ contract: any; onClose: () => void; onCha
   const [form, setForm] = useState<any>({});
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [deletingClause, setDeletingClause] = useState<any | null>(null); // clause awaiting the reason for a deletion request
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -426,11 +483,28 @@ const ContractDetailDrawer: React.FC<{ contract: any; onClose: () => void; onCha
     }
   };
 
-  const removeClause = async (cl: any) => {
-    setBusyId(cl.id);
+  /**
+   * Raises a deletion request for a clause. Does not delete it.
+   *
+   * This was the least guarded write on the page: `Delete` fired the DELETE straight
+   * away with no dialog and no reason, then said "Clause deleted". Neither half holds
+   * now - the gate answers 422 to a request carrying no justification, and on a 200 the
+   * clause is untouched until a LEGAL_COUNSEL approves LEGAL_CLAUSE_DELETE.
+   *
+   * The reason goes in the query string, not a DELETE body: the handler reads either
+   * (`@RequestBody(required=false)` / `@RequestParam`), but some proxies strip bodies
+   * from DELETE, and a stripped reason arrives at the gate as no reason at all.
+   */
+  const requestClauseDeletion = async (reason: string) => {
+    if (!deletingClause) return;
+    const id = deletingClause.id;
+    setBusyId(id);
     try {
-      await mutate(`/api/v1/legal/clauses/${cl.id}`, 'DELETE');
-      show('Clause deleted');
+      const env = await mutateJson(`/api/v1/legal/clauses/${id}?reason=${encodeURIComponent(reason)}`, 'DELETE');
+      setDeletingClause(null);
+      show(pendingApprovalMessage(env, 'Delete legal clause'));
+      // The clause deliberately stays in the list. Dropping it from local state would
+      // read as a completed deletion, and reopening the drawer would bring it back.
       await load();
       onChanged();
     } catch (err: any) {
@@ -483,7 +557,7 @@ const ContractDetailDrawer: React.FC<{ contract: any; onClose: () => void; onCha
                     </div>
                     <div className="flex items-center space-x-1.5">
                       <ActionButton onClick={() => openEdit(cl)} icon={Pencil} disabled={busyId === cl.id}>Edit</ActionButton>
-                      <ActionButton onClick={() => removeClause(cl)} icon={Trash2} variant="danger" disabled={busyId === cl.id}>Delete</ActionButton>
+                      <ActionButton onClick={() => setDeletingClause(cl)} icon={Trash2} variant="danger" disabled={busyId === cl.id}>Delete</ActionButton>
                     </div>
                   </div>
                   <p className="text-xs text-slate-600">{cl.content}</p>
@@ -521,6 +595,19 @@ const ContractDetailDrawer: React.FC<{ contract: any; onClose: () => void; onCha
               <ActionButton onClick={saveClause} icon={CheckCircle2} variant="primary" disabled={saving}>{saving ? 'Saving…' : 'Save'}</ActionButton>
             </div>
           </Modal>
+        )}
+
+        {deletingClause && (
+          <ConfirmActionModal
+            title="Delete Legal Clause"
+            targetLabel={`${deletingClause.clauseType || 'Clause'} · ${contract.title}`}
+            consequence="Clauses are referenced by live contracts; removing one changes what those contracts mean."
+            reasonPlaceholder="Why should this clause no longer bind the parties? Legal counsel reads this before signing."
+            icon={Trash2}
+            busy={busyId === deletingClause.id}
+            onCancel={() => setDeletingClause(null)}
+            onConfirm={requestClauseDeletion}
+          />
         )}
       </div>
     </div>

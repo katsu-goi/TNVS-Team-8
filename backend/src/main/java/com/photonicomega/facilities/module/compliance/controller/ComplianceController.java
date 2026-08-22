@@ -235,7 +235,9 @@ public class ComplianceController {
     }
 
     @PostMapping("/disposals/{id}/approve")
-    @Operation(summary = "Approve a disposal request (soft-deletes the document)")
+    @Operation(summary = "Record an approval signature on a disposal request. Destroys the "
+            + "document only once the action's quorum is met, and never on the requester's "
+            + "own signature.")
     public ResponseEntity<ApiResponse<Map<String, Object>>> approveDisposal(
             @PathVariable UUID id, @RequestBody(required = false) Map<String, Object> body,
             @AuthenticationPrincipal UserDetails userDetails) {

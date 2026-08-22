@@ -13,6 +13,11 @@ import com.photonicomega.facilities.module.contracts.repository.ContractReposito
 import com.photonicomega.facilities.module.documents.domain.Document;
 import com.photonicomega.facilities.module.documents.domain.DocumentStatus;
 import com.photonicomega.facilities.module.documents.repository.DocumentRepository;
+import com.photonicomega.facilities.module.governance.domain.ApprovalRequest;
+import com.photonicomega.facilities.module.governance.domain.ApprovalStatus;
+import com.photonicomega.facilities.module.governance.domain.DecisionType;
+import com.photonicomega.facilities.module.governance.domain.SensitiveAction;
+import com.photonicomega.facilities.module.governance.service.ApprovalGateService;
 import com.photonicomega.facilities.module.records.domain.PolicyAction;
 import com.photonicomega.facilities.module.records.domain.RetentionPolicy;
 import com.photonicomega.facilities.module.records.repository.RetentionPolicyRepository;
@@ -56,6 +61,13 @@ public class ComplianceService {
     private final ComplianceAlertRepository complianceAlertRepository;
     private final VisitorRepository visitorRepository;
     private final AuditService auditService;
+
+    /**
+     * The chokepoint for irreversible acts. Injected rather than reimplemented so
+     * that disposal follows the same rules as the other fourteen gated actions,
+     * and so a change to the two-person policy takes effect here automatically.
+     */
+    private final ApprovalGateService approvalGate;
 
     // --- Document archiving ---
 
@@ -139,6 +151,17 @@ public class ComplianceService {
     }
 
     // --- Disposal-approval workflow ---
+    //
+    // This was the worked example of the gap the approval gate exists to close.
+    // requestDisposal recorded no requester, and decideDisposal compared the
+    // decider against nobody - so one officer could raise a disposal and approve
+    // it seconds later, and the resulting record was indistinguishable from a
+    // properly reviewed one. Both halves now route through ApprovalGateService,
+    // which is the only code path in the application that can destroy a document.
+    //
+    // The HTTP contract is unchanged on purpose: the existing screens already
+    // present this as request-then-decide with a mandatory reason and a
+    // confirmation dialog. What was missing was enforcement behind them, not UI.
 
     @Transactional
     public DisposalRequest requestDisposal(UUID documentId, String reason, User user) {
@@ -147,18 +170,52 @@ public class ComplianceService {
         if (!disposalRequestRepository.findByDocumentIdAndStatus(documentId, DisposalStatus.PENDING).isEmpty()) {
             throw new BusinessRuleViolationException("A disposal request is already pending for this document.");
         }
+
+        // Raise the governed approval first. If the gate refuses - no written
+        // justification, a role not permitted to ask, a duplicate already in
+        // flight - nothing at all is written, so there is no orphaned
+        // DisposalRequest sitting in the queue with no authority behind it.
+        ApprovalRequest approval = approvalGate.request(
+                SensitiveAction.DOCUMENT_DISPOSE,
+                "Document",
+                documentId.toString(),
+                doc.getTitle(),
+                reason,
+                null,
+                user);
+
         DisposalRequest req = DisposalRequest.builder()
                 .documentId(documentId)
                 .documentTitle(doc.getTitle())
                 .reason(reason)
                 .status(DisposalStatus.PENDING)
+                .requestedById(user.getId())
+                .requestedByEmail(user.getEmail())
+                .approvalRequestId(approval.getId())
                 .build();
         DisposalRequest saved = disposalRequestRepository.save(req);
         auditService.log(user, "REQUEST_DISPOSAL", MODULE, "DisposalRequest", saved.getId().toString(),
-                "Requested disposal of document: " + doc.getTitle(), null);
+                "Requested disposal of document: " + doc.getTitle()
+                        + " (approval " + approval.getId() + ", AI risk " + approval.getAiRiskLevel() + ")", null);
         return saved;
     }
 
+    /**
+     * Records one approver's decision on a disposal.
+     *
+     * <p>This method no longer deletes anything itself. It delegates to the
+     * approval gate, which refuses the vote unless the approver is a different
+     * person from the requester, holds a role with authority over records
+     * disposal, and has not already voted. Only once the gate marks the request
+     * APPROVED is the disposal carried out - by the gate, through
+     * {@code DocumentDisposalExecutor}.
+     *
+     * <p>Quorum and execution happen in the same call because the existing screen
+     * presents approval as a single confirmed action. The separation that matters
+     * is structural, not temporal: the mutation lives only in the executor, the
+     * executor is reachable only from {@code execute()}, and {@code execute()} is
+     * reachable only from an APPROVED request.
+     */
     @Transactional
     public DisposalRequest decideDisposal(UUID requestId, boolean approve, String notes, User user) {
         DisposalRequest req = disposalRequestRepository.findById(requestId)
@@ -166,20 +223,46 @@ public class ComplianceService {
         if (req.getStatus() != DisposalStatus.PENDING) {
             throw new BusinessRuleViolationException("This disposal request has already been decided.");
         }
-        req.setStatus(approve ? DisposalStatus.APPROVED : DisposalStatus.REJECTED);
+        if (req.getApprovalRequestId() == null) {
+            // Fail closed. A row written before the gate existed carries no
+            // requester identity, so the four-eyes rule cannot be verified for
+            // it. Treating "cannot verify" as "therefore allow" is exactly the
+            // hole being fixed, so the officer is told to raise it again instead.
+            throw new BusinessRuleViolationException(
+                    "This disposal request predates the approval workflow and carries no record of who "
+                            + "raised it, so separation of duties cannot be verified. Raise the disposal "
+                            + "again to have it reviewed properly.");
+        }
+
+        ApprovalRequest approval = approvalGate.decide(
+                req.getApprovalRequestId(),
+                approve ? DecisionType.APPROVE : DecisionType.REJECT,
+                notes,
+                user,
+                null);
+
+        if (approval.getStatus() == ApprovalStatus.APPROVED) {
+            approval = approvalGate.execute(approval.getId(), user, null);
+        }
+
+        switch (approval.getStatus()) {
+            case EXECUTED -> req.setStatus(DisposalStatus.APPROVED);
+            case REJECTED -> req.setStatus(DisposalStatus.REJECTED);
+            default -> {
+                // Still short of quorum: more signatures needed. The disposal
+                // stays PENDING and its alert stays open, because nothing has
+                // been decided yet.
+                req.setDecisionNotes(notes);
+                DisposalRequest partial = disposalRequestRepository.save(req);
+                return partial;
+            }
+        }
         req.setDecisionNotes(notes);
         req.setDecidedBy(user != null ? user.getEmail() : null);
         req.setDecidedAt(LocalDateTime.now());
         DisposalRequest saved = disposalRequestRepository.save(req);
 
-        if (approve) {
-            documentRepository.findById(req.getDocumentId()).ifPresent(doc -> {
-                doc.setStatus(DocumentStatus.DELETED);
-                doc.softDelete(user != null ? user.getEmail() : "system");
-                documentRepository.save(doc);
-            });
-        }
-        // Close the linked "disposal pending" alert regardless of decision.
+        // Close the linked "disposal pending" alert now that it is settled.
         complianceAlertRepository.findByDedupKey("DISPOSAL_PENDING:" + requestId)
                 .ifPresent(alert -> {
                     alert.setStatus(AlertStatus.DISMISSED);
@@ -188,7 +271,8 @@ public class ComplianceService {
 
         auditService.log(user, approve ? "APPROVE_DISPOSAL" : "REJECT_DISPOSAL", MODULE,
                 "DisposalRequest", requestId.toString(),
-                (approve ? "Approved" : "Rejected") + " disposal of: " + req.getDocumentTitle(), null);
+                (approve ? "Approved" : "Rejected") + " disposal of: " + req.getDocumentTitle()
+                        + " under approval " + approval.getId(), null);
         return saved;
     }
 

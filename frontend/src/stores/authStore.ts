@@ -9,15 +9,83 @@ interface AuthState {
   logout: () => void;
 }
 
+/**
+ * True if the user holds any of `wanted`.
+ *
+ * Compares case-insensitively and treats `COMPLIANCE_MANAGER` and
+ * `ROLE_COMPLIANCE_MANAGER` as the same role, because both forms genuinely
+ * reach the client: the JWT carries Spring authorities, which are ROLE_-prefixed,
+ * while a user object rehydrated from the login response carries bare names.
+ * Every guard should go through here rather than comparing strings inline - the
+ * inline form was written out six times, and each copy was one more place for a
+ * newly added role to be silently omitted.
+ */
+export function hasAnyRole(user: User | null, wanted: readonly string[]): boolean {
+  if (!user?.roles) return false;
+  const strip = (r: string) => {
+    const upper = r.toUpperCase();
+    return upper.startsWith('ROLE_') ? upper.slice('ROLE_'.length) : upper;
+  };
+  const held = new Set(user.roles.map(strip));
+  return wanted.some(w => held.has(strip(w)));
+}
+
+/**
+ * The role families that share a dashboard surface.
+ *
+ * <b>`getDashboardPath` and the route guards in App.tsx must agree on these</b>,
+ * which is why they are one shared constant rather than two lists that happen to
+ * match today. If `getDashboardPath` sent a role to /facilities while
+ * `FacilitiesRoute` did not admit it, the guard would bounce it to '/',
+ * `AdminRoute` would ask `getDashboardPath` again, get /facilities, and the two
+ * would redirect at each other forever - a hang rather than an error message.
+ *
+ * These mirror the backend's URL-layer role sets. The compliance family is
+ * deliberately the records family rather than COMPLIANCE_OFFICER alone, matching
+ * the widening already made to /v1/compliance/**: the officer raises a disposal
+ * and cannot approve it, so the roles that give the second signature must be able
+ * to reach the same surface.
+ *
+ * Deliberately absent: SUPER_ADMIN, SYSTEM_ADMINISTRATOR and SECURITY_OFFICER.
+ * Administering the platform does not confer authority over the company's
+ * records, so no administrator role is admitted to the compliance or legal
+ * surface by virtue of being an administrator.
+ */
+export const ROLE_FAMILIES = {
+  facilities: ['FACILITIES_MANAGER', 'FACILITIES_DIRECTOR'],
+  facilitiesOfficer: ['FACILITIES_OFFICER', 'MAINTENANCE_SUPERVISOR'],
+  compliance: ['COMPLIANCE_OFFICER', 'COMPLIANCE_MANAGER', 'RECORDS_OFFICER', 'DATA_PROTECTION_OFFICER'],
+  legal: ['LEGAL_OFFICER', 'LEGAL_COUNSEL'],
+  procurement: ['CONTRACT_OFFICER'],
+  employee: ['EMPLOYEE', 'DEPARTMENT_HEAD'],
+} as const;
+
+/**
+ * Where a user lands after logging in.
+ *
+ * <b>Every role that can log in must resolve to a real path here.</b> Falling
+ * through to '/' is not a harmless default: '/' is wrapped in `AdminRoute`,
+ * which sends a non-SUPER_ADMIN back through this function, gets '/' again, and
+ * redirects to /login. The user authenticates successfully and is bounced
+ * straight back to the login screen with no error shown - indistinguishable, from
+ * the outside, from a rejected password.
+ *
+ * That is precisely what happened to the three governance approver accounts
+ * (COMPLIANCE_MANAGER, DATA_PROTECTION_OFFICER, LEGAL_COUNSEL). The two-person
+ * approval rule was enforced and tested in the backend while the only accounts
+ * able to give a second signature could not reach the application at all, so
+ * every gated action would have been permanently unapprovable in practice.
+ * Adding a newly gated action without adding its approver role to
+ * {@link ROLE_FAMILIES} brings that failure straight back.
+ */
 export function getDashboardPath(user: User | null): string {
   if (!user?.roles) return '/';
-  const roles = user.roles.map(r => r.toUpperCase());
-  if (roles.includes('FACILITIES_MANAGER') || roles.includes('ROLE_FACILITIES_MANAGER')) return '/facilities';
-  if (roles.includes('FACILITIES_OFFICER') || roles.includes('ROLE_FACILITIES_OFFICER')) return '/facilities-officer';
-  if (roles.includes('COMPLIANCE_OFFICER') || roles.includes('ROLE_COMPLIANCE_OFFICER')) return '/compliance';
-  if (roles.includes('LEGAL_OFFICER') || roles.includes('ROLE_LEGAL_OFFICER')) return '/legal';
-  if (roles.includes('CONTRACT_OFFICER') || roles.includes('ROLE_CONTRACT_OFFICER')) return '/procurement';
-  if (roles.includes('EMPLOYEE') || roles.includes('ROLE_EMPLOYEE')) return '/employee';
+  if (hasAnyRole(user, ROLE_FAMILIES.facilities)) return '/facilities';
+  if (hasAnyRole(user, ROLE_FAMILIES.facilitiesOfficer)) return '/facilities-officer';
+  if (hasAnyRole(user, ROLE_FAMILIES.compliance)) return '/compliance';
+  if (hasAnyRole(user, ROLE_FAMILIES.legal)) return '/legal';
+  if (hasAnyRole(user, ROLE_FAMILIES.procurement)) return '/procurement';
+  if (hasAnyRole(user, ROLE_FAMILIES.employee)) return '/employee';
   return '/';
 }
 

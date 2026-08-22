@@ -5,6 +5,9 @@ target/
 *.class
 supabase/.temp/
 *.jar
+# The Maven wrapper must stay tracked - without it a fresh clone has no way to
+# build the backend, because `mvn` is not assumed to be on PATH.
+!backend/.mvn/wrapper/maven-wrapper.jar
 *.log
 *.log.*.gz
 *.err
@@ -19,3 +22,9 @@ Thumbs.db
 *.iml
 .vscode/
 .history/
+
+# Local H2 database files created by running the backend. Runtime state, not source.
+backend/data/
+
+# Diagnostic/progress output. Regenerated on demand; never reviewed as source.
+.diag/
