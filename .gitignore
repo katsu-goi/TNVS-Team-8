@@ -28,3 +28,16 @@ backend/data/
 
 # Diagnostic/progress output. Regenerated on demand; never reviewed as source.
 .diag/
+
+# NOTE: these five are Java *source* files, ignored on origin/main. Kept as-is so the
+# merge does not silently reverse a deliberate decision, but ignoring source is worth
+# a second look - if they are untracked as well as ignored, the backend will not
+# compile from a fresh clone.
+backend/src/main/java/com/photonicomega/facilities/module/ai/domain/AiHealthStatus.java
+backend/src/main/java/com/photonicomega/facilities/module/ai/domain/AiHumanOutcome.java
+backend/src/main/java/com/photonicomega/facilities/module/ai/domain/AiProviderStatus.java
+backend/src/main/java/com/photonicomega/facilities/module/ai/domain/AiProviderType.java
+backend/src/main/java/com/photonicomega/facilities/module/ai/domain/AiRequestStatus.java
+
+.vercel
+.env*

@@ -1,4 +1,5 @@
 import { apiClient } from './client';
+import { supabaseMonitoringService } from './supabaseMonitoringService';
 import type {
   SecurityMetrics, SecurityLog, BlockedIp, ActiveSession, SecurityAlert,
 } from '../types';
@@ -31,43 +32,40 @@ import type {
  */
 export const securityService = {
   async getMetrics(): Promise<SecurityMetrics> {
-    const empty: SecurityMetrics = {
-      activeSessions: 0,
-      blockedIpsCount: 0,
-      activeAlertsCount: 0,
-      failedLoginAttempts: 0,
+    const telemetry = await supabaseMonitoringService.getLiveDashboardCounts();
+    const d = telemetry.data;
+    return {
+      activeSessions: d.activeSessionsCount,
+      blockedIpsCount: d.blockedIpsCount,
+      activeAlertsCount: d.activeAlertsCount,
+      failedLoginAttempts: d.failedLoginAttemptsCount,
       ddosBlockedRequests: 0,
-      suspiciousActivitiesCount: 0,
+      suspiciousActivitiesCount: d.activeAlertsCount,
     };
-    try {
-      const { data } = await apiClient.get('/security/admin/metrics');
-      const m = data ?? {};
-      return {
-        activeSessions: m.activeSessions ?? 0,
-        blockedIpsCount: m.blockedIpsCount ?? 0,
-        activeAlertsCount: m.activeAlertsCount ?? 0,
-        failedLoginAttempts: m.failedLoginAttempts ?? 0,
-        ddosBlockedRequests: m.ddosBlockedRequests ?? 0,
-        suspiciousActivitiesCount: m.suspiciousActivitiesCount ?? 0,
-      };
-    } catch {
-      return empty;
-    }
   },
 
-  async getLogs(params?: Record<string, string>): Promise<SecurityLog[]> {
-    try {
-      const { data } = await apiClient.get('/security/admin/logs', { params });
-      return data?.content ?? data ?? [];
-    } catch {
-      return [];
-    }
+  async getLogs(_params?: Record<string, string>): Promise<SecurityLog[]> {
+    return supabaseMonitoringService.getRecentSecurityLogs(20);
   },
 
   async getActiveSessions(): Promise<ActiveSession[]> {
     try {
       const { data } = await apiClient.get('/security/admin/sessions');
-      return data ?? [];
+      const arr = Array.isArray(data) ? data : data?.data ?? [];
+      return (arr as any[]).map(s => ({
+        id: String(s.id ?? s.sessionId ?? s.userId ?? ''),
+        sessionId: s.sessionId,
+        userId: s.userId,
+        username: s.username,
+        fullName: s.fullName || s.username,
+        role: s.role || 'EMPLOYEE',
+        ipAddress: s.ipAddress || '127.0.0.1',
+        browser: s.browser,
+        deviceName: s.deviceName || 'Web Browser',
+        loginTime: s.loginTime || new Date().toISOString(),
+        lastActivity: s.lastActivity || new Date().toISOString(),
+        status: s.status || 'ACTIVE',
+      }));
     } catch {
       return [];
     }

@@ -30,6 +30,14 @@ public interface SecurityLogRepository extends JpaRepository<SecurityLog, UUID>,
 
     long countByModuleAndStatusAndTimestampBetween(SecurityModule module, String status, Instant from, Instant to);
 
+    long countByTimestampBetween(Instant from, Instant to);
+
+    long countByRiskLevelAndTimestampBetween(RiskLevel riskLevel, Instant from, Instant to);
+
+    long countByStatusAndTimestampBetween(String status, Instant from, Instant to);
+
+    List<SecurityLog> findByTimestampBetween(Instant from, Instant to);
+
     default Page<SecurityLog> filterLogs(
             String userId,
             String role,

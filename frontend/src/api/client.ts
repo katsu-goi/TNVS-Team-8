@@ -1,6 +1,33 @@
 import axios, { AxiosError } from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+const DEFAULT_SUPABASE_PROJECT_URL = 'https://dunijfrvfozwlykpkfhy.supabase.co';
+
+export const getApiBaseUrl = (): string => {
+  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  if (envUrl && !envUrl.includes('trycloudflare.com')) {
+    return envUrl;
+  }
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_PROJECT_URL;
+  return `${supabaseUrl}/functions/v1`;
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
+// Components call safeFetchJson with module-relative paths like
+// `/api/v1/compliance/documents`. The axios client already prefixes
+// VITE_API_BASE_URL (e.g. https://BACKEND-HOST/api/v1 or Supabase Edge Functions),
+// so resolve these against the same base — otherwise native fetch targets window.location.origin
+// (the Vercel host in staging) instead of the backend.
+function resolveApiUrl(url: string): string {
+  const base = getApiBaseUrl();
+  if (url.startsWith('/api/v1')) {
+    return `${base}${url.slice('/api/v1'.length)}`;
+  }
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    return `${base}${url.startsWith('/') ? '' : '/'}${url}`;
+  }
+  return url;
+}
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -126,7 +153,7 @@ export async function safeFetchJson<T = any>(url: string, options?: RequestInit)
       ...(options?.headers as Record<string, string> || {}),
     };
 
-    const res = await fetch(url, { ...options, headers });
+    const res = await fetch(resolveApiUrl(url), { ...options, headers });
     if (!res.ok) {
       return null;
     }

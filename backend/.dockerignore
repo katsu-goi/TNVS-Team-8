@@ -1,0 +1,15 @@
+target/
+logs/
+*.log
+*.jar
+.git/
+.gitignore
+.idea/
+.vscode/
+*.iml
+.env
+.env.*
+.credentials
+secrets/
+*.pem
+*.key

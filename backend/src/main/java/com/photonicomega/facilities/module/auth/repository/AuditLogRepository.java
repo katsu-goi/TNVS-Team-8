@@ -25,6 +25,8 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, UUID>,
 
     long countByCreatedAtBetween(LocalDateTime from, LocalDateTime to);
 
+    List<AuditLog> findByCreatedAtBetween(LocalDateTime from, LocalDateTime to);
+
     long countByModuleAndCreatedAtAfter(String module, LocalDateTime after);
 
     long countByActionContainingAndCreatedAtAfter(String actionToken, LocalDateTime after);

@@ -1,9 +1,8 @@
 import { create } from 'zustand';
-import { Client } from '@stomp/stompjs';
-import SockJS from 'sockjs-client';
-import { useAuthStore } from './authStore';
 import type { SubsystemHealthSnapshot } from '../types/systemMonitoring';
 import type { BackupRecord } from '../types';
+import { supabase, supabaseAvailable } from '../lib/supabase';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 export interface FacilitiesSyncData {
   pendingReservations: number;
@@ -28,7 +27,7 @@ interface RealtimeSyncState {
   connected: boolean;
   lastSyncAt: number | null;
   revision: number;
-  stompClient: Client | null;
+  supabaseChannels: RealtimeChannel[];
   connectSync: () => void;
   disconnectSync: () => void;
 }
@@ -43,86 +42,45 @@ export const useRealtimeSyncStore = create<RealtimeSyncState>((set, get) => ({
   lastSyncAt: null,
   revision: 0,
   stompClient: null,
+  supabaseChannels: [],
 
   connectSync: () => {
-    if (get().stompClient?.active) return;
+    // Supabase Realtime CDC Subscriptions
+    const clientDb = supabase;
+    if (supabaseAvailable && clientDb && get().supabaseChannels.length === 0) {
+      const channels: RealtimeChannel[] = [];
+      const tables = ['reservations', 'visitors', 'documents', 'security_alerts'];
 
-    const wsBase = import.meta.env.VITE_WS_BASE_URL || '';
-    const token = useAuthStore.getState().accessToken;
-    const client = new Client({
-      webSocketFactory: () => new SockJS(`${wsBase}/ws-endpoint`),
-      connectHeaders: token ? { Authorization: `Bearer ${token}` } : {},
-      reconnectDelay: 5000,
-      heartbeatIncoming: 4000,
-      heartbeatOutgoing: 4000,
-    });
-
-    client.onConnect = () => {
-      set({ connected: true });
-
-      client.subscribe('/topic/facilities/sync', (message) => {
-        if (message.body) {
-          try {
-            const data = JSON.parse(message.body) as FacilitiesSyncData;
-            set((state) => ({
-              syncData: data,
-              lastSyncAt: data.timestamp || Date.now(),
-              revision: state.revision + 1,
-            }));
-          } catch { /* ignore parse errors */ }
-        }
+      tables.forEach((tableName) => {
+        const ch = clientDb
+          .channel(`public:${tableName}`)
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: tableName },
+            () => {
+              set((state) => ({
+                revision: state.revision + 1,
+                lastSyncAt: Date.now(),
+                connected: true,
+              }));
+            },
+          )
+          .subscribe((status) => {
+            if (status === 'SUBSCRIBED') set({ connected: true });
+          });
+        channels.push(ch);
       });
 
-      client.subscribe('/topic/system-monitoring/subsystems', (message) => {
-        if (message.body) {
-          try {
-            const data = JSON.parse(message.body) as SubsystemHealthSnapshot;
-            set((state) => ({
-              subsystemHealth: data,
-              lastSyncAt: Date.now(),
-              revision: state.revision + 1,
-            }));
-          } catch { /* ignore parse errors */ }
-        }
-      });
-
-      client.subscribe('/topic/backups', (message) => {
-        if (message.body) {
-          try {
-            const data = JSON.parse(message.body) as BackupRecord;
-            set((state) => ({
-              backupEvent: data,
-              backupRevision: state.backupRevision + 1,
-            }));
-          } catch { /* ignore parse errors */ }
-        }
-      });
-
-      // AI provider/model changes (from AI Services) - consumers refetch.
-      client.subscribe('/topic/ai/config', (message) => {
-        if (message.body) {
-          try {
-            JSON.parse(message.body);
-            set((state) => ({
-              aiConfigRevision: state.aiConfigRevision + 1,
-            }));
-          } catch { /* ignore parse errors */ }
-        }
-      });
-    };
-
-    client.onStompError = () => {};
-    client.onWebSocketClose = () => { set({ connected: false }); };
-
-    client.activate();
-    set({ stompClient: client });
+      set({ supabaseChannels: channels });
+    }
   },
 
   disconnectSync: () => {
-    const { stompClient } = get();
-    if (stompClient) {
-      stompClient.deactivate();
-      set({ connected: false, stompClient: null });
+    const { supabaseChannels } = get();
+    const clientDb = supabase;
+    if (clientDb && supabaseChannels.length > 0) {
+      supabaseChannels.forEach((ch) => clientDb.removeChannel(ch));
     }
+    set({ connected: false, supabaseChannels: [] });
   },
 }));

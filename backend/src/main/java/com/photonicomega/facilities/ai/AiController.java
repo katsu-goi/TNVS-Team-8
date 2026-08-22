@@ -6,6 +6,7 @@ import com.photonicomega.facilities.module.auth.domain.User;
 import com.photonicomega.facilities.module.auth.repository.UserRepository;
 import com.photonicomega.facilities.module.governance.domain.SensitiveAction;
 import com.photonicomega.facilities.module.governance.service.GovernedActionGateway;
+import com.photonicomega.facilities.module.security.util.ClientIpResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.Builder;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -522,7 +523,7 @@ public class AiController {
             responseData.put("message", "This AI module is disabled. Enable it in AI Services to execute.");
             return ResponseEntity.ok(ApiResponse.success(responseData, "Module disabled"));
         }
-        String provider = target.getProviderName() != null ? target.getProviderName() : "OpenAI Production Gateway";
+        String provider = target.getProviderName() != null ? target.getProviderName() : "System Default";
         responseData.put("modelUsed", target.getModel());
         responseData.put("provider", provider);
         responseData.put("fallbackUsed", target.isFallbackUsed());
@@ -746,10 +747,6 @@ public class AiController {
     }
 
     private String clientIp(jakarta.servlet.http.HttpServletRequest req) {
-        String xff = req.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) {
-            return xff.split(",")[0].trim();
-        }
-        return req.getRemoteAddr();
+        return ClientIpResolver.resolve(req).ip();
     }
 }

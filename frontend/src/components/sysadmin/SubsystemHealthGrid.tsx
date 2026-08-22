@@ -646,17 +646,28 @@ function DetailModal({ sub, onClose }: { sub: SubsystemHealth; onClose: () => vo
 /* Main grid                                                          */
 /* ------------------------------------------------------------------ */
 
+import { supabaseMonitoringService } from '../../api/supabaseMonitoringService';
+
 export const SubsystemHealthGrid: React.FC = () => {
   const subsystemHealth = useRealtimeSyncStore(s => s.subsystemHealth);
   const [snapshot, setSnapshot] = useState<SubsystemHealthSnapshot | null>(null);
   const [selectedSubsystem, setSelectedSubsystem] = useState<SubsystemHealth | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [connectivity, setConnectivity] = useState<any[]>([]);
 
   useEffect(() => {
+    supabaseMonitoringService.checkSubsystemConnectivity().then(results => {
+      setConnectivity(results);
+    });
     systemMonitoringService.loadSubsystemHealth().then(s => { if (s) setSnapshot(s); });
-    const id = setInterval(() => setNow(Date.now()), 1000);
+    const id = setInterval(() => {
+      setNow(Date.now());
+      supabaseMonitoringService.checkSubsystemConnectivity().then(setConnectivity);
+    }, 10000);
     return () => clearInterval(id);
   }, []);
+
+  console.debug('[SubsystemHealthGrid] Connectivity status:', connectivity.length);
 
   const live = subsystemHealth ?? snapshot;
   const subsystems = live?.subsystems ?? [];

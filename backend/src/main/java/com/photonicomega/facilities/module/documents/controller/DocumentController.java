@@ -11,6 +11,7 @@ import com.photonicomega.facilities.module.documents.domain.DocumentStatus;
 import com.photonicomega.facilities.module.documents.repository.DocumentRepository;
 import com.photonicomega.facilities.module.documents.service.DocumentAccessPolicy;
 import com.photonicomega.facilities.module.documents.service.DocumentUploadService;
+import com.photonicomega.facilities.module.security.util.ClientIpResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
@@ -189,11 +190,7 @@ public class DocumentController {
         if (request == null) {
             return null;
         }
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
+        return ClientIpResolver.resolve(request).ip();
     }
 
     private MediaType resolveMediaType(String fileType) {

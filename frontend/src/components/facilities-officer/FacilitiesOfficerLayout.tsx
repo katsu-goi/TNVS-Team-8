@@ -49,14 +49,14 @@ export const FacilitiesOfficerLayout: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
-      <aside className="fixed top-0 left-0 w-72 h-screen z-30 bg-[#042F24] flex flex-col overflow-hidden shadow-2xl">
-        <div className="p-5 pb-4 flex items-center space-x-3 shrink-0 bg-[#011E17] border-b border-[#00E676]/20">
-          <div className="w-9 h-9 rounded-xl bg-[#00E676]/20 flex items-center justify-center shrink-0 overflow-hidden">
-            <img src="/greengsmlogo.png" alt="Green GSM Logo" className="w-full h-full object-contain" draggable={false} />
+      <aside className="fixed top-0 left-0 w-72 h-screen z-30 bg-[#D02F34] flex flex-col overflow-hidden shadow-2xl">
+        <div className="p-5 pb-4 flex items-center space-x-3 shrink-0 bg-[#A9252A] border-b border-white/10">
+          <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center shrink-0 overflow-hidden">
+            <img src="/hirna-logo.png" alt="Hirna Logo" className="w-full h-full object-contain" draggable={false} />
           </div>
           <div className="min-w-0">
-            <h1 className="font-heading font-bold text-sm text-white leading-tight truncate">Green GSM</h1>
-            <p className="text-[10px] text-[#00E676] font-medium truncate">Facilities Officer</p>
+            <h1 className="font-heading font-bold text-sm text-white leading-tight">Facilities &amp; Administrative System</h1>
+            <p className="text-[10px] text-[#FFC629] font-medium truncate">Facilities Officer</p>
           </div>
         </div>
 
@@ -71,7 +71,7 @@ export const FacilitiesOfficerLayout: React.FC = () => {
                   onClick={() => navigate(item.path)}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-full font-medium text-sm transition-all duration-200 ${
                     navIsActive
-                      ? 'bg-[#00E676] text-white font-semibold shadow-[0_0_16px_rgba(0,230,118,0.35)]'
+                      ? 'bg-[#A9252A] text-white font-semibold shadow-[0_0_16px_rgba(169,37,42,0.35)]'
                       : 'text-white hover:bg-white/10'
                   }`}
                 >
@@ -89,11 +89,11 @@ export const FacilitiesOfficerLayout: React.FC = () => {
           </div>
 
           <div className="shrink-0 px-3 py-2">
-            <div className="bg-[#042F24]/80 rounded-xl border border-[#00E676]/15 p-3 backdrop-blur-sm">
+            <div className="bg-[#A9252A]/80 rounded-xl border border-white/5 p-3 backdrop-blur-sm">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[10px] font-semibold text-white/80 uppercase tracking-widest">System Status</span>
                 <span className="text-[10px] text-white font-mono flex items-center space-x-1">
-                  <span className={`w-1.5 h-1.5 rounded-full inline-block ${syncConnected ? 'bg-[#00E676] shadow-[0_0_8px_rgba(0,230,118,0.5)]' : 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]'}`} />
+                  <span className={`w-1.5 h-1.5 rounded-full inline-block ${syncConnected ? 'bg-[#22C55E] shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]'}`} />
                   <span>{syncConnected ? 'All OK' : 'Connecting...'}</span>
                 </span>
               </div>
@@ -103,7 +103,7 @@ export const FacilitiesOfficerLayout: React.FC = () => {
                   { label: 'API', status: 'operational' as const },
                 ].map(s => (
                   <div key={s.label} className="flex items-center space-x-1.5">
-                    <span className={`w-1.5 h-1.5 rounded-full ${s.status === 'operational' ? 'bg-[#00E676] shadow-[0_0_8px_rgba(0,230,118,0.5)]' : 'bg-amber-500'}`} />
+                    <span className={`w-1.5 h-1.5 rounded-full ${s.status === 'operational' ? 'bg-[#22C55E] shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-amber-500'}`} />
                     <span className="text-[10px] text-white/60 font-mono">{s.label}</span>
                   </div>
                 ))}
@@ -117,10 +117,10 @@ export const FacilitiesOfficerLayout: React.FC = () => {
         </nav>
 
         <div className="shrink-0 px-3 py-2">
-          <div className="bg-[#042F24]/80 rounded-xl border border-[#00E676]/15 p-2.5 backdrop-blur-sm">
+          <div className="bg-[#A9252A]/80 rounded-xl border border-white/5 p-2.5 backdrop-blur-sm">
             <div className="flex items-center justify-between px-3 py-2 rounded-lg">
               <div className="flex items-center space-x-2.5 min-w-0">
-                <div className="w-8 h-8 rounded-full bg-[#00E676]/20 flex items-center justify-center font-bold text-[#00E676] text-xs shrink-0">
+                <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center font-bold text-white text-xs shrink-0">
                   {user?.fullName?.charAt(0) || 'F'}
                 </div>
                 <div className="min-w-0">
@@ -144,7 +144,7 @@ export const FacilitiesOfficerLayout: React.FC = () => {
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input type="text" placeholder="Search facilities, reservations, or documents..."
                 value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-white border border-slate-300 text-sm rounded-xl pl-9 pr-4 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-[#00E676] focus:ring-1 focus:ring-[#00E676]/30 transition-all" />
+                className="w-full bg-white border border-slate-300 text-sm rounded-xl pl-9 pr-4 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-[#D02F34] focus:ring-1 focus:ring-[#D02F34]/30 transition-all" />
             </div>
           </div>
           <div className="flex items-center space-x-3">

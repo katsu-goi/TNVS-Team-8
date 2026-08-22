@@ -128,7 +128,7 @@ export const SubjectDropdown: React.FC<SubjectDropdownProps> = ({
         aria-activedescendant={open ? `${id}-option-${activeIndex}` : undefined}
         onClick={() => (open ? setOpen(false) : openMenu())}
         onKeyDown={handleTriggerKeyDown}
-        className="w-full flex items-center justify-between gap-2 px-4 py-2.5 rounded-xl border border-white/15 bg-white/10 text-white text-sm text-left cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#00E676] focus:border-transparent transition-shadow"
+        className="w-full flex items-center justify-between gap-2 px-4 py-2.5 rounded-xl border border-white/15 bg-white/10 text-white text-sm text-left cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#D02F34] focus:border-transparent transition-shadow"
       >
         <span className="truncate">{value}</span>
         <ChevronDown
@@ -159,7 +159,7 @@ export const SubjectDropdown: React.FC<SubjectDropdownProps> = ({
                 onClick={() => selectOption(index)}
                 className={`px-4 py-2.5 text-sm cursor-pointer select-none transition-colors ${
                   active
-                    ? 'bg-[#00E676]/20 text-[#00E676]'
+                    ? 'bg-[#D02F34]/20 text-[#FFC629]'
                     : selected
                       ? 'bg-white/10 text-white'
                       : 'text-white/80 hover:bg-white/10 hover:text-white'

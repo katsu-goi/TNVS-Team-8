@@ -4,6 +4,7 @@ import com.photonicomega.facilities.common.dto.ApiResponse;
 import com.photonicomega.facilities.module.auth.domain.HrAssistanceRequest;
 import com.photonicomega.facilities.module.auth.dto.HrAssistanceRequestDto;
 import com.photonicomega.facilities.module.auth.service.HrAssistanceService;
+import com.photonicomega.facilities.module.security.util.ClientIpResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
@@ -36,10 +37,6 @@ public class HrAssistanceController {
     }
 
     private String getClientIp(HttpServletRequest request) {
-        String xForwardedFor = request.getHeader("X-Forwarded-For");
-        if (xForwardedFor != null && !xForwardedFor.isEmpty()) {
-            return xForwardedFor.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
+        return ClientIpResolver.resolve(request).ip();
     }
 }

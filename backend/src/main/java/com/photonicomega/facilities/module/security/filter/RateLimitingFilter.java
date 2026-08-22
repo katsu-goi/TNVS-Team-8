@@ -6,6 +6,12 @@ import io.github.bucket4j.Refill;
 import jakarta.servlet.*;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import com.photonicomega.facilities.module.security.domain.RiskLevel;
+import com.photonicomega.facilities.module.security.domain.SecurityLog;
+import com.photonicomega.facilities.module.security.domain.SecurityModule;
+import com.photonicomega.facilities.module.security.service.SecurityAuditService;
+import com.photonicomega.facilities.module.security.util.ClientIpResolver;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -17,8 +23,11 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 @Order(3)
+@RequiredArgsConstructor
 @Slf4j
 public class RateLimitingFilter implements Filter {
+
+    private final SecurityAuditService securityAuditService;
 
     // Store buckets mapped by IP or username
     private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
@@ -43,6 +52,30 @@ public class RateLimitingFilter implements Filter {
             httpResponse.setStatus(429); // Too Many Requests
             httpResponse.setContentType("application/json");
             httpResponse.getWriter().write("{\"error\": \"Too Many Requests: You have exceeded the permitted request quota. Please slow down and try again later.\"}");
+
+            recordRateLimitEvent(httpRequest, ip, path);
+        }
+    }
+
+    /**
+     * Persists a security log entry for the rate-limited request so the IP
+     * threat map reflects high-volume (bot/brute-force) sources in real time.
+     */
+    private void recordRateLimitEvent(HttpServletRequest request, String ip, String path) {
+        try {
+            SecurityLog logEntry = SecurityLog.builder()
+                    .ipAddress(ip)
+                    .apiEndpoint(path)
+                    .httpMethod(request.getMethod())
+                    .action("RATE_LIMIT_EXCEEDED")
+                    .module(SecurityModule.API_GATEWAY)
+                    .status("BLOCKED")
+                    .reason("Too many requests (HTTP 429) on " + path)
+                    .riskLevel(RiskLevel.MEDIUM)
+                    .build();
+            securityAuditService.logSecurityEventAsync(logEntry);
+        } catch (Exception e) {
+            log.error("Failed to record rate-limit security event", e);
         }
     }
 
@@ -107,10 +140,6 @@ public class RateLimitingFilter implements Filter {
     }
 
     private String getClientIp(HttpServletRequest request) {
-        String xHeader = request.getHeader("X-Forwarded-For");
-        if (xHeader != null && !xHeader.isEmpty()) {
-            return xHeader.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
+        return ClientIpResolver.resolve(request).ip();
     }
 }

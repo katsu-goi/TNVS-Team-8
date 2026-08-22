@@ -40,7 +40,8 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   connectWebSocket: () => {
     if (get().stompClient?.active) return;
 
-    const socketUrl = '/ws-endpoint';
+    const wsBase = import.meta.env.VITE_WS_BASE_URL || '';
+    const socketUrl = `${wsBase}/ws-endpoint`;
 
     const token = useAuthStore.getState().accessToken;
     const client = new Client({
