@@ -21,6 +21,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -127,20 +128,30 @@ class ModuleInstructionTest {
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("Non-admin cannot update module instructions (403); admin can")
+    @DisplayName("Non-admin cannot request a module instruction change (403); admin can request one")
     void onlyAdminCanUpdateInstructions() throws Exception {
         String body = """
-                {"content": "Updated content", "changeSummary": "test"}""";
+                {"content": "Updated content", "changeSummary": "test",
+                 "justification": "the current text omits the capacity rule"}""";
         mockMvc.perform(put("/v1/ai/instructions/reservations")
                         .contentType(MediaType.APPLICATION_JSON).content(body)
                         .header("Authorization", "Bearer " + employeeToken))
                 .andExpect(status().isForbidden());
 
+        // The administrator gets a request, not a change. This assertion used to read
+        // version 1.0.1 - one administrator, acting alone, rewriting what the assistant
+        // tells every user in the company. That is the behaviour the gate removed, so the
+        // assertion had to move with it rather than be kept green.
         mockMvc.perform(put("/v1/ai/instructions/reservations")
                         .contentType(MediaType.APPLICATION_JSON).content(body)
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.version").value("1.0.1"));
+                .andExpect(jsonPath("$.data.pendingApproval").value(true))
+                .andExpect(jsonPath("$.data.action").value("AI_INSTRUCTION_UPDATE"))
+                .andExpect(jsonPath("$.data.status").value("PENDING"));
+
+        assertEquals("1.0.0", moduleInstructionService.get("reservations").orElseThrow().getVersion(),
+                "requesting a change must not publish one");
     }
 
     @Test
@@ -171,32 +182,34 @@ class ModuleInstructionTest {
     @Test
     @DisplayName("Updating instructions records the previous version with author, timestamp and change summary")
     void updateRecordsAuditHistory() throws Exception {
-        String update = """
-                {"content": "New Facilities v2 instructions", "changeSummary": "Clarified maintenance scope"}""";
-        String resp = mockMvc.perform(put("/v1/ai/instructions/reservations")
-                        .contentType(MediaType.APPLICATION_JSON).content(update)
-                        .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.version").value("1.0.1"))
-                .andExpect(jsonPath("$.data.updatedBy").value("mi.admin@test.local"))
-                .andExpect(jsonPath("$.data.updatedAt").isNotEmpty())
-                .andExpect(jsonPath("$.data.versions[0].version").value("1.0.0"))
-                .andExpect(jsonPath("$.data.versions[0].changeSummary").value("Clarified maintenance scope"))
-                .andReturn().getResponse().getContentAsString();
+        changeInstructionsThroughGate("reservations", "New Facilities v2 instructions",
+                "Clarified maintenance scope", "the maintenance scope is ambiguous as written");
 
-        assertTrue(resp.contains("1.0.0"));
-        assertTrue(resp.contains("mi.admin@test.local"));
+        ModuleInstructionService.ModuleInstructionDto after =
+                moduleInstructionService.get("reservations").orElseThrow();
+
+        assertEquals("1.0.1", after.getVersion());
+        assertEquals("1.0.0", after.getVersions().get(0).getVersion());
+        assertEquals("Clarified maintenance scope", after.getVersions().get(0).getChangeSummary());
+        assertFalse(after.getUpdatedAt() == null || after.getUpdatedAt().isBlank());
+
+        // The history names the requester and the approval, not just an administrator.
+        // "Changed by an administrator" is the wrong conclusion for an auditor to draw
+        // when the truthful answer is that one person asked and another authorised it -
+        // and the approval id is what takes them to who that second person was.
+        assertTrue(after.getUpdatedBy().contains("mi.admin@test.local"),
+                "the history must name the requester, found: " + after.getUpdatedBy());
+        assertTrue(after.getUpdatedBy().contains("approval"),
+                "the history must point at the approval that authorised the change, found: "
+                        + after.getUpdatedBy());
     }
 
     @Test
     @DisplayName("The new version is used when composing context after an update")
     void newVersionUsedInComposition() throws Exception {
-        String update = """
-                {"content": "RESERVATION SPECIAL RULE: capacity checks first", "changeSummary": "test"}""";
-        mockMvc.perform(put("/v1/ai/instructions/reservations")
-                        .contentType(MediaType.APPLICATION_JSON).content(update)
-                        .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk());
+        changeInstructionsThroughGate("reservations",
+                "RESERVATION SPECIAL RULE: capacity checks first", "test",
+                "capacity checks have to run before conflict checks");
 
         String chat = """
                 {"message": "hello", "module": "reservations"}""";
@@ -213,11 +226,10 @@ class ModuleInstructionTest {
     @Test
     @DisplayName("Toggle disables the module so it is not applied in composition")
     void toggleDisablesModuleInstructions() throws Exception {
-        mockMvc.perform(put("/v1/ai/instructions/reservations/toggle")
-                        .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.enabled").value(false));
+        toggleInstructionsThroughGate("reservations", false,
+                "the reservation rules conflict with the new booking policy");
 
+        assertFalse(moduleInstructionService.get("reservations").orElseThrow().isEnabled());
         assertTrue(moduleInstructionService.getActiveContent("reservations").isEmpty());
 
         String chat = """
@@ -244,13 +256,9 @@ class ModuleInstructionTest {
     @Test
     @DisplayName("Requesting a rollback restores nothing on its own")
     void rollbackRequestRestoresNothingByItself() throws Exception {
-        String update = """
-                {"content": "REPLACED CONTENT", "changeSummary": "test"}""";
-        mockMvc.perform(put("/v1/ai/instructions/reservations")
-                        .contentType(MediaType.APPLICATION_JSON).content(update)
-                        .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.version").value("1.0.1"));
+        changeInstructionsThroughGate("reservations", "REPLACED CONTENT", "test",
+                "replacing the reservation rules for the pilot");
+        assertEquals("1.0.1", moduleInstructionService.get("reservations").orElseThrow().getVersion());
 
         mockMvc.perform(post("/v1/ai/instructions/reservations/restore/1.0.0")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -296,12 +304,8 @@ class ModuleInstructionTest {
     @Test
     @DisplayName("A rollback is carried out only after a second person approves it")
     void rollbackHappensOnlyAfterSomebodyElseApprovesAndExecutes() throws Exception {
-        String update = """
-                {"content": "REPLACED CONTENT", "changeSummary": "test"}""";
-        mockMvc.perform(put("/v1/ai/instructions/reservations")
-                        .contentType(MediaType.APPLICATION_JSON).content(update)
-                        .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk());
+        changeInstructionsThroughGate("reservations", "REPLACED CONTENT", "test",
+                "replacing the reservation rules for the pilot");
 
         String raised = mockMvc.perform(post("/v1/ai/instructions/reservations/restore/1.0.0")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -443,6 +447,72 @@ class ModuleInstructionTest {
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.module").value(expectedModule));
+    }
+
+    /**
+     * Publishes a module instruction change the only way it can now be published:
+     * requested by the administrator, approved by somebody else, then executed.
+     *
+     * <p>Several tests below are about versioning, audit history and context
+     * composition rather than about the gate, and they need a change to have actually
+     * landed before they can assert anything. They used to get one from a single
+     * {@code PUT}. Going through the gate here rather than reaching past it into
+     * {@code ModuleInstructionService} is deliberate: setup that bypasses the control
+     * under test is how a suite keeps passing after the control breaks, and these are
+     * the tests that would otherwise be perfectly happy with an ungated route.
+     */
+    private void changeInstructionsThroughGate(String moduleKey, String content,
+                                               String changeSummary, String why) throws Exception {
+        String body = objectMapper.writeValueAsString(Map.of(
+                "content", content, "changeSummary", changeSummary, "justification", why));
+        String raised = mockMvc.perform(put("/v1/ai/instructions/" + moduleKey)
+                        .contentType(MediaType.APPLICATION_JSON).content(body)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.pendingApproval").value(true))
+                .andReturn().getResponse().getContentAsString();
+        signOffAndExecute(raised);
+    }
+
+    /** As {@link #changeInstructionsThroughGate}, for the enable/disable switch. */
+    private void toggleInstructionsThroughGate(String moduleKey, boolean enabled, String why)
+            throws Exception {
+        String body = objectMapper.writeValueAsString(Map.of(
+                "enabled", enabled, "justification", why));
+        String raised = mockMvc.perform(put("/v1/ai/instructions/" + moduleKey + "/toggle")
+                        .contentType(MediaType.APPLICATION_JSON).content(body)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.pendingApproval").value(true))
+                .andReturn().getResponse().getContentAsString();
+        signOffAndExecute(raised);
+    }
+
+    /**
+     * Signs and executes a raised request as the seeded security officer, and returns
+     * its id.
+     *
+     * <p>The approver is a different account from the requester on purpose, even in
+     * setup - the gate refuses a self-approval, so a helper that used the admin token
+     * here would fail and take the real assertion with it, reporting a governance bug
+     * as a broken test.
+     */
+    private String signOffAndExecute(String raisedResponse) throws Exception {
+        String approvalId = objectMapper.readTree(raisedResponse)
+                .path("data").path("approvalRequestId").asText();
+        assertFalse(approvalId.isBlank(),
+                "the route must return the id of the request it raised, or nothing can be approved");
+
+        String approverToken = token(SEEDED_SECURITY_OFFICER);
+        mockMvc.perform(post("/v1/governance/approvals/" + approvalId + "/approve")
+                        .header("Authorization", "Bearer " + approverToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("APPROVED"));
+        mockMvc.perform(post("/v1/governance/approvals/" + approvalId + "/execute")
+                        .header("Authorization", "Bearer " + approverToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("EXECUTED"));
+        return approvalId;
     }
 
     private String token(String email) {

@@ -130,7 +130,9 @@ export const supabaseMonitoringService = {
    */
   async checkSubsystemConnectivity(): Promise<SubsystemConnectivityStatus[]> {
     try {
-      const { data } = await apiClient.get('/monitoring/admin/system-monitoring/subsystems');
+      // `/admin/system-monitoring/subsystems` - see systemMonitoringService for why the
+      // `monitoring/` prefix that used to be here made every call a 404.
+      const { data } = await apiClient.get('/admin/system-monitoring/subsystems');
       const snapshot = (data?.data ?? data) as Record<string, any> | null;
       const subs: any[] = Array.isArray(snapshot?.subsystems) ? snapshot.subsystems : [];
       return subs.map(s => ({

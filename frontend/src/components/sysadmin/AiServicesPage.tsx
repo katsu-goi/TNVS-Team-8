@@ -174,18 +174,31 @@ export const AiServicesPage: React.FC = () => {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
 
-  // The two acts on this screen that the approval gate governs: rolling a module's AI
-  // instructions back to an earlier version, and deleting a configured provider. Both
-  // are refused outright unless the caller sends a written reason, so each needs a step
-  // in front of it that collects one - a bare click on Restore or the bin icon can only
-  // ever produce a 422. Holding the target here (the version string, the provider) means
-  // the dialog can name what is about to be requested, which is the difference between
-  // "are you sure" and telling the approver-to-be what they are signing for.
+  // The acts on this screen that the approval gate governs. Every one of them is refused
+  // outright unless the caller sends a written reason, so each needs a step in front of it
+  // that collects one - a bare click can only ever produce a 422. Holding the target here
+  // (the version string, the provider, the prompt text) means the dialog can name what is
+  // about to be requested, which is the difference between "are you sure" and telling the
+  // approver-to-be what they are signing for.
   const [confirmRollbackVersion, setConfirmRollbackVersion] = useState<string | null>(null);
   const [confirmDeleteProvider, setConfirmDeleteProvider] = useState<Provider | null>(null);
-  // One flag for both: only one of these dialogs is ever open at a time, and it exists so
-  // the confirm button cannot be pressed twice into two identical approval requests.
+  // Added when the AI policy surface was gated. Until then these four were plain clicks
+  // that sent no reason: saving instruction text, switching a module's instruction set on
+  // or off, replacing the global system prompt, and promoting a provider to default. Each
+  // one changes what the assistant tells people or where the company's documents are sent,
+  // and each was a single administrator acting alone.
+  const [confirmSaveInstruction, setConfirmSaveInstruction] = useState(false);
+  const [confirmToggleInstruction, setConfirmToggleInstruction] = useState(false);
+  const [confirmDefaultProvider, setConfirmDefaultProvider] = useState<Provider | null>(null);
+  // Carries the prompt text the dialog is going to request, so the same dialog serves the
+  // editor's Save and the Restore Enterprise Default button - they are one act with two
+  // sources for the text, and the label tells the user which one they pressed.
+  const [confirmPromptChange, setConfirmPromptChange] =
+    useState<{ prompt: string; label: string } | null>(null);
+  // One flag for all of them: only one of these dialogs is ever open at a time, and it
+  // exists so the confirm button cannot be pressed twice into two identical requests.
   const [raisingApproval, setRaisingApproval] = useState(false);
+
 
   // Configure-modal state (per-module AI model selection)
   const [configProviderId, setConfigProviderId] = useState('');
@@ -358,39 +371,83 @@ export const AiServicesPage: React.FC = () => {
       });
   }, [selectedModuleKey]);
 
-  const handleSaveInstruction = async () => {
+  /**
+   * Files a request to replace a module's AI instruction text. It replaces nothing.
+   *
+   * Rolling a module back to an earlier version was gated from the start, while typing
+   * new text into this editor and pressing Save was not - which was the wrong way round.
+   * A rollback can only reach a state the module already ran and an approver can look up;
+   * this can set the instructions to anything at all.
+   *
+   * Nothing here writes instruction state, for the reason spelled out on
+   * `handleRestoreInstruction`: the response `data` is now the approval request, not a
+   * ModuleInstruction, so feeding it into `setSelectedInstruction` would replace the live
+   * instruction with an approval object and blank the editor - showing the administrator an
+   * empty instruction body immediately after saving. The draft is also deliberately left in
+   * the editor and edit mode is left open: the text has not been published, and closing the
+   * editor would tell the user it had.
+   */
+  const handleSaveInstruction = async (reason: string) => {
     if (!selectedModuleKey) return;
+    setRaisingApproval(true);
     setSavingInstruction(true);
     try {
       const res = await apiClient.put(`/ai/instructions/${selectedModuleKey}`, {
         content: tempInstructionContent,
+        // The summary and the justification answer different questions and both are kept.
+        // The summary goes into the version history and says what changed; the reason is
+        // what the approver reads before signing, and it is the one the gate requires.
         changeSummary: instructionChangeSummary || `Updated ${selectedInstruction?.name || selectedModuleKey} instructions`,
+        justification: reason,
       });
-      if (res.data?.data) {
-        setSelectedInstruction(res.data.data);
-        setInstructionChangeSummary('');
-        setIsEditingInstruction(false);
-        showToast(`Module instructions for "${res.data.data.name}" updated to v${res.data.data.version}`);
-        fetchAllData();
-      }
-    } catch {
-      showToast('Failed to update module instructions');
+      // Was `Module instructions for "<name>" updated to v<version>`, quoting a version
+      // from a DTO that no longer carries one. Nothing was updated and no version was
+      // published; the server's sentence names the request id and who still has to sign.
+      showToast(pendingApprovalMessage(res.data, 'Change AI instructions'));
+      setConfirmSaveInstruction(false);
+    } catch (err) {
+      // 'Failed to update module instructions' hid the one sentence that says what to do
+      // differently - reason too short, module unknown, content blank.
+      showToast(extractErrorMessage(err));
     } finally {
       setSavingInstruction(false);
+      setRaisingApproval(false);
     }
   };
 
-  const handleToggleInstruction = async () => {
-    if (!selectedModuleKey) return;
+  /**
+   * Files a request to switch a module's instruction set on or off. It switches nothing.
+   *
+   * Gated even though the neighbouring "AI module" toggle is not, and the difference is
+   * worth stating because the two buttons look alike. Switching a module's *AI* off is a
+   * fail-safe act: the assistant stops answering, and during an incident the person
+   * silencing it should not first have to find a second signature. Switching a module's
+   * *instructions* off does the opposite - the assistant carries on advising with its
+   * module-specific guardrails removed. That is a change to the advice, not an end to it.
+   *
+   * Sends the state it wants rather than asking for a flip. `ModuleInstructionService
+   * .toggle` inverts whatever it finds, so a request raised while the instructions were on
+   * and approved twenty minutes later, after somebody else had already turned them off,
+   * would turn them back on - the opposite of what was approved, reported as success.
+   */
+  const handleToggleInstruction = async (reason: string) => {
+    if (!selectedModuleKey || !selectedInstruction) return;
+    const intended = !selectedInstruction.enabled;
+    setRaisingApproval(true);
     try {
-      const res = await apiClient.put(`/ai/instructions/${selectedModuleKey}/toggle`);
-      if (res.data?.data) {
-        setSelectedInstruction(res.data.data);
-        showToast(`"${res.data.data.name}" instructions ${res.data.data.enabled ? 'enabled' : 'disabled'}`);
-        fetchAllData();
-      }
-    } catch {
-      showToast('Failed to toggle module instructions');
+      const res = await apiClient.put(`/ai/instructions/${selectedModuleKey}/toggle`, {
+        enabled: intended,
+        justification: reason,
+      });
+      // Was `"<name>" instructions enabled/disabled`, read off a DTO that has no `enabled`
+      // field, so it always said "disabled" - claiming an act that had not happened and
+      // getting its direction wrong as well.
+      showToast(pendingApprovalMessage(res.data, intended ? 'Enable AI instructions' : 'Disable AI instructions'));
+      setConfirmToggleInstruction(false);
+    } catch (err) {
+      showToast(extractErrorMessage(err));
+    } finally {
+      setRaisingApproval(false);
     }
   };
 
@@ -451,13 +508,35 @@ export const AiServicesPage: React.FC = () => {
     }
   };
 
-  const handleSetDefaultProvider = async (id: string) => {
+  /**
+   * Files a request to make a provider the default. It promotes nothing.
+   *
+   * Deleting a provider was already gated while this was not, which had it backwards. The
+   * default provider is the endpoint and the API key that every module without its own
+   * binding sends its work to, so promoting a different one redirects the company's
+   * documents and contracts to another company's service in a single call. A deletion takes
+   * a capability away and shows up as work that stopped happening; this keeps the
+   * capability and changes where the data goes, which shows up as nothing at all.
+   *
+   * `setProviders(prev => prev.map(p => ({ ...p, isDefault: p.id === id })))` used to run
+   * here. It moved the Default badge onto a provider that was still serving no traffic,
+   * and the next realtime refresh moved it back.
+   */
+  const handleSetDefaultProvider = async (provider: Provider, reason: string) => {
+    setRaisingApproval(true);
     try {
-      await apiClient.put(`/ai/providers/${id}/default`);
-      setProviders(prev => prev.map(p => ({ ...p, isDefault: p.id === id })));
-      showToast('Default primary AI provider updated.');
-    } catch {
-      showToast('Failed to update default AI provider.');
+      const res = await apiClient.put(`/ai/providers/${provider.id}/default`, { justification: reason });
+      // Was 'Default primary AI provider updated.' - a statement that the traffic had
+      // moved, made at the one moment it certainly had not.
+      showToast(pendingApprovalMessage(res.data, 'Change the default AI provider'));
+      setConfirmDefaultProvider(null);
+    } catch (err) {
+      // 'Failed to update default AI provider.' hid the gate's reasons for refusing: the
+      // reason was too short, the provider's last health check left it offline, or it has
+      // gone from the registry.
+      showToast(extractErrorMessage(err));
+    } finally {
+      setRaisingApproval(false);
     }
   };
 
@@ -499,20 +578,6 @@ export const AiServicesPage: React.FC = () => {
     else if (data.providerType.includes('Claude')) pType = 'claude';
     else if (data.providerType.includes('Ollama') || data.providerType.includes('LM Studio') || data.providerType.includes('Local')) pType = 'local';
 
-    const newProviderObj: Provider = {
-      id: 'prov-' + Date.now(),
-      name: data.displayName || data.providerName,
-      model: data.model || 'gpt-4o',
-      status: 'CONNECTED',
-      lastSync: 'Just now',
-      responseTime: '45 ms',
-      isDefault: data.isDefault,
-      type: pType,
-      baseUrl: data.baseUrl,
-      endpoint: data.endpoint,
-      apiKey: data.apiKey,
-    };
-
     const capabilityList = data.capabilities
       ? Object.entries(data.capabilities)
           .filter(([, v]) => v)
@@ -531,45 +596,52 @@ export const AiServicesPage: React.FC = () => {
         capabilities: capabilityList,
       });
 
-      if (res.data?.data) {
-        showToast(`AI Provider "${data.displayName}" added successfully!`);
-        setShowAddProviderModal(false);
-        fetchAllData();
-        return;
-      }
+      showToast(res.data?.message || `AI Provider "${data.displayName}" added.`);
+      setShowAddProviderModal(false);
+      fetchAllData();
     } catch (err) {
-      console.warn('Backend provider save request failed, updating provider state locally:', err);
-    }
-
-    setProviders(prev => {
-      const list = data.isDefault ? prev.map(p => ({ ...p, isDefault: false })) : [...prev];
-      return [...list, newProviderObj];
-    });
-
-    showToast(`AI Provider "${data.displayName}" saved successfully!`);
-    setShowAddProviderModal(false);
-  };
-
-  const handleSavePrompt = async () => {
-    try {
-      await apiClient.put('/ai/prompt', { prompt: tempPrompt });
-      setSystemPrompt(tempPrompt);
-      setIsEditingPrompt(false);
-      showToast('System AI instructions prompt updated!');
-    } catch {
-      showToast('Failed to update system prompt.');
+      // What stood here was a local fallback: on any failure it logged a warning to the
+      // console, pushed a provider object into local state and showed `AI Provider
+      // "<name>" saved successfully!`. So a rejected save looked identical to an accepted
+      // one - the card appeared, the toast congratulated the administrator, and the
+      // provider existed nowhere but that browser tab until the next refresh removed it.
+      //
+      // It also hid the one case the backend now refuses on purpose. Registering a
+      // provider is allowed, but registering it *as the default* is not while another
+      // provider holds that flag: making a provider the default redirects every module
+      // without its own binding to its endpoint and API key, so it needs a second
+      // signature and has its own route. Its refusal says exactly that, and the
+      // administrator can act on it - untick the box, save, then use Make Default.
+      showToast(extractErrorMessage(err));
     }
   };
 
-  const handleRestoreDefaultPrompt = async () => {
+  /**
+   * Files a request to replace the global system prompt. It replaces nothing.
+   *
+   * One handler for both the editor's Save and Restore Enterprise Default, because they are
+   * the same act with two sources for the text. Restoring the default is not the safer of
+   * the two and is not exempt: whatever the prompt currently says, this overwrites it, and
+   * the global prompt is what every module whose own instructions are switched off follows.
+   * It also has no version history at all - `setSystemPrompt` overwrites a single field -
+   * so the outgoing text survives only in the approval record and the application log.
+   *
+   * `setSystemPrompt(...)` and `setIsEditingPrompt(false)` used to run here. Between them
+   * they showed the new prompt as live and closed the editor, so the screen agreed with
+   * itself and disagreed with the server; a reload put the old prompt back.
+   */
+  const handlePromptChange = async (prompt: string, reason: string, label: string) => {
+    setRaisingApproval(true);
     try {
-      await apiClient.put('/ai/prompt', { prompt: DEFAULT_SYSTEM_PROMPT });
-      setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
-      setTempPrompt(DEFAULT_SYSTEM_PROMPT);
-      setIsEditingPrompt(false);
-      showToast('System prompt restored to enterprise default.');
-    } catch {
-      showToast('Failed to restore default prompt.');
+      const res = await apiClient.put('/ai/prompt', { prompt, justification: reason });
+      showToast(pendingApprovalMessage(res.data, label));
+      setConfirmPromptChange(null);
+      // The editor stays open with the draft intact. Nothing was published, and discarding
+      // what the administrator typed would be the one irreversible thing this click does.
+    } catch (err) {
+      showToast(extractErrorMessage(err));
+    } finally {
+      setRaisingApproval(false);
     }
   };
 
@@ -838,7 +910,7 @@ export const AiServicesPage: React.FC = () => {
                 <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
                   {!p.isDefault ? (
                     <button
-                      onClick={() => handleSetDefaultProvider(p.id)}
+                      onClick={() => setConfirmDefaultProvider(p)}
                       className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 hover:underline"
                     >
                       Make Default
@@ -1027,7 +1099,10 @@ export const AiServicesPage: React.FC = () => {
             {isEditingPrompt ? (
               <>
                 <button
-                  onClick={handleSavePrompt}
+                  onClick={() => setConfirmPromptChange({
+                    prompt: tempPrompt,
+                    label: 'Change the global AI system prompt',
+                  })}
                   className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm transition-all"
                 >
                   Save Prompt
@@ -1054,7 +1129,10 @@ export const AiServicesPage: React.FC = () => {
                   Edit Prompt
                 </button>
                 <button
-                  onClick={handleRestoreDefaultPrompt}
+                  onClick={() => setConfirmPromptChange({
+                    prompt: DEFAULT_SYSTEM_PROMPT,
+                    label: 'Restore the enterprise default system prompt',
+                  })}
                   className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold text-xs transition-colors"
                 >
                   Restore Default
@@ -1158,7 +1236,7 @@ export const AiServicesPage: React.FC = () => {
                   <span>Version History ({selectedInstruction.versions.length})</span>
                 </button>
                 <button
-                  onClick={handleToggleInstruction}
+                  onClick={() => setConfirmToggleInstruction(true)}
                   className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${selectedInstruction.enabled ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700' : 'bg-slate-200 hover:bg-slate-300 text-slate-600'}`}
                 >
                   <ToggleLeft className="w-4 h-4" />
@@ -1232,7 +1310,7 @@ export const AiServicesPage: React.FC = () => {
                       Cancel
                     </button>
                     <button
-                      onClick={handleSaveInstruction}
+                      onClick={() => setConfirmSaveInstruction(true)}
                       disabled={savingInstruction || !tempInstructionContent.trim()}
                       className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm transition-all disabled:opacity-50"
                     >
@@ -1656,6 +1734,85 @@ export const AiServicesPage: React.FC = () => {
           busy={raisingApproval}
           onCancel={() => setConfirmDeleteProvider(null)}
           onConfirm={reason => handleDeleteProvider(confirmDeleteProvider, reason)}
+        />
+      )}
+
+      {/* GATE: CHANGE AI INSTRUCTIONS
+          The neutral tone, here and on the three below, is not a judgement that these
+          matter less than a deletion. It follows the same rule the rest of the app uses:
+          rose for an act that destroys something, emerald for one that changes it. Every
+          one of these is a change - and the sentence about nothing having happened yet is
+          the same in both tones, which is the part that has to land. */}
+      {confirmSaveInstruction && (
+        <ConfirmActionModal
+          title="Change AI Instructions"
+          targetLabel={`${selectedInstruction?.name || selectedModuleKey} — replace instruction text`}
+          consequence="AI instructions decide what the assistant recommends to every user of this module, so changing them changes advice company-wide - silently, with no build and no diff for anyone to review."
+          reasonPlaceholder="Why should the assistant start advising differently? The approver reads this and the new text, nothing else."
+          confirmLabel="Request Approval"
+          tone="neutral"
+          icon={Sparkles}
+          busy={raisingApproval}
+          onCancel={() => setConfirmSaveInstruction(false)}
+          onConfirm={reason => handleSaveInstruction(reason)}
+        />
+      )}
+
+      {/* GATE: ENABLE / DISABLE AI INSTRUCTIONS
+          Distinct from the module's own AI toggle two panels over, which is not gated: that
+          one silences the assistant, this one leaves it advising without the module's
+          guardrails. The consequence sentence says so, because the buttons look alike. */}
+      {confirmToggleInstruction && selectedInstruction && (
+        <ConfirmActionModal
+          title={selectedInstruction.enabled ? 'Disable AI Instructions' : 'Enable AI Instructions'}
+          targetLabel={`${selectedInstruction.name || selectedModuleKey} — currently ${selectedInstruction.enabled ? 'enabled' : 'disabled'}`}
+          consequence={selectedInstruction.enabled
+            ? 'Disabling the instruction set does not stop the assistant answering for this module. It keeps advising, from the global system prompt alone, with this module\'s guardrails removed.'
+            : 'Enabling the instruction set puts this module\'s guardrails back in front of every answer the assistant gives for it.'}
+          reasonPlaceholder="Why should this module's guardrails come off, and what covers it in the meantime?"
+          confirmLabel="Request Approval"
+          tone="neutral"
+          icon={Sparkles}
+          busy={raisingApproval}
+          onCancel={() => setConfirmToggleInstruction(false)}
+          onConfirm={reason => handleToggleInstruction(reason)}
+        />
+      )}
+
+      {/* GATE: CHANGE THE GLOBAL SYSTEM PROMPT
+          Serves both Save Prompt and Restore Enterprise Default. The consequence names the
+          absence of a version history, because that is what makes this different from a
+          module instruction change: there is no earlier copy to go back to. */}
+      {confirmPromptChange && (
+        <ConfirmActionModal
+          title="Change Global AI System Prompt"
+          targetLabel={confirmPromptChange.label}
+          consequence="The global prompt is what every module without its own instructions follows. It has no version history - once replaced, the previous wording exists only in the approval record."
+          reasonPlaceholder="Why should the assistant's standing instructions change? Quote the policy or incident behind it."
+          confirmLabel="Request Approval"
+          tone="neutral"
+          icon={Sparkles}
+          busy={raisingApproval}
+          onCancel={() => setConfirmPromptChange(null)}
+          onConfirm={reason => handlePromptChange(confirmPromptChange.prompt, reason, confirmPromptChange.label)}
+        />
+      )}
+
+      {/* GATE: CHANGE THE DEFAULT AI PROVIDER
+          Names the provider being replaced as well as the one being promoted, because the
+          decision is a comparison between two of them and an id is a slug. */}
+      {confirmDefaultProvider && (
+        <ConfirmActionModal
+          title="Change The Default AI Provider"
+          targetLabel={`${confirmDefaultProvider.name} · ${confirmDefaultProvider.model} — replacing ${providers.find(p => p.isDefault)?.name || 'no current default'}`}
+          consequence="The default provider is the endpoint and the API key every module without its own binding sends its work to. Promoting a different one redirects this company's documents and contracts to another company's service."
+          reasonPlaceholder="Why should the company's AI traffic move to this provider?"
+          confirmLabel="Request Approval"
+          tone="neutral"
+          icon={Sparkles}
+          busy={raisingApproval}
+          onCancel={() => setConfirmDefaultProvider(null)}
+          onConfirm={reason => handleSetDefaultProvider(confirmDefaultProvider, reason)}
         />
       )}
     </div>

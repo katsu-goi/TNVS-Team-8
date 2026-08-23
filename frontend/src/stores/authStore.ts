@@ -160,3 +160,22 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ user: null, accessToken: null, refreshToken: null });
   },
 }));
+
+/**
+ * Keeps the store's copy of the tokens in step with a silent refresh.
+ *
+ * `apiClient` refreshes the access token behind the application's back when one lapses,
+ * and it writes the new token to localStorage - which is where the request interceptor
+ * reads it, so API calls are correct either way. This listener exists so the store does
+ * not go on holding a string that no longer authenticates anything, since components read
+ * `accessToken` from here to decide what to render. Wired by event rather than by import
+ * because `client` is downstream of this module.
+ */
+window.addEventListener('auth:token-refreshed', (event) => {
+  const detail = (event as CustomEvent<{ accessToken: string; refreshToken: string | null }>).detail;
+  if (!detail?.accessToken) return;
+  useAuthStore.setState({
+    accessToken: detail.accessToken,
+    refreshToken: detail.refreshToken ?? useAuthStore.getState().refreshToken,
+  });
+});

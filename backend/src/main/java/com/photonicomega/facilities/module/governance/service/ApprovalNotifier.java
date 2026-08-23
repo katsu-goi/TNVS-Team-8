@@ -54,7 +54,7 @@ public class ApprovalNotifier {
         Map<String, Object> payload = payloadFor(request,
                 "Approval needed: " + request.getAction().getLabel(),
                 request.getRequestedByName() + " is requesting to "
-                        + request.getAction().getLabel().toLowerCase(java.util.Locale.ROOT)
+                        + request.getAction().getLabelInSentence()
                         + " '" + request.getTargetLabel() + "'. You are being asked to authorise it. "
                         + "You did not raise this request.");
         for (User approver : approvers) {
@@ -68,7 +68,7 @@ public class ApprovalNotifier {
     public void notifyRequesterOfOutcome(ApprovalRequest request) {
         publisher.publishToUser(request.getRequestedByEmail(), payloadFor(request,
                 request.getAction().getLabel() + ": " + request.getStatus(),
-                "Your request to " + request.getAction().getLabel().toLowerCase(java.util.Locale.ROOT)
+                "Your request to " + request.getAction().getLabelInSentence()
                         + " '" + request.getTargetLabel() + "' is now "
                         + request.getStatus().name().toLowerCase(java.util.Locale.ROOT) + "."));
     }

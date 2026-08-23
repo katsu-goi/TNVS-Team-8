@@ -6,7 +6,7 @@ import type { Envelope } from '../../api/client';
  * The confirmation step in front of every governed act.
  *
  * <h3>Why this exists</h3>
- * The backend now refuses all fifteen sensitive actions unless the caller sends a
+ * The backend refuses every one of its sensitive actions unless the caller sends a
  * written reason of at least ten characters, and it never carries the act out on
  * the strength of one signature. Before this component, the screens that trigger
  * those acts sent no reason at all: a single click on Terminate fired

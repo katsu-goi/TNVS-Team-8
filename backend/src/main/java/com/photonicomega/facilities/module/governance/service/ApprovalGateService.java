@@ -116,7 +116,7 @@ public class ApprovalGateService {
         }
         if (justification == null || justification.isBlank()) {
             throw new BusinessRuleViolationException(
-                    "A written justification is required before " + action.getLabel().toLowerCase(Locale.ROOT)
+                    "A written justification is required before " + action.getLabelInSentence()
                             + " can be requested. " + action.getRationale());
         }
         if (justification.trim().length() < 10) {
@@ -125,12 +125,12 @@ public class ApprovalGateService {
             // why the company destroyed a document.
             throw new BusinessRuleViolationException(
                     "The justification is too short to be meaningful. Describe why "
-                            + action.getLabel().toLowerCase(Locale.ROOT) + " is necessary.");
+                            + action.getLabelInSentence() + " is necessary.");
         }
         Set<String> roles = roleNamesOf(requester);
         if (!action.canRequest(roles)) {
             throw new BusinessRuleViolationException("Your role is not permitted to request "
-                    + action.getLabel().toLowerCase(Locale.ROOT) + ".");
+                    + action.getLabelInSentence() + ".");
         }
 
         LocalDateTime now = LocalDateTime.now();
@@ -148,9 +148,12 @@ public class ApprovalGateService {
                 // missed sweep and a document nobody can ever act on again.
                 stateWriter.markExpired(open.getId());
             } else {
+                // "for this item", not " this item" glued to the label. Every label
+                // already names its own object, so the old form read "A request to
+                // change AI instructions this item is already awaiting approval".
                 throw new BusinessRuleViolationException("A request to "
-                        + action.getLabel().toLowerCase(Locale.ROOT)
-                        + " this item is already awaiting approval (requested by "
+                        + action.getLabelInSentence()
+                        + " is already awaiting approval for this item (requested by "
                         + open.getRequestedByEmail() + ").");
             }
         }
@@ -244,7 +247,7 @@ public class ApprovalGateService {
         Set<String> roles = roleNamesOf(approver);
         if (!request.getAction().canApprove(roles)) {
             throw new BusinessRuleViolationException("Your role is not permitted to approve "
-                    + request.getAction().getLabel().toLowerCase(Locale.ROOT)
+                    + request.getAction().getLabelInSentence()
                     + ". Required: " + String.join(" or ", request.getAction().getApproverRoles()) + ".");
         }
 

@@ -262,6 +262,15 @@ spring:
   jpa:
     hibernate:
       ddl-auto: create-drop
+    properties:
+      hibernate:
+        # Same reason as the dev profile below: this is H2, and inheriting the root
+        # document's PostgreSQLDialect makes the suite exercise a dialect no H2 profile
+        # actually runs on. `create-drop` means the migration defect that motivated the
+        # dev pin cannot bite here, but a suite that validates DDL under one dialect
+        # while a developer boots under another is the same shape of gap that let the
+        # missing dev encryption key survive 146 green tests.
+        dialect: org.hibernate.dialect.H2Dialect
   flyway:
     enabled: false
 app:
@@ -289,6 +298,28 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
+    properties:
+      hibernate:
+        # H2, not PostgreSQL. The root document forces PostgreSQLDialect for the real
+        # Postgres profiles, and inheriting it here left Hibernate migrating an H2 file
+        # while believing it was talking to Postgres. `ddl-auto: update` then read the
+        # existing schema through the wrong dialect: it re-issued constraints and
+        # indexes that were already there (the "already exists" warnings every boot)
+        # and, worse, did not notice columns the entity model had gained. A dev
+        # database created before DisposalRequest grew approval_request_id,
+        # requested_by_id and requested_by_email never received them, and
+        # GET /v1/compliance/alerts, GET /v1/compliance/disposals and the gated
+        # POST /v1/compliance/documents/{id}/disposal answered 500 with
+        # "An unexpected error occurred" - a schema fault presented as a server crash.
+        # Only the H2 profiles were affected; the deployed profiles run real Postgres,
+        # where the forced dialect is correct.
+        #
+        # Hibernate logs HHH90000025 here - "H2Dialect does not need to be specified
+        # explicitly" - and it is wrong about this file. Auto-detection would indeed
+        # pick H2Dialect, but only in the absence of an explicit setting, and the root
+        # document supplies one. Removing this line to silence that warning restores
+        # the bug. HibernateDialectConfigTest asserts it stays.
+        dialect: org.hibernate.dialect.H2Dialect
   flyway:
     enabled: false
   h2:
@@ -298,6 +329,19 @@ spring:
 app:
   security:
     bcrypt-strength: 6
+  ai:
+    # DEV-ONLY encryption key, published on purpose so the claim above - no external
+    # database, no environment variables - is actually true. Without it the root
+    # default ${AI_API_KEY_ENCRYPTION_KEY:} resolves to blank,
+    # ApiKeyEncryptionService fails fast as designed, and the context never refreshes:
+    # `mvnw spring-boot:run` died on a fresh clone and took every route with it, while
+    # the test suite stayed green because the `test` profile has always carried its own
+    # key. ApiKeyEncryptionConfigTest boots this profile to keep that from recurring.
+    # This value is refused outside the dev and test profiles (PUBLISHED_KEYS), so
+    # copying it into a deployment fails at startup rather than silently encrypting
+    # every provider key with something anyone can read. An env var still wins here,
+    # for a developer who wants a key of their own.
+    encryption-key: ${AI_API_KEY_ENCRYPTION_KEY:0tJRq8HSlEH5Ddjv5Y+bjObw/AWl9DTY0yjyoFiNrYw=}
 
 ---
 spring:

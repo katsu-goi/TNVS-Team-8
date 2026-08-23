@@ -53,6 +53,42 @@ public class AiController {
     private final jakarta.servlet.http.HttpServletRequest request;
     private final RestTemplate restTemplate = new RestTemplate();
 
+    /**
+     * The target id recorded for a change to the global system prompt.
+     *
+     * <p>There is only one of it, but the approval table keys everything by target, so
+     * it needs a name. This one is deliberately readable rather than a uuid: it is what
+     * an approver sees in the queue beside the module keys.
+     */
+    private static final String GLOBAL_PROMPT_TARGET_ID = "global-system-prompt";
+
+    /**
+     * Serialises an executor payload.
+     *
+     * <p>Built through Jackson rather than by concatenating strings, and not as a
+     * stylistic preference. These payloads carry AI instruction text, which is prose
+     * containing quotes, braces, backslashes and newlines by its nature. Hand-built JSON
+     * would produce a payload that fails to parse in the executor - after an approver
+     * had signed for it - or, worse, one that parses into something other than what was
+     * shown to them.
+     */
+    private static final com.fasterxml.jackson.databind.ObjectMapper PAYLOAD_MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
+    private static String payloadJson(Map<String, Object> payload) {
+        try {
+            return PAYLOAD_MAPPER.writeValueAsString(payload);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            // Only reachable if the map holds something unserialisable, which the callers
+            // above never do - they put strings and booleans in. Failing here is still
+            // correct: raising an approval whose payload could not be written would mean
+            // asking somebody to sign for an act that cannot then be carried out.
+            throw new BusinessRuleViolationException(
+                    "The details of this change could not be recorded, so it has not been "
+                            + "requested: " + e.getOriginalMessage());
+        }
+    }
+
     @Data
     public static class ConnectionTestRequest {
         private String provider;
@@ -100,18 +136,126 @@ public class AiController {
         return ResponseEntity.ok(ApiResponse.success(aiStateService.getProviders(), "AI Providers retrieved"));
     }
 
+    /**
+     * Registers a configured AI provider. Does not give it any traffic.
+     *
+     * <p>Not gated, because adding a provider to the registry does not send anything to
+     * it: a provider only receives work once it is the default or a module is explicitly
+     * bound to it, and both of those are controlled elsewhere - promotion through {@link
+     * SensitiveAction#AI_PROVIDER_SET_DEFAULT}, removal through {@link
+     * SensitiveAction#AI_PROVIDER_DELETE}.
+     *
+     * <p>That reasoning only holds because of the refusal below. {@code addProvider}
+     * honours a caller-supplied default flag - it clears the flag from every existing
+     * provider and hands it to the new one - so registration was in fact the cheapest
+     * way to become the default, and it needed no approval and recorded no requester.
+     * Anyone able to add a provider could point every module without an explicit binding
+     * at their own endpoint and API key in a single call, which is the whole of what the
+     * gate on promotion exists to prevent. A control is worth what the cheapest way
+     * around it costs.
+     *
+     * <p>Refused rather than quietly stripped: returning 200 with the flag dropped would
+     * hand back a provider the caller believes is the default, and they would discover
+     * otherwise by watching traffic continue somewhere else.
+     *
+     * <p>The first provider is still allowed to take the default. A registry holding
+     * providers with no default at all is the state {@code AiProviderSetDefaultExecutor}
+     * refuses to create on purpose - every unbound module would have nowhere to send its
+     * work - so there is nothing to protect and nothing to prefer instead.
+     */
     @PostMapping("/providers")
-    public ResponseEntity<ApiResponse<AiStateManagementService.ProviderDto>> addProvider(@RequestBody AiStateManagementService.ProviderDto req) {
+    @Operation(summary = "Register an AI provider (does not make it the default)")
+    public ResponseEntity<ApiResponse<AiStateManagementService.ProviderDto>> addProvider(
+            @RequestBody AiStateManagementService.ProviderDto req,
+            @AuthenticationPrincipal UserDetails admin) {
+        List<AiStateManagementService.ProviderDto> existing = aiStateService.getProviders();
+        if (req.isDefault() && !existing.isEmpty()) {
+            AiStateManagementService.ProviderDto current = existing.stream()
+                    .filter(AiStateManagementService.ProviderDto::isDefault)
+                    .findFirst()
+                    .orElse(null);
+            throw new BusinessRuleViolationException(
+                    "A new AI provider cannot be registered as the default"
+                            + (current == null ? "" : ", which is currently " + current.getName())
+                            + ". Making a provider the default redirects every module without its own "
+                            + "binding to its endpoint and API key, so it needs a second signature: "
+                            + "register this provider without the default flag, then request the "
+                            + "promotion on PUT /v1/ai/providers/{id}/default. Nothing was saved.");
+        }
+
         AiStateManagementService.ProviderDto created = aiStateService.addProvider(req);
         moduleAiConfigService.broadcastProviderChange("PROVIDER_ADDED");
+
+        // The route had no authenticated principal before, so a provider holding an API
+        // key could appear in the registry with no record of who put it there. The key
+        // itself is never logged.
+        log.warn("AI provider registered: {} (id {}, type {}) by {}{}",
+                created.getName(), created.getId(), created.getType(), resolveUser(admin),
+                created.isDefault() ? " - it is the default, as the registry was empty" : "");
         return ResponseEntity.ok(ApiResponse.success(created, "AI Provider saved successfully"));
     }
 
+    /**
+     * Requests that a configured AI provider become the default. Promotes nothing.
+     *
+     * <p>The default provider is the endpoint and the API key that every module without
+     * an explicit binding sends its work to, so promoting a different one moves the
+     * company's documents and contracts to another company's service in one call.
+     * Deleting a provider was already gated while this was not, which was the wrong way
+     * round: a deletion takes a capability away and shows up as work that stopped
+     * happening, whereas this keeps the capability and changes where the data goes,
+     * which shows up as nothing at all. This route also had no authenticated principal
+     * before, so there was no record of who did it.
+     *
+     * <p>The verb, the path and the envelope are unchanged and the status is still
+     * {@code 200}, so the AI Services console keeps working. The default is unchanged
+     * when this returns; {@code AiProviderSetDefaultExecutor} promotes the provider
+     * once {@link SensitiveAction#AI_PROVIDER_SET_DEFAULT} has been signed off, and
+     * refuses at that point if the provider has gone or its last health check left it
+     * offline.
+     */
     @PutMapping("/providers/{id}/default")
-    public ResponseEntity<ApiResponse<String>> setDefaultProvider(@PathVariable String id) {
-        aiStateService.setDefaultProvider(id);
-        moduleAiConfigService.broadcastProviderChange("PROVIDER_DEFAULT_CHANGED");
-        return ResponseEntity.ok(ApiResponse.success(id, "Default AI provider set successfully"));
+    @Operation(summary = "Request that an AI provider become the default (requires approval; "
+            + "promotes nothing)")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> setDefaultProvider(
+            @PathVariable String id,
+            @RequestBody(required = false) Map<String, Object> body,
+            @RequestParam(required = false) String reason,
+            @AuthenticationPrincipal UserDetails admin) {
+        // Checked before the request is raised. An unknown id would otherwise fail inside
+        // the executor, which is after somebody has already signed for it - and the
+        // underlying setDefaultProvider accepts an unmatched id happily, clearing the
+        // default flag from every provider and leaving the system with none.
+        AiStateManagementService.ProviderDto target = aiStateService.getProviders().stream()
+                .filter(candidate -> id.equals(candidate.getId()))
+                .findFirst()
+                .orElseThrow(() -> new BusinessRuleViolationException(
+                        "AI provider '" + id + "' is not configured, so it cannot be requested as "
+                                + "the default."));
+
+        GovernedActionGateway.Raised raised = governedActions.raise(
+                SensitiveAction.AI_PROVIDER_SET_DEFAULT, "AiProvider", id,
+                describeProviderPromotion(target), body, reason, resolveUser(admin));
+        return ResponseEntity.ok(ApiResponse.success(raised.dto(), raised.message()));
+    }
+
+    /**
+     * A label an approver can decide on without opening the AI console.
+     *
+     * <p>Names the provider being promoted and the one it would replace, because the
+     * decision is a comparison between two of them and the provider id alone is a
+     * slug. The health status is included since a promotion to an offline provider is
+     * the specific mistake the executor refuses.
+     */
+    private String describeProviderPromotion(AiStateManagementService.ProviderDto target) {
+        AiStateManagementService.ProviderDto current = aiStateService.getProviders().stream()
+                .filter(AiStateManagementService.ProviderDto::isDefault)
+                .findFirst()
+                .orElse(null);
+        return "Make " + target.getName() + " (" + target.getType() + ", " + target.getStatus()
+                + ") the default AI provider, replacing "
+                + (current == null ? "no current default" : current.getName()
+                        + " (" + current.getType() + ")");
     }
 
     /**
@@ -242,13 +386,72 @@ public class AiController {
         return ResponseEntity.ok(ApiResponse.success(Map.of("prompt", aiStateService.getSystemPrompt()), "AI System prompt retrieved"));
     }
 
+    /**
+     * Requests a change to the global AI system prompt. Changes nothing.
+     *
+     * <p>This is the instruction every module's assistant is composed from, for every
+     * user in the company, and it is the fallback for every module whose own
+     * instructions are switched off. Editing it takes effect on the next AI request -
+     * no build, no deployment, no diff anybody reviews on the way - and unlike a
+     * module's instructions it has no version history at all: {@code setSystemPrompt}
+     * overwrites a single field, so the text it replaced is gone. That is the specific
+     * reason this needs a second signature rather than an undo button.
+     *
+     * <p>The verb, the path and the {@code 200} are unchanged so the console keeps
+     * working, but the body now carries a pending approval rather than the new prompt.
+     * {@code AiInstructionUpdateExecutor} applies it once
+     * {@link SensitiveAction#AI_INSTRUCTION_UPDATE} has been signed off, logging the
+     * outgoing text in full first, since that log line is the only copy of it.
+     */
     @PutMapping("/prompt")
-    public ResponseEntity<ApiResponse<Map<String, String>>> updateSystemPrompt(@RequestBody Map<String, String> body) {
-        String newPrompt = body.get("prompt");
-        if (newPrompt != null) {
-            aiStateService.setSystemPrompt(newPrompt);
+    @Operation(summary = "Request a change to the global AI system prompt (requires approval; "
+            + "changes nothing)")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> updateSystemPrompt(
+            @RequestBody Map<String, Object> body,
+            @RequestParam(required = false) String reason,
+            @AuthenticationPrincipal UserDetails admin) {
+        Object submitted = body == null ? null : body.get("prompt");
+        if (!(submitted instanceof String prompt) || prompt.isBlank()) {
+            throw new BusinessRuleViolationException(
+                    "A system prompt change needs the new prompt text as {\"prompt\":\"...\"}. An "
+                            + "empty prompt is not a no-op - it would leave every module whose own "
+                            + "instructions are disabled with nothing to follow.");
         }
-        return ResponseEntity.ok(ApiResponse.success(Map.of("prompt", aiStateService.getSystemPrompt()), "AI System prompt updated successfully"));
+
+        String current = aiStateService.getSystemPrompt();
+        GovernedActionGateway.Raised raised = governedActions.raiseWithPayload(
+                SensitiveAction.AI_INSTRUCTION_UPDATE, "AiSystemPrompt", GLOBAL_PROMPT_TARGET_ID,
+                describePromptChange(current, prompt), body, reason,
+                payloadJson(Map.of("kind", "GLOBAL_PROMPT", "prompt", prompt)),
+                resolveUser(admin));
+        return ResponseEntity.ok(ApiResponse.success(raised.dto(), raised.message()));
+    }
+
+    /**
+     * A label an approver can decide on without opening the prompt editor.
+     *
+     * <p>Character counts rather than the text itself: the prompt runs to hundreds of
+     * words, and a queue of requests is not where anyone reads it. The size change is
+     * the one signal that fits on a line and is worth having - a prompt that lost most
+     * of its length is a different kind of request from one that gained a paragraph.
+     */
+    private static String describePromptChange(String current, String proposed) {
+        int before = current == null ? 0 : current.length();
+        int after = proposed.length();
+        String direction;
+        if (before == 0) {
+            direction = "set for the first time";
+        } else if (after < before / 2) {
+            direction = "cut to less than half its length";
+        } else if (after < before) {
+            direction = "shortened";
+        } else if (after > before) {
+            direction = "extended";
+        } else {
+            direction = "rewritten at the same length";
+        }
+        return "Replace the global AI system prompt - " + direction + " (" + before + " -> " + after
+                + " chars). Applies to every module without its own instructions enabled.";
     }
 
     @GetMapping("/logs")
@@ -288,6 +491,33 @@ public class AiController {
             long latency = System.currentTimeMillis() - start;
             boolean modelFound = catalog.contains(model);
 
+            // An empty catalogue is not a verified connection. Something answered on
+            // the port - a proxy, a login page, the wrong service - but it did not
+            // list a single model, so nothing here can be sent an inference request.
+            // This used to report ONLINE, which is how the screen came to show
+            // "API Status: CONNECTED" for a provider that was not running.
+            if (catalog.isEmpty()) {
+                String problem = "Reached " + provider + " but it listed no models. "
+                        + "Check the Base URL points at the provider's API root and that the "
+                        + "API Key is valid.";
+                aiStateService.addLog("System Gateway", provider, "Health Ping / Test Connection",
+                        "FAILED", latency, 0, "System Administrator");
+
+                ConnectionTestResponse empty = ConnectionTestResponse.builder()
+                        .provider(provider)
+                        .status("ERROR")
+                        .responseTimeMs(latency)
+                        .message(problem)
+                        .modelUsed(model)
+                        .build();
+
+                return ResponseEntity.ok(ApiResponse.<ConnectionTestResponse>builder()
+                        .success(false)
+                        .message(problem)
+                        .data(empty)
+                        .build());
+            }
+
             aiStateService.addLog(
                     "System Gateway",
                     provider,
@@ -311,15 +541,33 @@ public class AiController {
         } catch (Exception e) {
             log.error("Failed to test AI provider connection: {}", e.getMessage());
             long latency = System.currentTimeMillis() - start;
+            String failure = "Connection failed: " + e.getMessage();
+
+            // Recorded, not just returned. A failed health ping previously wrote no log
+            // entry at all, so the one screen an administrator checks afterwards showed
+            // no evidence the attempt had ever been made.
+            aiStateService.addLog("System Gateway",
+                    req.getProvider() == null ? "unknown" : req.getProvider(),
+                    "Health Ping / Test Connection",
+                    "FAILED", latency, 0, "System Administrator");
+
             ConnectionTestResponse errorResponse = ConnectionTestResponse.builder()
                     .provider(req.getProvider())
                     .status("ERROR")
                     .responseTimeMs(latency)
-                    .message("Connection failed: " + e.getMessage())
+                    .message(failure)
                     .modelUsed(req.getModel())
                     .build();
 
-            return ResponseEntity.ok(ApiResponse.success(errorResponse, "AI Provider connection tested with warnings"));
+            // success(false), matching fetchModels below. Returning ApiResponse.success
+            // around an ERROR payload made the envelope contradict its own contents, and
+            // every client that checks the envelope first - including this application's
+            // own provider dialog - read it as a working connection.
+            return ResponseEntity.ok(ApiResponse.<ConnectionTestResponse>builder()
+                    .success(false)
+                    .message(failure)
+                    .data(errorResponse)
+                    .build());
         }
     }
 
@@ -591,33 +839,166 @@ public class AiController {
     public static class UpdateInstructionRequest {
         private String content;
         private String changeSummary;
+        /**
+         * Why the instructions are being changed. Required, and separate from
+         * {@code changeSummary}: the summary goes in the version history and says what
+         * changed, this says why it should be allowed and is what the approver reads.
+         */
+        private String justification;
     }
 
+    /**
+     * Requests a change to one module's AI instructions. Changes nothing.
+     *
+     * <p>A module's instruction set is what the assistant follows when it advises every
+     * user on every screen in that module, so replacing it changes the advice the whole
+     * company acts on, from the next AI request onwards. A wrong change is quiet by
+     * construction: the screens look identical, the recommendations are still confident
+     * and still plausible, and what actually moved is which risks get flagged and which
+     * get passed over - so it surfaces weeks later as a contract nobody was warned
+     * about rather than as a failure.
+     *
+     * <p>This is the route the rollback gate was missing. {@code
+     * POST /instructions/{moduleKey}/restore/{version}} required an approval because it
+     * is spelled "restore", while this one - which can set the text to anything at all,
+     * including whatever that old version said - did not. Governing the narrow path and
+     * leaving the general one open is worse than governing neither, because the gate on
+     * the narrow path reads as coverage.
+     *
+     * <p>The verb, the path and the {@code 200} are unchanged so the instruction editor
+     * keeps working. The module is still running its current text when this returns;
+     * {@code AiInstructionUpdateExecutor} writes the new version once
+     * {@link SensitiveAction#AI_INSTRUCTION_UPDATE} has been signed off.
+     */
     @PutMapping("/instructions/{moduleKey}")
-    public ResponseEntity<ApiResponse<ModuleInstructionService.ModuleInstructionDto>> updateModuleInstruction(
+    @Operation(summary = "Request a change to a module's AI instructions (requires approval; "
+            + "changes nothing)")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> updateModuleInstruction(
             @PathVariable String moduleKey,
             @RequestBody UpdateInstructionRequest req,
+            @RequestParam(required = false) String reason,
             @AuthenticationPrincipal UserDetails admin) {
-        ModuleInstructionService.ModuleInstructionDto updated = moduleInstructionService.updateContent(
-                moduleKey, req.getContent(), req.getChangeSummary(), admin != null ? admin.getUsername() : null);
-        if (updated == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(ApiResponse.failure("Module instruction not found", "MODULE_NOT_FOUND"));
+        // Checked here rather than in the executor: an unknown module key would otherwise
+        // fail after an approver had already signed for it.
+        ModuleInstructionService.ModuleInstructionDto current = moduleInstructionService.get(moduleKey)
+                .orElseThrow(() -> new BusinessRuleViolationException(
+                        "AI module '" + moduleKey + "' does not exist, so a change to its "
+                                + "instructions cannot be requested."));
+
+        if (req == null || req.getContent() == null || req.getContent().isBlank()) {
+            throw new BusinessRuleViolationException(
+                    "A change to module '" + moduleKey + "' instructions needs the new text as "
+                            + "{\"content\":\"...\"}. Empty instructions are not a no-op - the "
+                            + "assistant would fall back to the global system prompt and lose this "
+                            + "module's guardrails. To switch the instructions off deliberately, use "
+                            + "the toggle route, which says so in the audit trail.");
         }
-        return ResponseEntity.ok(ApiResponse.success(updated, "Module AI instruction updated successfully"));
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("kind", "CONTENT");
+        payload.put("content", req.getContent());
+        if (req.getChangeSummary() != null && !req.getChangeSummary().isBlank()) {
+            payload.put("changeSummary", req.getChangeSummary());
+        }
+
+        GovernedActionGateway.Raised raised = governedActions.raiseWithPayload(
+                SensitiveAction.AI_INSTRUCTION_UPDATE, "AiModuleInstruction", moduleKey,
+                describeInstructionChange(current, req), justificationBody(req), reason,
+                payloadJson(payload), resolveUser(admin));
+        return ResponseEntity.ok(ApiResponse.success(raised.dto(), raised.message()));
     }
 
+    /**
+     * Requests that a module's AI instructions be switched on or off. Toggles nothing.
+     *
+     * <p>Not to be confused with {@code PUT /modules/{id}/toggle}, which is deliberately
+     * ungated. That one decides whether the assistant speaks for a module at all, and
+     * off is the fail-safe direction - an assistant that says nothing cannot say
+     * anything wrong, and during an incident nobody should need a second signature to
+     * silence one. This route leaves the assistant answering and removes the module's
+     * own guardrails, so it falls back to the global system prompt. That is a change to
+     * the advice, not an end to it, which is why it sits with the instruction edits.
+     *
+     * <p>The request records the state it wants rather than an instruction to flip. The
+     * live state can change between the request and the approval, and a flip approved
+     * against a stale reading would produce the opposite of what was signed for - so
+     * {@code AiInstructionUpdateExecutor} compares the recorded state against the live
+     * one and does nothing if it already holds.
+     */
     @PutMapping("/instructions/{moduleKey}/toggle")
-    public ResponseEntity<ApiResponse<ModuleInstructionService.ModuleInstructionDto>> toggleModuleInstruction(
+    @Operation(summary = "Request that a module's AI instructions be enabled or disabled "
+            + "(requires approval; toggles nothing)")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> toggleModuleInstruction(
             @PathVariable String moduleKey,
+            @RequestBody(required = false) Map<String, Object> body,
+            @RequestParam(required = false) String reason,
             @AuthenticationPrincipal UserDetails admin) {
-        ModuleInstructionService.ModuleInstructionDto updated = moduleInstructionService.toggle(
-                moduleKey, admin != null ? admin.getUsername() : null);
-        if (updated == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(ApiResponse.failure("Module instruction not found", "MODULE_NOT_FOUND"));
+        ModuleInstructionService.ModuleInstructionDto current = moduleInstructionService.get(moduleKey)
+                .orElseThrow(() -> new BusinessRuleViolationException(
+                        "AI module '" + moduleKey + "' does not exist, so its instructions cannot be "
+                                + "enabled or disabled."));
+
+        // The intended state is resolved here, from what the requester was looking at, and
+        // travels in the payload. The caller may also state it outright, which is what a
+        // client that has been open a while should do.
+        boolean intended = body != null && body.get("enabled") instanceof Boolean explicit
+                ? explicit
+                : !current.isEnabled();
+
+        GovernedActionGateway.Raised raised = governedActions.raiseWithPayload(
+                SensitiveAction.AI_INSTRUCTION_UPDATE, "AiModuleInstruction", moduleKey,
+                describeInstructionToggle(current, intended), body, reason,
+                payloadJson(Map.of("kind", "TOGGLE", "enabled", intended)),
+                resolveUser(admin));
+        return ResponseEntity.ok(ApiResponse.success(raised.dto(), raised.message()));
+    }
+
+    /**
+     * The justification, in the shape {@link GovernedActionGateway} reads it from.
+     *
+     * <p>This route takes a typed body rather than a map, so the field has to be handed
+     * over explicitly. Returning an empty map when it is absent rather than {@code null}
+     * makes no difference to the outcome - the gateway refuses either way - but keeps
+     * the refusal on the gateway's side, so the wording a requester sees is the same one
+     * every other gated route gives them.
+     */
+    private static Map<String, Object> justificationBody(UpdateInstructionRequest req) {
+        if (req == null || req.getJustification() == null || req.getJustification().isBlank()) {
+            return Map.of();
         }
-        return ResponseEntity.ok(ApiResponse.success(updated, "Module AI instruction toggle state updated"));
+        return Map.of("justification", req.getJustification());
+    }
+
+    /**
+     * A label an approver can decide on without opening the instruction editor.
+     *
+     * <p>The module's display name rather than its key, and the size of the change
+     * rather than the text: a queue of requests is not where anyone proofreads a prompt,
+     * but "cut to less than half its length" is a different request from "extended" and
+     * fits on a line. The change summary is appended when the requester wrote one,
+     * because their own description of the edit is better than any measurement of it.
+     */
+    private static String describeInstructionChange(
+            ModuleInstructionService.ModuleInstructionDto current, UpdateInstructionRequest req) {
+        int before = current.getContent() == null ? 0 : current.getContent().length();
+        int after = req.getContent().length();
+        String direction = after < before / 2 ? "cut to less than half its length"
+                : after < before ? "shortened"
+                : after > before ? "extended"
+                : "rewritten at the same length";
+        String summary = req.getChangeSummary() == null || req.getChangeSummary().isBlank()
+                ? "" : " - \"" + req.getChangeSummary().trim() + "\"";
+        return "Replace " + current.getName() + " AI instructions (v" + current.getVersion() + ", "
+                + direction + ", " + before + " -> " + after + " chars)" + summary;
+    }
+
+    private static String describeInstructionToggle(
+            ModuleInstructionService.ModuleInstructionDto current, boolean intended) {
+        return (intended ? "Enable " : "Disable ") + current.getName() + " AI instructions (v"
+                + current.getVersion() + ", currently "
+                + (current.isEnabled() ? "enabled" : "disabled") + ")"
+                + (intended ? "" : " - the assistant keeps answering for this module, from the global "
+                        + "system prompt alone");
     }
 
     /**

@@ -219,7 +219,34 @@ public enum SensitiveAction {
             roles(SUPER_ADMIN, SECURITY_OFFICER),
             1,
             "Removing the configured provider disables classification and OCR for "
-                    + "every module at once.");
+                    + "every module at once."),
+
+    /**
+     * Overwriting AI instruction text, enabling or disabling a module's
+     * instructions, or replacing the global system prompt.
+     */
+    AI_INSTRUCTION_UPDATE(
+            "Change AI instructions",
+            "AI",
+            roles(SYSTEM_ADMINISTRATOR, SUPER_ADMIN),
+            roles(SUPER_ADMIN, SECURITY_OFFICER),
+            1,
+            "Rolling an instruction back was already gated while typing a new one was "
+                    + "not, which governed the tidy way of changing what the assistant "
+                    + "tells people and left the general way open - the same edit, typed "
+                    + "instead of chosen from history."),
+
+    /** Re-pointing every AI module at a different provider. */
+    AI_PROVIDER_SET_DEFAULT(
+            "Change the default AI provider",
+            "AI",
+            roles(SYSTEM_ADMINISTRATOR, SUPER_ADMIN),
+            roles(SUPER_ADMIN, SECURITY_OFFICER),
+            1,
+            "The default provider is the endpoint and the key every module's work is "
+                    + "sent to, so switching it redirects the company's documents and "
+                    + "contracts in a single call - and being the default is itself the "
+                    + "status that AI_PROVIDER_DELETE refuses to remove.");
 
     private final String label;
     private final String module;
@@ -240,6 +267,26 @@ public enum SensitiveAction {
 
     public String getLabel() {
         return label;
+    }
+
+    /**
+     * The label as it reads inside a sentence, e.g. "delete AI provider".
+     *
+     * <p>Only the first character is lowered. Six user-facing refusal messages used
+     * {@code getLabel().toLowerCase(Locale.ROOT)}, which is fine for
+     * "Terminate contract" and wrong for every label carrying an acronym: an
+     * administrator was told "a request to delete ai provider" and "your role is not
+     * permitted to request unblock ip address". Four of the seventeen actions name AI
+     * and one names IP, so a third of the gate's refusals read as though the system
+     * did not know what it was talking about - in the one place it has to be believed,
+     * because these sentences are the only explanation the user gets for why the act
+     * did not happen.
+     */
+    public String getLabelInSentence() {
+        if (label.isEmpty()) {
+            return label;
+        }
+        return Character.toLowerCase(label.charAt(0)) + label.substring(1);
     }
 
     public String getModule() {

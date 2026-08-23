@@ -38,6 +38,21 @@ public class AiStateManagementService {
         private String status; // CONNECTED, OFFLINE
         private String lastSync;
         private String responseTime;
+        /**
+         * Whether this provider receives the work of every module without its own
+         * binding.
+         *
+         * <p>Named explicitly because Lombok generates {@code isDefault()} from this
+         * field, which Jackson reads as the property {@code default} - so the console,
+         * which sends and reads {@code isDefault} throughout, was talking past the API
+         * in both directions. On the way out the Default badge and the Make Default
+         * button read {@code undefined} and behaved as though no provider were the
+         * default; on the way in, the "set as default" checkbox was dropped silently.
+         * The name is pinned here rather than fixed in the console because {@code
+         * default} is a Java keyword and nothing can be named after it, so the drift
+         * would come back with the next DTO.
+         */
+        @JsonProperty("isDefault")
         private boolean isDefault;
         private String type; // openai, gemini, claude, local
         private String baseUrl;

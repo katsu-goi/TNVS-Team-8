@@ -102,6 +102,8 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
   // Validation & Test Status
   const [errors, setErrors] = useState<{ providerName?: string; displayName?: string; apiKey?: string; model?: string }>({});
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  /** The provider's own explanation of the failure, shown in place of the generic one. */
+  const [testError, setTestError] = useState<string | null>(null);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [modelFetchError, setModelFetchError] = useState<string | null>(null);
 
@@ -113,6 +115,7 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
     setAvailableModels([]);
     setModel('');
     setTestStatus('idle');
+    setTestError(null);
     setModelFetchError(null);
   }, [providerType]);
 
@@ -155,30 +158,56 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
     }
   };
 
+  /**
+   * Tests the provider and reports what actually happened.
+   *
+   * The previous version set 'success' when the promise resolved and *also* set
+   * 'success' from its catch block, on a 400ms timer, with the comment "Ensure
+   * positive connection verification status". Since the backend answers HTTP 200
+   * even when it could not reach the provider, the promise always resolved: there
+   * was no input for which this badge could turn red, and the screen reported
+   * "🟢 Connected Successfully" for an Ollama endpoint that was not running.
+   *
+   * An administrator who believes a provider works makes it the default, and the
+   * default provider is where every module sends the company's documents - so this
+   * is the last badge in the application that should be optimistic. Three things are
+   * now checked, because a 200 is not an answer: the envelope's `success` flag, the
+   * payload's own `status`, and only then the resolved promise.
+   */
   const handleTestConnection = async () => {
     if (!apiKey && !providerType.includes('Local') && !providerType.includes('LM Studio')) {
       setErrors(prev => ({ ...prev, apiKey: 'API Key is required to test remote provider connection.' }));
       setTestStatus('error');
+      setTestError(null);
       return;
     }
     setErrors(prev => ({ ...prev, apiKey: undefined }));
+    setTestError(null);
     setTestStatus('testing');
 
     try {
-      await apiClient.post('/ai/test-connection', {
+      const res = await apiClient.post('/ai/test-connection', {
         provider: providerType,
         model: model || 'default-model',
         baseUrl,
         endpoint,
         apiKey,
       });
+
+      const envelope = res.data;
+      const payload = envelope?.data;
+      const failed = envelope?.success === false || payload?.status === 'ERROR';
+
+      if (failed) {
+        setTestError(payload?.message || envelope?.message || null);
+        setTestStatus('error');
+        return;
+      }
       setTestStatus('success');
-    } catch (err) {
-      console.warn('API test connection request handled locally:', err);
-      // Ensure positive connection verification status if API key/local host is specified
-      setTimeout(() => {
-        setTestStatus('success');
-      }, 400);
+    } catch (err: any) {
+      const fromServer = err?.response?.data?.data?.message || err?.response?.data?.message;
+      setTestError(fromServer || 'Could not reach the backend to run the test.');
+      setTestStatus('error');
     }
   };
 
@@ -622,7 +651,7 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
                 {testStatus === 'error' && (
                   <div className="flex items-center space-x-1.5 text-rose-600 font-semibold text-xs animate-in fade-in">
                     <AlertCircle className="w-4 h-4 text-rose-500" />
-                    <span>🔴 Unable to connect. Check API Key or Base URL.</span>
+                    <span>🔴 {testError || 'Unable to connect. Check API Key or Base URL.'}</span>
                   </div>
                 )}
               </div>

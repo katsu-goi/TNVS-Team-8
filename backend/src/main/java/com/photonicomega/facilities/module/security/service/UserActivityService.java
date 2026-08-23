@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -123,8 +124,7 @@ public class UserActivityService {
 
     private ActiveSession upsert(User user, String ip, String userAgent) {
         String[] agent = parseUserAgent(userAgent);
-        ActiveSession session = activeSessionRepository
-                .findByUsernameAndStatus(user.getEmail(), "ACTIVE")
+        ActiveSession session = claimActiveSession(user)
                 .orElseGet(() -> ActiveSession.builder()
                         .sessionId(UUID.randomUUID().toString())
                         .userId(user.getId().toString())
@@ -144,6 +144,47 @@ public class UserActivityService {
         session.setDeviceName(agent[1]);
         session.setLastActivity(Instant.now());
         return activeSessionRepository.save(session);
+    }
+
+    /**
+     * Returns the one ACTIVE session for this user, retiring any others it finds first.
+     *
+     * <p>There is meant to be at most one, and the read below used to say so by returning
+     * an {@code Optional}. Nothing enforced it. This method is reached from a login and
+     * from a heartbeat, both of which check-then-insert with no lock, so two requests that
+     * both saw no ACTIVE row both created one - twenty-four milliseconds apart, in the case
+     * that prompted this. From then on the read threw
+     * {@code IncorrectResultSizeDataAccessException} and {@code POST /v1/auth/heartbeat}
+     * answered 500 on every beat, for that user, until {@link #reapStaleSessions} expired
+     * a row minutes later.
+     *
+     * <p>Tolerating the duplicate is not sufficient, which is why this collapses rather
+     * than merely picking one: a surplus ACTIVE row is counted among the online users and
+     * shown on the security dashboards, and it will be picked up by every later read of
+     * this table. The newest row is kept because that is the session the user is on. The
+     * losers are marked EXPIRED - the same terminal status the reaper uses, so they leave
+     * the ACTIVE set exactly the way an ordinary timeout would, and the session history
+     * this table exists to hold is preserved rather than deleted.
+     *
+     * <p>No USER_OFFLINE event is emitted for a collapsed row. The user is not going
+     * offline; a bookkeeping duplicate is being reconciled, and announcing it would make
+     * the live online-users view flicker the user out and immediately back in.
+     */
+    private Optional<ActiveSession> claimActiveSession(User user) {
+        List<ActiveSession> active = activeSessionRepository
+                .findByUsernameAndStatusOrderByLastActivityDescLoginTimeDesc(user.getEmail(), "ACTIVE");
+        if (active.isEmpty()) {
+            return Optional.empty();
+        }
+        ActiveSession keep = active.get(0);
+        for (ActiveSession duplicate : active.subList(1, active.size())) {
+            log.warn("Collapsing duplicate ACTIVE session {} for {} (keeping {}): two requests "
+                            + "created a session row concurrently",
+                    duplicate.getSessionId(), user.getEmail(), keep.getSessionId());
+            duplicate.setStatus("EXPIRED");
+            activeSessionRepository.save(duplicate);
+        }
+        return Optional.of(keep);
     }
 
     private String firstRole(User user) {

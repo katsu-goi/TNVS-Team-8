@@ -344,7 +344,8 @@ public class SecurityThreatMapService {
         if (log == null || log.getIpAddress() == null || log.getIpAddress().isBlank()) {
             return Optional.empty();
         }
-        return activeSessionRepository.findByUsernameAndStatus(log.getUsername(), "ACTIVE")
+        return activeSessionRepository
+                .findByUsernameAndStatusOrderByLastActivityDescLoginTimeDesc(log.getUsername(), "ACTIVE")
                 .stream()
                 .filter(s -> log.getIpAddress().equals(s.getIpAddress()))
                 .findFirst()

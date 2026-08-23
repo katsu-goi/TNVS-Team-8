@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.BiPredicate;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -83,6 +84,32 @@ class GatedRouteCoverageTest {
     private static final Set<String> MUTATING_METHODS = Set.of("POST", "PUT", "PATCH", "DELETE");
 
     /**
+     * Path prefixes where every mutating route needs a verdict, whatever it is called.
+     *
+     * <p>{@link #DESTRUCTIVE_SEGMENTS} finds routes that announce themselves. It cannot
+     * find the ones that do not, and there is a whole class of those: a route whose path
+     * is a bare noun and whose verb is {@code PUT}. {@code PUT /v1/ai/prompt} overwrites
+     * the instruction every module's assistant is composed from, for every user in the
+     * company, and the sweep above walks straight past it - no {@code DELETE}, no word
+     * from the vocabulary, nothing to match on. {@code PUT /v1/ai/instructions/{moduleKey}}
+     * is the same shape.
+     *
+     * <p>That gap was not hypothetical. {@code POST /v1/ai/instructions/{moduleKey}/restore/{version}}
+     * was gated because {@code restore} is in the vocabulary, while the {@code PUT} one
+     * segment above it - which can set the instruction text to anything at all, including
+     * whatever the old version said - was not. Gating the rollback and not the overwrite
+     * governs the tidy way of doing it and leaves the general way open, which is worse
+     * than gating neither: it reads as coverage.
+     *
+     * <p>So on these prefixes the test inverts its default. Instead of asking "does this
+     * path look dangerous", it asks for a written verdict on every route that can change
+     * anything, and lets the exemptions carry the argument. That is noisier - an AI
+     * inference call has to be exempted in a line of prose - and it is the only version
+     * that cannot be walked past by choosing a mild name.
+     */
+    private static final Set<String> POLICY_SURFACES = Set.of("/v1/ai");
+
+    /**
      * The verdict on every destructive route in the application.
      *
      * <p>Keyed by {@code "METHOD /path"}. A {@link SensitiveAction} value means the
@@ -131,6 +158,29 @@ class GatedRouteCoverageTest {
         ROUTE_DECISIONS.put("POST /v1/ai/instructions/{moduleKey}/restore/{version}",
                 SensitiveAction.AI_INSTRUCTION_ROLLBACK);
 
+        // The three routes that write instruction text. All three land on the same
+        // action because they are the same act reached three ways: set one module's
+        // instructions, set the global prompt every module inherits, or switch a
+        // module's instruction set off so it falls back to that global prompt. Any of
+        // them changes the words the assistant answers with tomorrow.
+        //
+        // These were the gap. The restore route above was gated because "restore" is
+        // in the destructive vocabulary; the PUT one segment above it, which can set
+        // the text to anything including whatever the old version said, was not. The
+        // policy-surface sweep exists because of this pair.
+        ROUTE_DECISIONS.put("PUT /v1/ai/prompt", SensitiveAction.AI_INSTRUCTION_UPDATE);
+        ROUTE_DECISIONS.put("PUT /v1/ai/instructions/{moduleKey}", SensitiveAction.AI_INSTRUCTION_UPDATE);
+        ROUTE_DECISIONS.put("PUT /v1/ai/instructions/{moduleKey}/toggle",
+                SensitiveAction.AI_INSTRUCTION_UPDATE);
+
+        // Promoting a provider to default. The same asymmetry as above, one level up:
+        // deleting a provider was gated and pointing every module at a different one
+        // was not, so the ungoverned route was the one that actually moves the
+        // company's documents and contracts to a new endpoint and a new key. It also
+        // has no @AuthenticationPrincipal today, so there is currently no record of
+        // who did it - which the gate fixes as a side effect of requiring a requester.
+        ROUTE_DECISIONS.put("PUT /v1/ai/providers/{id}/default", SensitiveAction.AI_PROVIDER_SET_DEFAULT);
+
         // ------------------------------------------------------------------
         // Exempt. Matched the destructive vocabulary but takes nothing away.
         // ------------------------------------------------------------------
@@ -175,6 +225,69 @@ class GatedRouteCoverageTest {
         ROUTE_DECISIONS.put("POST /v1/facilities-manager/reservations/{id}/reject", null);
         ROUTE_DECISIONS.put("POST /v1/requests-review/{id}/approve", null);
         ROUTE_DECISIONS.put("POST /v1/requests-review/{id}/reject", null);
+
+        // ------------------------------------------------------------------
+        // Exempt on a policy surface. Swept in by prefix rather than by looking
+        // dangerous, so most of these are ordinary routes - but each still owes a
+        // sentence, because the reason a route changes no policy is exactly the
+        // thing that stops being true when someone edits it.
+        // ------------------------------------------------------------------
+
+        // Switching a module's AI on or off. This looks like the instruction toggle
+        // gated above and is the opposite case, on the one distinction that matters
+        // here: this route decides whether the assistant speaks at all, not what it
+        // says. Off is the fail-safe direction - no advice cannot be wrong advice -
+        // and it has to stay cheap for the same reason SESSION_REVOKE is deliberately
+        // cheap to approve: during an incident, the person who needs to silence a
+        // misbehaving assistant should not first need to find a second signature. On
+        // is safe for the mirror reason: the assistant can only come back saying what
+        // the gated instruction text tells it to say.
+        ROUTE_DECISIONS.put("PUT /v1/ai/modules/{id}/toggle", null);
+
+        // Per-module tuning - model, temperature, token ceiling. It changes how the
+        // assistant answers rather than what it is told, it is scoped to one module,
+        // and unlike the routes above it already carries an @AuthenticationPrincipal
+        // and writes the change to the audit history with the administrator's name and
+        // IP. The company-wide equivalent of this dial is the default provider, which
+        // is gated.
+        ROUTE_DECISIONS.put("PUT /v1/ai/modules/{id}/config", null);
+
+        // Registering a provider. Additive: a new entry that nothing routes to until it
+        // is made the default or a module is bound to it, and both of those are
+        // controlled elsewhere - promote and delete are the real control points and are
+        // both gated. Gating registration as well would mean two signatures to create
+        // the thing you then need two more signatures to use.
+        //
+        // This verdict was not true when it was first written, and the sequence is worth
+        // keeping. addProvider honours a caller-supplied default flag: it clears the flag
+        // from every existing provider and hands it to the new one. So registration was
+        // the cheapest way to become the default - no approval, no recorded requester -
+        // and anyone able to add a provider could point every unbound module at their own
+        // endpoint and API key in one call. The gate on promotion was worth what that
+        // call cost, which was nothing. AiController now refuses a registration that asks
+        // to arrive as the default while another provider holds it, and
+        // AiPolicyGateTest.registeringAProviderCannotPromoteItPastTheGate holds that
+        // line. If that refusal is ever removed, this null becomes a lie again.
+        ROUTE_DECISIONS.put("POST /v1/ai/providers", null);
+
+        // Inference and read-through. These seven send a prompt to the configured
+        // provider and return the answer: connectivity check, model list, document
+        // classification, contract analysis, a live completion, the module data an
+        // assistant is given as context, and the chat turn itself. None of them
+        // persists policy - what the assistant is, which provider serves it, and what
+        // it is instructed to say are all decided by the routes above. They consume
+        // AI; they do not change it. They are POSTs because they carry a body, not
+        // because they write anything.
+        //
+        // They are also the system's day-to-day work. An approval in front of a chat
+        // turn is not a control, it is a reason to stop using the assistant.
+        ROUTE_DECISIONS.put("POST /v1/ai/test-connection", null);
+        ROUTE_DECISIONS.put("POST /v1/ai/models", null);
+        ROUTE_DECISIONS.put("POST /v1/ai/classify", null);
+        ROUTE_DECISIONS.put("POST /v1/ai/analyze-contract", null);
+        ROUTE_DECISIONS.put("POST /v1/ai/execute", null);
+        ROUTE_DECISIONS.put("POST /v1/ai/context", null);
+        ROUTE_DECISIONS.put("POST /v1/ai/chat", null);
     }
 
     /**
@@ -227,13 +340,51 @@ class GatedRouteCoverageTest {
     }
 
     @Test
+    @DisplayName("every mutating route on a policy surface has a recorded verdict, however mildly it is named")
+    void everyPolicySurfaceMutationIsAccountedFor() {
+        Map<String, String> found = policySurfaceRoutes();
+
+        // If this ever finds nothing, the prefix stopped matching anything - which
+        // would make the test pass by sweeping an empty set. That is the one failure
+        // mode a coverage test must not have.
+        assertTrue(!found.isEmpty(),
+                "The policy-surface sweep matched no routes at all. POLICY_SURFACES is "
+                        + POLICY_SURFACES + " and nothing under it is mapped, so this test is "
+                        + "currently guarding nothing. Either the prefix is wrong or the routes moved.");
+
+        List<String> unaccounted = new ArrayList<>();
+        for (Map.Entry<String, String> route : found.entrySet()) {
+            if (!ROUTE_DECISIONS.containsKey(route.getKey())) {
+                unaccounted.add(route.getKey() + "   -> " + route.getValue());
+            }
+        }
+
+        assertTrue(unaccounted.isEmpty(),
+                "These routes can change AI policy - what the assistant tells every user in the "
+                        + "company - and no verdict has been recorded for them. Changing an "
+                        + "instruction takes effect immediately, with no build, no diff and no "
+                        + "release for anyone to review, which is why the bar here is a written "
+                        + "decision per route rather than a dangerous-looking path. Add each to "
+                        + "ROUTE_DECISIONS with the SensitiveAction that governs it, or with null "
+                        + "and a written reason it changes no policy.\n\n  "
+                        + String.join("\n  ", unaccounted)
+                        + "\n\nGated actions available: "
+                        + String.join(", ", actionNames()) + "\n");
+    }
+
+    @Test
     @DisplayName("no verdict is recorded for a route that no longer exists")
     void noStaleVerdicts() {
         // The other direction, and the reason this test does not simply grow forever.
         // A verdict left behind after its route is renamed reads as coverage while
         // protecting nothing, and it is invisible precisely because the sweep above
         // only ever looks for routes that are missing from the list.
-        Set<String> live = destructiveRoutes().keySet();
+        //
+        // Checked against the union of both sweeps, not just the destructive one. Most
+        // of the policy-surface verdicts are on routes no vocabulary would ever match -
+        // that is the whole point of that sweep - so measuring them against the
+        // destructive sweep alone would report every one of them as stale.
+        Set<String> live = governedRoutes();
         List<String> stale = new ArrayList<>();
         for (String recorded : ROUTE_DECISIONS.keySet()) {
             if (!live.contains(recorded)) {
@@ -277,6 +428,27 @@ class GatedRouteCoverageTest {
      * the handler that serves it.
      */
     private Map<String, String> destructiveRoutes() {
+        return sweep(GatedRouteCoverageTest::isDestructive);
+    }
+
+    /**
+     * Every mutating route on a policy surface, whether or not it looks dangerous.
+     */
+    private Map<String, String> policySurfaceRoutes() {
+        return sweep((method, pattern) -> onPolicySurface(pattern));
+    }
+
+    /** Both sweeps together - the full set of routes this test has an opinion about. */
+    private Set<String> governedRoutes() {
+        Set<String> all = new LinkedHashSet<>(destructiveRoutes().keySet());
+        all.addAll(policySurfaceRoutes().keySet());
+        return all;
+    }
+
+    /**
+     * Walks the application's mappings and keeps the mutating ones the predicate accepts.
+     */
+    private Map<String, String> sweep(BiPredicate<String, String> include) {
         Map<String, String> routes = new TreeMap<>();
         for (Map.Entry<RequestMappingInfo, HandlerMethod> entry
                 : handlerMapping.getHandlerMethods().entrySet()) {
@@ -299,7 +471,7 @@ class GatedRouteCoverageTest {
                     if (!MUTATING_METHODS.contains(method)) {
                         continue;
                     }
-                    if (isDestructive(method, pattern)) {
+                    if (include.test(method, pattern)) {
                         routes.put(method + " " + pattern,
                                 entry.getValue().getBeanType().getSimpleName() + "."
                                         + entry.getValue().getMethod().getName());
@@ -328,6 +500,21 @@ class GatedRouteCoverageTest {
         }
         for (String segment : pattern.split("/")) {
             if (DESTRUCTIVE_SEGMENTS.contains(segment.toLowerCase())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * True if the pattern sits under a policy surface.
+     *
+     * <p>Compared segment-wise rather than with {@code startsWith}, so a future
+     * {@code /v1/airports} does not get swept in as though it were {@code /v1/ai}.
+     */
+    private static boolean onPolicySurface(String pattern) {
+        for (String prefix : POLICY_SURFACES) {
+            if (pattern.equals(prefix) || pattern.startsWith(prefix + "/")) {
                 return true;
             }
         }

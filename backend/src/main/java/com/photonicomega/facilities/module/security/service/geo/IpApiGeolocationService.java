@@ -53,7 +53,14 @@ public class IpApiGeolocationService implements IpGeolocationService {
         if (ipAddress == null || ipAddress.isBlank()) {
             return Optional.empty();
         }
-        return cache.getIfPresent(ipAddress.trim());
+        // getIfPresent returns null on a miss, and this cache's value type is itself
+        // Optional - so the raw result is a nullable Optional. Callers chain .map()
+        // directly off peek() on the strength of its signature, so handing that null
+        // back turns an ordinary cache miss into an NPE inside a REST handler
+        // (SecurityThreatMapService.toGatewayLogEntry does it eight times over).
+        // geolocate() already unwraps it this way a few lines below; peek() must too.
+        Optional<IpGeo> cached = cache.getIfPresent(ipAddress.trim());
+        return cached != null ? cached : Optional.empty();
     }
 
     @Override

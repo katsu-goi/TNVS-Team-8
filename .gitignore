@@ -24,7 +24,15 @@ Thumbs.db
 .history/
 
 # Local H2 database files created by running the backend. Runtime state, not source.
-backend/data/
+#
+# The trailing glob matters. Taking a copy of the dev database before a schema
+# migration is the ordinary careful thing to do, and it lands as a sibling
+# directory - backend/data.stale-190554, backend/data.fresh-verified. Those were
+# invisible to `backend/data/` and showed up as untracked files ready to be
+# committed, which is how a several-megabyte H2 file with real local data gets
+# pushed by accident. Widened so any such copy is ignored by default and the
+# backup can simply be left on disk.
+backend/data*/
 
 # Diagnostic/progress output. Regenerated on demand; never reviewed as source.
 .diag/
