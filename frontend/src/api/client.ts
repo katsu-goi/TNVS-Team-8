@@ -4,7 +4,15 @@ const DEFAULT_SUPABASE_PROJECT_URL = 'https://dunijfrvfozwlykpkfhy.supabase.co';
 
 export const getApiBaseUrl = (): string => {
   const envUrl = import.meta.env.VITE_API_BASE_URL;
+  const isLocalHost = typeof window !== 'undefined' && window.location && ['localhost', '127.0.0.1'].includes(window.location.hostname);
+  
   if (envUrl && !envUrl.includes('trycloudflare.com')) {
+    // If running on Vercel / non-localhost and envUrl is relative, relative calls to Vercel static origin will hit index.html
+    // Fallback to Supabase Edge Functions / production backend if envUrl is relative on non-localhost.
+    if (envUrl.startsWith('/') && typeof window !== 'undefined' && !isLocalHost) {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_PROJECT_URL;
+      return `${supabaseUrl}/functions/v1`;
+    }
     return envUrl;
   }
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_PROJECT_URL;
@@ -85,8 +93,13 @@ export async function safeFetchJson<T = any>(url: string, options?: RequestInit)
     if (!res.ok) {
       return null;
     }
+    const contentType = res.headers.get('content-type');
+    if (contentType && !contentType.includes('application/json')) {
+      console.warn(`Safe fetch JSON received non-JSON content-type (${contentType}) for ${url}`);
+      return null;
+    }
     const text = await res.text();
-    if (!text || !text.trim()) {
+    if (!text || !text.trim() || text.trim().startsWith('<')) {
       return null;
     }
     return JSON.parse(text) as T;
@@ -95,3 +108,4 @@ export async function safeFetchJson<T = any>(url: string, options?: RequestInit)
     return null;
   }
 }
+
