@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { User } from '../types';
+import { setSupabaseRealtimeAuth } from '../lib/supabase';
 
 interface AuthState {
   user: User | null;
@@ -11,7 +12,22 @@ interface AuthState {
 
 export function getDashboardPath(user: User | null): string {
   if (!user?.roles) return '/';
+  if (isSuperAdmin(user)) return '/';
+  if (user.permissions?.some((permission) => permission.toUpperCase() === 'RBAC_ADMINISTER')) {
+    return '/admin/rbac';
+  }
+  if (['privacy', 'counsel', 'records', 'department', 'security', 'infosec'].includes(user.dashboardKey || '')) {
+    return '/governance';
+  }
   const roles = user.roles.map(r => r.toUpperCase());
+  if (roles.some((role) => [
+    'DATA_PROTECTION_OFFICER',
+    'LEGAL_COUNSEL',
+    'RECORDS_OFFICER',
+    'DEPARTMENT_HEAD',
+    'SECURITY_OFFICER',
+    'INFOSEC_OFFICER',
+  ].includes(role.replace(/^ROLE_/, '')))) return '/governance';
   if (roles.includes('FACILITIES_MANAGER') || roles.includes('ROLE_FACILITIES_MANAGER')) return '/facilities';
   if (roles.includes('FACILITIES_OFFICER') || roles.includes('ROLE_FACILITIES_OFFICER')) return '/facilities-officer';
   if (roles.includes('COMPLIANCE_OFFICER') || roles.includes('ROLE_COMPLIANCE_OFFICER')) return '/compliance';
@@ -27,6 +43,17 @@ export function isSuperAdmin(user: User | null): boolean {
   return roles.includes('SUPER_ADMIN') || roles.includes('ROLE_SUPER_ADMIN');
 }
 
+export function hasRole(user: User | null, role: string): boolean {
+  const normalizedRole = role.toUpperCase().replace(/^ROLE_/, '');
+  return user?.roles?.some((candidate) =>
+    candidate.toUpperCase().replace(/^ROLE_/, '') === normalizedRole
+  ) ?? false;
+}
+
+export function hasPermission(user: User | null, permission: string): boolean {
+  return user?.permissions?.some((candidate) => candidate.toUpperCase() === permission.toUpperCase()) ?? false;
+}
+
 /**
  * Decodes the JWT `roles` claim (a comma-joined list of authorities) and
  * returns the role names only - ROLE_* entries have the prefix stripped and
@@ -36,18 +63,26 @@ export function isSuperAdmin(user: User | null): boolean {
  * truth for what a client can do. LocalStorage can be edited by hand, so the
  * stored `user.roles` is overridden by these token claims on boot.
  */
-function decodeTokenRoles(token: string | null): string[] | null {
+function decodeTokenAuthorities(token: string | null): { roles: string[]; permissions: string[] } | null {
   if (!token) return null;
   try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
+    const encodedPayload = token.split('.')[1];
+    if (!encodedPayload) return null;
+    const normalizedPayload = encodedPayload.replace(/-/g, '+').replace(/_/g, '/');
+    const paddedPayload = normalizedPayload.padEnd(Math.ceil(normalizedPayload.length / 4) * 4, '=');
+    const payload = JSON.parse(atob(paddedPayload));
     const raw = payload?.roles;
     if (typeof raw !== 'string' || !raw) return null;
-    const roles = raw
+    const authorities = raw
       .split(',')
       .map((r: string) => r.trim())
-      .filter((r: string) => r.startsWith('ROLE_'))
-      .map((r: string) => r.slice('ROLE_'.length));
-    return roles.length > 0 ? roles : null;
+      .filter(Boolean);
+    return {
+      roles: authorities
+        .filter((authority: string) => authority.startsWith('ROLE_'))
+        .map((authority: string) => authority.slice('ROLE_'.length)),
+      permissions: authorities.filter((authority: string) => !authority.startsWith('ROLE_')),
+    };
   } catch {
     return null;
   }
@@ -61,10 +96,18 @@ function loadSavedUser(): User | null {
   if (!raw) return null;
   try {
     const stored = JSON.parse(raw) as User;
-    // The token's roles are authoritative; never trust roles from localStorage.
-    const tokenRoles = decodeTokenRoles(savedToken);
-    if (tokenRoles) {
-      return { ...stored, roles: tokenRoles };
+    // The token's authorities are authoritative; never trust roles or permissions from localStorage.
+    const tokenAuthorities = decodeTokenAuthorities(savedToken);
+    if (tokenAuthorities) {
+      return {
+        ...stored,
+        roles: tokenAuthorities.roles,
+        permissions: tokenAuthorities.permissions,
+      };
+    }
+    if (savedToken) {
+      localStorage.removeItem('user');
+      return null;
     }
     return stored;
   } catch {
@@ -83,12 +126,36 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (refreshToken) {
       localStorage.setItem('refreshToken', refreshToken);
     }
+    setSupabaseRealtimeAuth(accessToken);
     set({ user, accessToken, refreshToken });
   },
   logout: () => {
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
     localStorage.removeItem('user');
+    setSupabaseRealtimeAuth(null);
     set({ user: null, accessToken: null, refreshToken: null });
   },
 }));
+
+window.addEventListener('auth:session-refreshed', (event) => {
+  const session = (event as CustomEvent<{
+    accessToken: string;
+    refreshToken: string;
+    user?: User;
+  }>).detail;
+  if (!session?.accessToken || !session?.refreshToken) return;
+  setSupabaseRealtimeAuth(session.accessToken);
+  useAuthStore.setState((state) => ({
+    accessToken: session.accessToken,
+    refreshToken: session.refreshToken,
+    user: session.user || state.user,
+  }));
+});
+
+window.addEventListener('auth:session-expired', () => {
+  setSupabaseRealtimeAuth(null);
+  useAuthStore.setState({ user: null, accessToken: null, refreshToken: null });
+});
+
+setSupabaseRealtimeAuth(savedToken);

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore, getDashboardPath } from '../../stores/authStore';
 import { login, extractLoginLockout } from '../../api/authService';
 import { extractErrorMessage } from '../../api/client';
@@ -8,6 +8,7 @@ import { validateCorporateEmail } from '../../utils/emailValidation';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const setAuthTokens = useAuthStore((s) => s.setAuthTokens);
 
   const [email, setEmail] = useState('');
@@ -57,13 +58,12 @@ export const LoginPage: React.FC = () => {
     try {
       const res = await login({ email: email.trim(), password });
       setAuthTokens(res.user, res.accessToken, res.refreshToken);
-      if (rememberMe) {
-        localStorage.setItem('accessToken', res.accessToken);
-      }
       setAttempts(0);
       setCountdown(0);
       setPermanentlyLocked(false);
-      navigate(getDashboardPath(res.user), { replace: true });
+      const returnTo = new URLSearchParams(location.search).get('returnTo');
+      const safeReturnTo = returnTo?.startsWith('/') && !returnTo.startsWith('//') ? returnTo : null;
+      navigate(safeReturnTo || getDashboardPath(res.user), { replace: true });
     } catch (err) {
       const info = extractLoginLockout(err);
       if (info) {

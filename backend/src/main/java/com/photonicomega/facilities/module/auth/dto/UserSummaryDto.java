@@ -1,5 +1,7 @@
 package com.photonicomega.facilities.module.auth.dto;
 
+import com.photonicomega.facilities.module.auth.domain.Permission;
+import com.photonicomega.facilities.module.auth.domain.Role;
 import com.photonicomega.facilities.module.auth.domain.User;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -25,9 +27,22 @@ public class UserSummaryDto {
     private String position;
     private String avatarUrl;
     private Set<String> roles;
+    private Set<String> assignedRoles;
     private Set<String> permissions;
+    private String dashboardKey;
 
     public static UserSummaryDto from(User user) {
+        return from(user, user.getRoles(), user.getRoles().stream()
+                .flatMap(role -> role.getPermissions().stream())
+                .collect(Collectors.toSet()), null);
+    }
+
+    public static UserSummaryDto from(
+            User user,
+            Set<Role> effectiveRoles,
+            Set<Permission> effectivePermissions,
+            String dashboardKey
+    ) {
         return UserSummaryDto.builder()
                 .id(user.getId())
                 .firstName(user.getFirstName())
@@ -38,13 +53,16 @@ public class UserSummaryDto {
                 .department(user.getDepartment())
                 .position(user.getPosition())
                 .avatarUrl(user.getAvatarUrl())
-                .roles(user.getRoles().stream()
-                        .map(r -> r.getName())
+                .roles(effectiveRoles.stream()
+                        .map(Role::getName)
                         .collect(Collectors.toSet()))
-                .permissions(user.getRoles().stream()
-                        .flatMap(r -> r.getPermissions().stream())
-                        .map(p -> p.getName())
+                .assignedRoles(user.getRoles().stream()
+                        .map(Role::getName)
                         .collect(Collectors.toSet()))
+                .permissions(effectivePermissions.stream()
+                        .map(Permission::getName)
+                        .collect(Collectors.toSet()))
+                .dashboardKey(dashboardKey)
                 .build();
     }
 }

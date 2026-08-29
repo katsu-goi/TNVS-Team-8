@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
+import { securityService } from '../../api/securityService';
 
 export interface LiveActivityUser {
   name: string;
@@ -72,27 +73,6 @@ function securityLogToActivity(row: Record<string, any>, isNew: boolean): LiveAc
   };
 }
 
-/**
- * Convert a localStorage login event into a LiveActivity entry.
- */
-function localEventToActivity(evt: Record<string, any>): LiveActivity {
-  const name = evt.full_name || evt.username || 'Unknown User';
-  return {
-    id: `local-${evt.username}-${Date.now()}`,
-    user: {
-      name,
-      email: evt.username || '',
-      initials: initialsOf(name),
-      role: evt.role || 'USER',
-    },
-    action: 'Logged in',
-    timestamp: new Date(evt.login_time || Date.now()),
-    ip: '0.0.0.0',
-    device: evt.device_name || evt.browser || '',
-    isNew: true,
-  };
-}
-
 export function useLiveActivities() {
   const [activities, setActivities] = useState<LiveActivity[]>([]);
   const [onlineCount, setOnlineCount] = useState(0);
@@ -124,28 +104,25 @@ export function useLiveActivities() {
   }, []);
 
   /**
-   * Seed online users from the active_sessions table.
+   * Seed from the authenticated security API. Browser table writes/reads are
+  * intentionally avoided; the edge function owns telemetry persistence.
    */
   const seedOnline = useCallback(async (disposed: () => boolean) => {
-    if (!supabase) return;
     try {
-      const { data, error } = await supabase
-        .from('active_sessions')
-        .select('*')
-        .eq('status', 'ACTIVE');
+      const rows = await securityService.getActiveSessions();
       if (disposed()) return;
-      if (error) {
-        console.warn('[LiveActivity] active_sessions seed error:', error.message);
-        return;
-      }
-      if (!data) return;
-      const rows = (data as any[]) ?? [];
       updateOnline(set => {
         set.clear();
         rows.forEach(r => r.username && set.add(r.username));
       });
       setActivities(prev => {
-        const seeds = rows.map<LiveActivity>(r => sessionToActivity(r, false));
+        const seeds = rows.map<LiveActivity>(r => sessionToActivity({
+          ...r,
+          ip_address: r.ipAddress,
+          device_name: r.deviceName,
+          login_time: r.loginTime,
+          last_activity: r.lastActivity,
+        }, false));
         const kept = prev.filter(a => !a.id.startsWith('session-'));
         return [...seeds, ...kept].slice(0, 50);
       });
@@ -158,20 +135,15 @@ export function useLiveActivities() {
    * Seed recent security log events.
    */
   const seedRecentLogs = useCallback(async (disposed: () => boolean) => {
-    if (!supabase) return;
     try {
-      const { data, error } = await supabase
-        .from('security_logs')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(15);
+      const rows = await securityService.getLogs({ page: '0', size: '15' });
       if (disposed()) return;
-      if (error) {
-        console.warn('[LiveActivity] security_logs seed error:', error.message);
-        return;
-      }
-      if (!data) return;
-      const recent = ((data as any[]) ?? []).map(row => securityLogToActivity(row, false));
+      const recent = rows.map(row => securityLogToActivity({
+        ...row,
+        ip_address: row.ipAddress,
+        full_name: row.fullName,
+        created_at: row.timestamp,
+      }, false));
       if (recent.length) {
         setActivities(prev => {
           const kept = prev.filter(a => a.id.startsWith('session-') || a.id.startsWith('local-'));
@@ -183,89 +155,26 @@ export function useLiveActivities() {
     }
   }, []);
 
-  /**
-   * Check localStorage for a login event that happened just before the
-   * dashboard mounted (i.e. the user literally just logged in).
-   */
-  const seedFromLocalLogin = useCallback(() => {
-    try {
-      const raw = localStorage.getItem('last_login_event');
-      if (!raw) return;
-      const evt = JSON.parse(raw);
-      if (!evt?.username) return;
-      // Only show events from the last 60 seconds
-      const age = Date.now() - new Date(evt.login_time || 0).getTime();
-      if (age > 60_000) return;
-      const activity = localEventToActivity(evt);
-      updateOnline(set => set.add(evt.username));
-      pushActivity(activity);
-    } catch { /* ignore parse errors */ }
-  }, [updateOnline, pushActivity]);
-
   useEffect(() => {
     let disposed = false;
     const isDisposed = () => disposed;
 
-    // Always seed from local login first (guaranteed to work)
-    seedFromLocalLogin();
-
-    // Then try Supabase seeding
     seedOnline(isDisposed);
     seedRecentLogs(isDisposed);
 
     let channel: RealtimeChannel | null = null;
 
-    // ── Listen for localStorage login events from other tabs or same tab ──
-    const handleStorageEvent = (e: StorageEvent) => {
-      if (e.key !== 'last_login_event' || !e.newValue) return;
-      try {
-        const evt = JSON.parse(e.newValue);
-        if (!evt?.username) return;
-        updateOnline(set => set.add(evt.username));
-        pushActivity(localEventToActivity(evt));
-      } catch { /* ignore */ }
-    };
-    window.addEventListener('storage', handleStorageEvent);
-
-    // ── Subscribe to Supabase Realtime CDC (bonus — works if key is valid) ──
+    // ── Subscribe to sanitized Supabase Realtime change markers ──
     if (supabase) {
       channel = supabase
         .channel('live-user-activity')
         .on(
           'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'active_sessions' },
+          { event: 'INSERT', schema: 'public', table: 'realtime_events' },
           (payload: any) => {
-            if (!payload.new) return;
-            const row = payload.new;
-            if (row.username) updateOnline(set => set.add(row.username));
-            pushActivity(sessionToActivity(row, true));
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: 'DELETE', schema: 'public', table: 'active_sessions' },
-          (payload: any) => {
-            const removed = payload.old?.username;
-            if (removed) updateOnline(set => set.delete(removed));
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'active_sessions' },
-          (payload: any) => {
-            const row = payload.new;
-            if (!row) return;
-            if (row.status !== 'ACTIVE' && row.username) {
-              updateOnline(set => set.delete(row.username));
-            }
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'security_logs' },
-          (payload: any) => {
-            if (!payload.new) return;
-            pushActivity(securityLogToActivity(payload.new, true));
+            const source = payload.new?.source_table;
+            if (!['active_sessions', 'user_activity_events', 'security_logs', 'online_users'].includes(source)) return;
+            void Promise.all([seedOnline(isDisposed), seedRecentLogs(isDisposed)]);
           }
         )
         .subscribe((status) => {
@@ -276,7 +185,6 @@ export function useLiveActivities() {
 
     return () => {
       disposed = true;
-      window.removeEventListener('storage', handleStorageEvent);
       newTimersRef.current.forEach(t => window.clearTimeout(t));
       newTimersRef.current = [];
       if (channel) {
@@ -284,7 +192,7 @@ export function useLiveActivities() {
       }
       channelRef.current = null;
     };
-  }, [pushActivity, updateOnline, seedOnline, seedRecentLogs, seedFromLocalLogin]);
+  }, [pushActivity, updateOnline, seedOnline, seedRecentLogs]);
 
   return { activities, onlineCount, peakToday };
 }

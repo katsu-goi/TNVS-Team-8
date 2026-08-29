@@ -39,6 +39,7 @@ public class AuthService {
     private final JavaMailSender mailSender;
     private final AuditService auditService;
     private final LoginAttemptService loginAttemptService;
+    private final RbacProfileService rbacProfileService;
     private final com.photonicomega.facilities.module.security.service.UserActivityService userActivityService;
 
     @Value("${app.security.password-reset-expiry-minutes:30}")
@@ -108,7 +109,7 @@ public class AuthService {
                 .refreshToken(refreshTokenStr)
                 .tokenType("Bearer")
                 .expiresIn(900)
-                .user(UserSummaryDto.from(user))
+                .user(rbacProfileService.summarize(user))
                 .build();
     }
 
@@ -149,7 +150,7 @@ public class AuthService {
                 .refreshToken(newRefreshToken)
                 .tokenType("Bearer")
                 .expiresIn(900)
-                .user(UserSummaryDto.from(user))
+                .user(rbacProfileService.summarize(user))
                 .build();
     }
 

@@ -117,7 +117,8 @@ public class SecurityThreatMapService {
     public GatewayLogEntry toGatewayLogEntry(SecurityLog log) {
         Optional<IpGeo> geo = log.getIpAddress() == null
                 ? Optional.empty()
-                : ipGeolocationService.peek(log.getIpAddress());
+                : Optional.ofNullable(ipGeolocationService.peek(log.getIpAddress()))
+                        .orElseGet(Optional::empty);
         boolean privateIp = log.getIpAddress() != null
                 && ClientIpResolver.isPrivateOrLocal(log.getIpAddress());
         return new GatewayLogEntry(

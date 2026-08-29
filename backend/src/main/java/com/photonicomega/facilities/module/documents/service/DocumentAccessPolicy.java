@@ -1,6 +1,7 @@
 package com.photonicomega.facilities.module.documents.service;
 
 import com.photonicomega.facilities.module.auth.domain.User;
+import com.photonicomega.facilities.module.auth.domain.Role;
 import com.photonicomega.facilities.module.documents.domain.Document;
 import com.photonicomega.facilities.module.documents.domain.DocumentGrant;
 import com.photonicomega.facilities.module.documents.domain.DocumentGrantAccessLevel;
@@ -10,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -126,7 +128,14 @@ public class DocumentAccessPolicy {
 
     private boolean hasRole(User user, String roleName) {
         return user.getRoles().stream()
-                .anyMatch(role -> role.getName() != null && role.getName().equalsIgnoreCase(roleName));
+                .anyMatch(role -> hasRole(role, roleName, new HashSet<>()));
+    }
+
+    private boolean hasRole(Role role, String roleName, Set<String> visited) {
+        if (role.getName() == null || !visited.add(role.getName())) return false;
+        if (role.getName().equalsIgnoreCase(roleName)) return true;
+        return role.getInheritedRoles().stream()
+                .anyMatch(inherited -> hasRole(inherited, roleName, visited));
     }
 
     /**
@@ -140,13 +149,21 @@ public class DocumentAccessPolicy {
             return false;
         }
         Set<String> roleNames = user.getRoles().stream()
-                .map(role -> role.getName() != null ? role.getName().toUpperCase(Locale.ROOT) : "")
+                .flatMap(role -> effectiveRoleNames(role, new HashSet<>()).stream())
                 .collect(Collectors.toSet());
 
         return grants.stream().anyMatch(grant ->
                 !grant.isDeleted()
                         && matchesGrantee(grant, user.getEmail(), roleNames)
                         && grantsRequiredLevel(grant.getAccessLevel(), requiredLevel));
+    }
+
+    private Set<String> effectiveRoleNames(Role role, Set<String> visited) {
+        if (role.getName() == null || !visited.add(role.getName())) return Set.of();
+        Set<String> names = new HashSet<>();
+        names.add(role.getName().toUpperCase(Locale.ROOT));
+        role.getInheritedRoles().forEach(inherited -> names.addAll(effectiveRoleNames(inherited, visited)));
+        return names;
     }
 
     private boolean matchesGrantee(DocumentGrant grant, String email, Set<String> roleNames) {

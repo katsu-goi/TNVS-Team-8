@@ -183,14 +183,14 @@ class EndpointAuthorizationTest {
     }
 
     // ------------------------------------------------------------------
-    // /v1/visitors - FACILITIES_OFFICER only
+    // /v1/visitors - FACILITIES_OFFICER and inherited senior roles
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("/v1/visitors is FACILITIES_OFFICER only")
-    void visitorsAreOfficerOnly() throws Exception {
+    @DisplayName("/v1/visitors allows FACILITIES_OFFICER and inherited manager access")
+    void visitorsAllowOfficerAndInheritedManager() throws Exception {
         expectAllow("/v1/visitors", foToken);
-        expect403("/v1/visitors", fmToken);
+        expectAllow("/v1/visitors", fmToken);
         expect403("/v1/visitors", superAdminToken);
         expectUnauthorized("/v1/visitors");
     }

@@ -49,27 +49,23 @@ export const useRealtimeSyncStore = create<RealtimeSyncState>((set, get) => ({
     const clientDb = supabase;
     if (supabaseAvailable && clientDb && get().supabaseChannels.length === 0) {
       const channels: RealtimeChannel[] = [];
-      const tables = ['reservations', 'visitors', 'documents', 'security_alerts'];
-
-      tables.forEach((tableName) => {
-        const ch = clientDb
-          .channel(`public:${tableName}`)
-          .on(
-            'postgres_changes',
-            { event: '*', schema: 'public', table: tableName },
-            () => {
-              set((state) => ({
-                revision: state.revision + 1,
-                lastSyncAt: Date.now(),
-                connected: true,
-              }));
-            },
-          )
-          .subscribe((status) => {
-            if (status === 'SUBSCRIBED') set({ connected: true });
-          });
-        channels.push(ch);
-      });
+      const ch = clientDb
+        .channel('public:realtime_events')
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'realtime_events' },
+          () => {
+            set((state) => ({
+              revision: state.revision + 1,
+              lastSyncAt: Date.now(),
+              connected: true,
+            }));
+          },
+        )
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') set({ connected: true });
+        });
+      channels.push(ch);
 
       set({ supabaseChannels: channels });
     }
