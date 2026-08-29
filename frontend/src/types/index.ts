@@ -9,7 +9,9 @@ export interface User {
   position?: string;
   avatarUrl?: string;
   roles?: string[];
+  assignedRoles?: string[];
   permissions?: string[];
+  dashboardKey?: string;
 }
 
 export interface ApiResponse<T> {

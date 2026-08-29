@@ -16,6 +16,9 @@ import {
   SessionsPage,
 } from './components/sysadmin/AdminPages';
 import { AnalyticsPage } from './components/sysadmin/AnalyticsDashboard';
+import { RbacAdminPage } from './components/sysadmin/RbacAdminPage';
+import { GovernanceLayout } from './components/rbac/GovernanceLayout';
+import { GovernanceDashboard } from './components/rbac/GovernanceDashboard';
 import { FacilitiesManagerLayout } from './components/facilities/FacilitiesManagerLayout';
 import { FacilitiesDashboard } from './components/facilities/FacilitiesDashboard';
 import {
@@ -88,7 +91,7 @@ import {
   EmpProfilePage,
   EmpSettingsPage,
 } from './components/employee/EmployeePages';
-import { useAuthStore, getDashboardPath, isSuperAdmin } from './stores/authStore';
+import { useAuthStore, getDashboardPath, isSuperAdmin, hasPermission, hasRole } from './stores/authStore';
 
 class ErrorBoundary extends React.Component<
   { fallback: React.ReactNode; children: React.ReactNode },
@@ -200,6 +203,42 @@ const EmployeeRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   return <>{children}</>;
 };
 
+const GovernanceRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const user = useAuthStore((s) => s.user);
+  if (!accessToken) return <Navigate to="/login" replace />;
+  const allowed = [
+    'DATA_PROTECTION_OFFICER',
+    'LEGAL_COUNSEL',
+    'RECORDS_OFFICER',
+    'DEPARTMENT_HEAD',
+    'SECURITY_OFFICER',
+    'INFOSEC_OFFICER',
+  ].some((role) => hasRole(user, role));
+  if (!allowed) return <Navigate to={getDashboardPath(user)} replace />;
+  return <>{children}</>;
+};
+
+const RbacAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const user = useAuthStore((s) => s.user);
+  if (!accessToken) return <Navigate to="/login" replace />;
+  if (!isSuperAdmin(user) && !hasPermission(user, 'RBAC_ADMINISTER')) {
+    return <Navigate to={getDashboardPath(user)} replace />;
+  }
+  return <>{children}</>;
+};
+
+const SecurityMonitorRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const user = useAuthStore((s) => s.user);
+  if (!accessToken) return <Navigate to="/login" replace />;
+  if (!isSuperAdmin(user) && !hasPermission(user, 'SECURITY_MONITOR')) {
+    return <Navigate to={getDashboardPath(user)} replace />;
+  }
+  return <>{children}</>;
+};
+
 export const App: React.FC = () => {
   return (
     <BrowserRouter>
@@ -224,6 +263,7 @@ export const App: React.FC = () => {
           <Route path="admin/reports" element={<AdminRoute><Navigate to="/admin/analytics" replace /></AdminRoute>} />
           <Route path="admin/system-health" element={<AdminRoute><SystemHealthPage /></AdminRoute>} />
           <Route path="admin/sessions" element={<AdminRoute><SessionsPage /></AdminRoute>} />
+          <Route path="admin/rbac" element={<RbacAdminRoute><RbacAdminPage /></RbacAdminRoute>} />
 
           {/* Security Center */}
           <Route path="security" element={
@@ -234,6 +274,22 @@ export const App: React.FC = () => {
             </AdminRoute>
           } />
           <Route path="security/audit-logs" element={<AdminRoute><AuditLogsPage /></AdminRoute>} />
+        </Route>
+
+        {/* Governance dashboards for RBAC3 oversight roles */}
+        <Route element={
+          <GovernanceRoute>
+            <GovernanceLayout />
+          </GovernanceRoute>
+        }>
+          <Route path="governance" element={<GovernanceDashboard />} />
+          <Route path="governance/security" element={
+            <SecurityMonitorRoute>
+              <ErrorBoundary fallback={<div className="text-rose-400">Security monitoring failed to load.</div>}>
+                <SecurityCenterPage />
+              </ErrorBoundary>
+            </SecurityMonitorRoute>
+          } />
         </Route>
 
         {/* Facilities Manager routes */}

@@ -1,25 +1,22 @@
 import { apiClient } from './client';
-import { supabaseMonitoringService } from './supabaseMonitoringService';
 import type {
   SecurityMetrics, SecurityLog, BlockedIp, ActiveSession, SecurityAlert,
 } from '../types';
 
 export const securityService = {
   async getMetrics(): Promise<SecurityMetrics> {
-    const telemetry = await supabaseMonitoringService.getLiveDashboardCounts();
-    const d = telemetry.data;
-    return {
-      activeSessions: d.activeSessionsCount,
-      blockedIpsCount: d.blockedIpsCount,
-      activeAlertsCount: d.activeAlertsCount,
-      failedLoginAttempts: d.failedLoginAttemptsCount,
-      ddosBlockedRequests: 0,
-      suspiciousActivitiesCount: d.activeAlertsCount,
-    };
+    const { data } = await apiClient.get('/security/admin/metrics');
+    return data?.data ?? data;
   },
 
   async getLogs(_params?: Record<string, string>): Promise<SecurityLog[]> {
-    return supabaseMonitoringService.getRecentSecurityLogs(20);
+    try {
+      const { data } = await apiClient.get('/security/admin/logs', { params: _params });
+      const page = data?.data ?? data;
+      return Array.isArray(page) ? page : page?.content ?? [];
+    } catch {
+      return [];
+    }
   },
 
   async getActiveSessions(): Promise<ActiveSession[]> {
@@ -64,7 +61,9 @@ export const securityService = {
   },
 
   async blockIp(ipAddress: string, reason: string, durationMinutes?: number): Promise<BlockedIp> {
-    const { data } = await apiClient.post('/security/admin/blocked-ips', { ipAddress, reason, durationMinutes });
+    const { data } = await apiClient.post('/security/admin/blocked-ips', null, {
+      params: { ipAddress, reason, durationMinutes },
+    });
     return data;
   },
 
@@ -77,6 +76,8 @@ export const securityService = {
   },
 
   async resolveAlert(alertId: string, resolvedBy: string): Promise<void> {
-    await apiClient.post(`/security/admin/alerts/${alertId}/resolve`, { resolvedBy });
+    await apiClient.post(`/security/admin/alerts/${alertId}/resolve`, null, {
+      params: { resolvedBy },
+    });
   },
 };

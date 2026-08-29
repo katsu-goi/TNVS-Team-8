@@ -35,6 +35,7 @@ import {
 } from "../_shared/sessions.ts";
 import { verifyRefreshToken } from "../_shared/jwt.ts";
 import { resolveClientIp } from "../_shared/ip.ts";
+import { relevantRoleConflicts } from "../_shared/rbac.ts";
 
 const ACCESS_TTL_SECONDS = 900;
 
@@ -74,7 +75,9 @@ async function buildAuthResponse(user: AuthUser, ctx: Ctx) {
       position: user.row.position,
       avatarUrl: user.row.avatar_url,
       roles: user.roles,
+      assignedRoles: user.assignedRoles,
       permissions: user.permissions,
+      dashboardKey: user.dashboardKey,
     },
   };
 }
@@ -167,7 +170,7 @@ async function handleLogin(_ctx: AuthContext | null, req: Request, body: unknown
   await insertActivityEvent({
     type: "USER_ONLINE", userId: user.row.id, username: user.row.email,
     fullName: `${user.row.first_name} ${user.row.last_name}`, email: user.row.email,
-    role: user.roles[0] ?? "EMPLOYEE", action: "Signed in", ip: ctx.ip,
+    role: user.assignedRoles[0] ?? user.roles[0] ?? "EMPLOYEE", action: "Signed in", ip: ctx.ip,
     device: agent.device, browser: agent.browser,
   });
   await upsertOnlineUser(user, ctx.ip, agent);
@@ -218,7 +221,7 @@ async function handleLogout(ctx: AuthContext | null, _req: Request, _body: unkno
     await insertActivityEvent({
       type: "USER_OFFLINE", userId: ctx.userId, username: ctx.email,
       fullName: `${ctx.user.row.first_name} ${ctx.user.row.last_name}`, email: ctx.email,
-      role: ctx.roles[0] ?? "EMPLOYEE", action: "Signed out", ip: "",
+      role: ctx.user.assignedRoles[0] ?? ctx.roles[0] ?? "EMPLOYEE", action: "Signed out", ip: "",
       device: "", browser: "",
     });
     await removeOnlineUser(ctx.email);
@@ -239,6 +242,16 @@ async function handleHeartbeat(ctx: AuthContext | null, req: Request, _body: unk
 
 async function handleMe(ctx: AuthContext | null, _req: Request, _body: unknown) {
   return jsonResponse(ok(mePayload(ctx!), "User profile"), 200);
+}
+
+async function handleRbacDashboard(ctx: AuthContext | null, _req: Request, _body: unknown) {
+  return jsonResponse(ok({
+    dashboardKey: ctx!.user.dashboardKey,
+    assignedRoles: ctx!.user.assignedRoles,
+    effectiveRoles: ctx!.roles,
+    permissions: ctx!.permissions,
+    activeConstraints: await relevantRoleConflicts(ctx!.roles),
+  }), 200);
 }
 
 async function handleForgotPassword(_ctx: AuthContext | null, req: Request, body: unknown) {
@@ -368,6 +381,7 @@ const routes = [
   { method: "POST", path: "/auth/logout", guard: { kind: "auth" }, handler: handleLogout },
   { method: "POST", path: "/auth/heartbeat", guard: { kind: "auth" }, handler: handleHeartbeat },
   { method: "GET", path: "/auth/me", guard: { kind: "auth" }, handler: handleMe },
+  { method: "GET", path: "/rbac/me/dashboard", guard: { kind: "auth" }, handler: handleRbacDashboard },
   { method: "POST", path: "/auth/forgot-password", guard: { kind: "public" }, handler: handleForgotPassword },
   { method: "POST", path: "/auth/reset-password", guard: { kind: "public" }, handler: handleResetPassword },
   { method: "POST", path: "/auth/hr/assistance", guard: { kind: "public" }, handler: handleHrAssistance },

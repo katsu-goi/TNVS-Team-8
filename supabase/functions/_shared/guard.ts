@@ -111,7 +111,8 @@ export type RouteGuard =
   | { kind: "public" }
   | { kind: "auth" }
   | { kind: "roles"; roles: string[] }
-  | { kind: "permissions"; permissions: string[] };
+  | { kind: "permissions"; permissions: string[] }
+  | { kind: "rolesOrPermissions"; roles: string[]; permissions: string[] };
 
 export type RouteParams = Record<string, string>;
 
@@ -202,6 +203,11 @@ export function createHandler(routes: Route[], options: RouterOptions = {}): (re
       return forbiddenResponse();
     }
     if (route.guard.kind === "permissions" && !hasAnyPermission(ctx, route.guard.permissions)) {
+      return forbiddenResponse();
+    }
+    if (route.guard.kind === "rolesOrPermissions"
+      && !hasAnyRole(ctx, route.guard.roles)
+      && !hasAnyPermission(ctx, route.guard.permissions)) {
       return forbiddenResponse();
     }
 

@@ -4,6 +4,14 @@ import { ok, fail } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
 import { writeAudit } from "../_shared/lockout.ts";
 import { resolveClientIp } from "../_shared/ip.ts";
+import {
+  assignedRoleIds,
+  findConflict,
+  listPermissionCatalog,
+  listRoleCatalog,
+  listRoleConflicts,
+  resolveEffectiveRoleIds,
+} from "../_shared/rbac.ts";
 
 const db = adminDb();
 
@@ -78,6 +86,7 @@ function userDto(u: UserRow, roles: string[]): Record<string, unknown> {
     lastLoginAt: u.last_login_at,
     lastLoginIp: u.last_login_ip,
     accountLocked: lockedUntil !== null && lockedUntil > new Date(),
+    lockedUntil: u.locked_until,
     createdAt: u.created_at,
     updatedAt: u.updated_at,
     roles,
@@ -594,9 +603,331 @@ async function handleKpi(_ctx: AuthContext | null, _req: Request, _body: unknown
 
 // ---------------------------------------------------------------------------
 
+async function rbacRole(id: string) {
+  const { data, error } = await db
+    .from("roles")
+    .select("id, name, display_name")
+    .eq("id", id)
+    .eq("is_deleted", false)
+    .maybeSingle();
+  if (error) throw new Error(`role lookup failed: ${error.message}`);
+  return data as { id: string; name: string; display_name: string } | null;
+}
+
+async function rbacUser(id: string) {
+  const { data, error } = await db
+    .from("users")
+    .select("id, email")
+    .eq("id", id)
+    .eq("is_deleted", false)
+    .maybeSingle();
+  if (error) throw new Error(`user lookup failed: ${error.message}`);
+  return data as { id: string; email: string } | null;
+}
+
+async function revokeUserRefreshTokens(userId: string) {
+  const { error } = await db.from("refresh_tokens").update({
+    is_revoked: true,
+    revoked_at: nowIso(),
+  }).eq("user_id", userId).eq("is_revoked", false);
+  if (error) throw new Error(`refresh-token revocation failed: ${error.message}`);
+}
+
+async function revokeAllRefreshTokens() {
+  const { error } = await db.from("refresh_tokens").update({
+    is_revoked: true,
+    revoked_at: nowIso(),
+  }).eq("is_revoked", false);
+  if (error) throw new Error(`refresh-token revocation failed: ${error.message}`);
+}
+
+async function revokeAffectedUserTokens(roleId: string) {
+  const { data: links, error } = await db.from("user_roles").select("user_id, role_id");
+  if (error) throw new Error(`affected user lookup failed: ${error.message}`);
+
+  const rolesByUser = new Map<string, string[]>();
+  for (const link of links ?? []) {
+    const userId = link.user_id as string;
+    const roles = rolesByUser.get(userId) ?? [];
+    roles.push(link.role_id as string);
+    rolesByUser.set(userId, roles);
+  }
+
+  for (const [userId, assignedRoles] of rolesByUser) {
+    const effectiveRoles = await resolveEffectiveRoleIds(assignedRoles);
+    if (!effectiveRoles.has(roleId)) continue;
+    await revokeUserRefreshTokens(userId);
+  }
+}
+
+async function auditRbac(
+  ctx: AuthContext | null,
+  req: Request,
+  action: string,
+  entityType: string,
+  entityId: string,
+  description: string,
+) {
+  await writeAudit(ctx!.user, action, "RBAC", entityType, entityId,
+    description, resolveClientIp(req).ip);
+}
+
+function sodViolation(firstRole: string, secondRole: string) {
+  return jsonResponse(fail(
+    `Separation of Duties violation: ${firstRole} conflicts with ${secondRole}.`,
+    "BUSINESS_RULE_VIOLATION",
+  ), 422);
+}
+
+async function handleListRbacRoles() {
+  return jsonResponse(ok(await listRoleCatalog()), 200);
+}
+
+async function handleListRbacPermissions() {
+  return jsonResponse(ok(await listPermissionCatalog()), 200);
+}
+
+async function handleListRbacConflicts() {
+  return jsonResponse(ok(await listRoleConflicts()), 200);
+}
+
+async function handleAssignRole(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
+  const user = await rbacUser(p.userId);
+  if (!user) return notFound("User not found");
+  const role = await rbacRole(p.roleId);
+  if (!role) return notFound("Role not found");
+
+  const assigned = await assignedRoleIds(user.id);
+  if (assigned.includes(role.id)) return jsonResponse(ok("Role already assigned"), 200);
+  const effective = await resolveEffectiveRoleIds([...assigned, role.id]);
+  const conflict = await findConflict(effective);
+  if (conflict) return sodViolation(conflict.firstRole, conflict.secondRole);
+
+  const { error } = await db.from("user_roles").insert({ user_id: user.id, role_id: role.id });
+  if (error) throw new Error(`role assignment failed: ${error.message}`);
+  await revokeUserRefreshTokens(user.id);
+  await auditRbac(ctx, req, "RBAC_ROLE_ASSIGNED", "User", user.id,
+    `Assigned ${role.name} to ${user.email}`);
+  return jsonResponse(ok("Role assigned successfully"), 200);
+}
+
+async function handleRevokeRole(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
+  const user = await rbacUser(p.userId);
+  if (!user) return notFound("User not found");
+  const role = await rbacRole(p.roleId);
+  if (!role) return notFound("Role not found");
+
+  const assigned = await assignedRoleIds(user.id);
+  if (!assigned.includes(role.id)) return jsonResponse(ok("Role not assigned"), 200);
+  if (assigned.length <= 1) {
+    return jsonResponse(fail(
+      "An active user must retain at least one assigned role.",
+      "BUSINESS_RULE_VIOLATION",
+    ), 422);
+  }
+
+  if (role.name === "SUPER_ADMIN") {
+    const { count, error: countError } = await db
+      .from("user_roles")
+      .select("user_id", { count: "exact", head: true })
+      .eq("role_id", role.id);
+    if (countError) throw new Error(`super-admin count failed: ${countError.message}`);
+    if ((count ?? 0) <= 1) {
+      return jsonResponse(fail(
+        "The last super administrator role cannot be revoked.",
+        "BUSINESS_RULE_VIOLATION",
+      ), 422);
+    }
+  }
+
+  const { error } = await db.from("user_roles")
+    .delete().eq("user_id", user.id).eq("role_id", role.id);
+  if (error) throw new Error(`role revocation failed: ${error.message}`);
+  await revokeUserRefreshTokens(user.id);
+  await auditRbac(ctx, req, "RBAC_ROLE_REVOKED", "User", user.id,
+    `Revoked ${role.name} from ${user.email}`);
+  return jsonResponse(ok("Role revoked successfully"), 200);
+}
+
+async function handleGrantPermission(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
+  const role = await rbacRole(p.roleId);
+  if (!role) return notFound("Role not found");
+  const { data: permission, error: permissionError } = await db
+    .from("permissions").select("id, name")
+    .eq("id", p.permissionId).eq("is_deleted", false).maybeSingle();
+  if (permissionError) throw new Error(`permission lookup failed: ${permissionError.message}`);
+  if (!permission) return notFound("Permission not found");
+
+  const { error } = await db.from("role_permissions").upsert({
+    role_id: role.id,
+    permission_id: permission.id,
+  }, { onConflict: "role_id,permission_id", ignoreDuplicates: true });
+  if (error) throw new Error(`permission grant failed: ${error.message}`);
+  await revokeAffectedUserTokens(role.id);
+  await auditRbac(ctx, req, "RBAC_PERMISSION_GRANTED", "Role", role.id,
+    `Granted ${permission.name} to ${role.name}`);
+  return jsonResponse(ok("Permission granted successfully"), 200);
+}
+
+async function handleRevokePermission(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
+  const role = await rbacRole(p.roleId);
+  if (!role) return notFound("Role not found");
+  const { error } = await db.from("role_permissions")
+    .delete().eq("role_id", role.id).eq("permission_id", p.permissionId);
+  if (error) throw new Error(`permission revocation failed: ${error.message}`);
+  await revokeAffectedUserTokens(role.id);
+  await auditRbac(ctx, req, "RBAC_PERMISSION_REVOKED", "Role", role.id,
+    `Revoked a permission from ${role.name}`);
+  return jsonResponse(ok("Permission revoked successfully"), 200);
+}
+
+async function validateEveryUserAgainstSod(): Promise<{ email: string; firstRole: string; secondRole: string } | null> {
+  const { data: links, error } = await db.from("user_roles").select("user_id, role_id");
+  if (error) throw new Error(`user role validation failed: ${error.message}`);
+  const byUser = new Map<string, string[]>();
+  for (const link of links ?? []) {
+    const list = byUser.get(link.user_id as string) ?? [];
+    list.push(link.role_id as string);
+    byUser.set(link.user_id as string, list);
+  }
+  for (const [userId, roles] of byUser) {
+    const conflict = await findConflict(await resolveEffectiveRoleIds(roles));
+    if (!conflict) continue;
+    const user = await rbacUser(userId);
+    return {
+      email: user?.email ?? userId,
+      firstRole: conflict.firstRole,
+      secondRole: conflict.secondRole,
+    };
+  }
+  return null;
+}
+
+async function handleAddInheritance(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
+  const senior = await rbacRole(p.seniorRoleId);
+  const junior = await rbacRole(p.juniorRoleId);
+  if (!senior || !junior) return notFound("Role not found");
+  if (senior.id === junior.id) {
+    return jsonResponse(fail("A role cannot inherit itself.", "BUSINESS_RULE_VIOLATION"), 422);
+  }
+  const juniorClosure = await resolveEffectiveRoleIds([junior.id]);
+  if (juniorClosure.has(senior.id)) {
+    return jsonResponse(fail("Role hierarchy cycle detected.", "BUSINESS_RULE_VIOLATION"), 422);
+  }
+
+  const { error } = await db.from("role_hierarchy").upsert({
+    senior_role_id: senior.id,
+    junior_role_id: junior.id,
+  }, { onConflict: "senior_role_id,junior_role_id", ignoreDuplicates: true });
+  if (error) throw new Error(`role inheritance failed: ${error.message}`);
+
+  const violation = await validateEveryUserAgainstSod();
+  if (violation) {
+    await db.from("role_hierarchy").delete()
+      .eq("senior_role_id", senior.id).eq("junior_role_id", junior.id);
+    return jsonResponse(fail(
+      `Cannot add inheritance because ${violation.email} would violate SoD: ${violation.firstRole} conflicts with ${violation.secondRole}.`,
+      "BUSINESS_RULE_VIOLATION",
+    ), 422);
+  }
+
+  await revokeAllRefreshTokens();
+  await auditRbac(ctx, req, "RBAC_HIERARCHY_ADDED", "Role", senior.id,
+    `${senior.name} now inherits ${junior.name}`);
+  return jsonResponse(ok("Role inheritance added successfully"), 200);
+}
+
+async function handleRemoveInheritance(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
+  const { error } = await db.from("role_hierarchy").delete()
+    .eq("senior_role_id", p.seniorRoleId).eq("junior_role_id", p.juniorRoleId);
+  if (error) throw new Error(`role inheritance removal failed: ${error.message}`);
+  await revokeAllRefreshTokens();
+  await auditRbac(ctx, req, "RBAC_HIERARCHY_REMOVED", "Role", p.seniorRoleId,
+    "Removed inherited role");
+  return jsonResponse(ok("Role inheritance removed successfully"), 200);
+}
+
+async function handleCreateConflict(ctx: AuthContext | null, req: Request, body: unknown) {
+  const input = body as Record<string, unknown> | null;
+  const firstRoleId = typeof input?.firstRoleId === "string" ? input.firstRoleId : "";
+  const secondRoleId = typeof input?.secondRoleId === "string" ? input.secondRoleId : "";
+  const code = typeof input?.code === "string" ? input.code.trim().toUpperCase() : "";
+  const description = typeof input?.description === "string" ? input.description.trim() : null;
+  if (!firstRoleId || !secondRoleId || !code) {
+    return jsonResponse(fail("Role IDs and code are required.", "VALIDATION_ERROR"), 400);
+  }
+  if (firstRoleId === secondRoleId) {
+    return jsonResponse(fail("A role cannot conflict with itself.", "BUSINESS_RULE_VIOLATION"), 422);
+  }
+  const first = await rbacRole(firstRoleId);
+  const second = await rbacRole(secondRoleId);
+  if (!first || !second) return notFound("Role not found");
+
+  const { data: existing, error: existingError } = await db.from("role_conflicts")
+    .select("id").or(
+      `code.eq.${code},and(first_role_id.eq.${firstRoleId},second_role_id.eq.${secondRoleId}),and(first_role_id.eq.${secondRoleId},second_role_id.eq.${firstRoleId})`,
+    ).maybeSingle();
+  if (existingError) throw new Error(`role conflict lookup failed: ${existingError.message}`);
+  if (existing) return jsonResponse(fail("Role conflict already exists.", "RESOURCE_ALREADY_EXISTS"), 409);
+
+  const { data: userLinks, error: userLinkError } = await db.from("user_roles").select("user_id, role_id");
+  if (userLinkError) throw new Error(`user role validation failed: ${userLinkError.message}`);
+  const byUser = new Map<string, string[]>();
+  for (const link of userLinks ?? []) {
+    const list = byUser.get(link.user_id as string) ?? [];
+    list.push(link.role_id as string);
+    byUser.set(link.user_id as string, list);
+  }
+  for (const [userId, roles] of byUser) {
+    const effective = await resolveEffectiveRoleIds(roles);
+    if (effective.has(firstRoleId) && effective.has(secondRoleId)) {
+      const user = await rbacUser(userId);
+      return jsonResponse(fail(
+        `Cannot create this constraint because ${user?.email ?? userId} currently has both roles.`,
+        "BUSINESS_RULE_VIOLATION",
+      ), 422);
+    }
+  }
+
+  const { data: saved, error } = await db.from("role_conflicts").insert({
+    first_role_id: firstRoleId,
+    second_role_id: secondRoleId,
+    code,
+    description,
+    active: true,
+  }).select("id").single();
+  if (error) throw new Error(`role conflict creation failed: ${error.message}`);
+  await auditRbac(ctx, req, "RBAC_CONSTRAINT_CREATED", "RoleConflict", saved.id as string,
+    `Created SoD constraint ${code}`);
+  return jsonResponse(ok((await listRoleConflicts()).find((item) => item.id === saved.id)), 200);
+}
+
+async function handleDeactivateConflict(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
+  const { error } = await db.from("role_conflicts").update({ active: false, updated_at: nowIso() })
+    .eq("id", p.conflictId).eq("is_deleted", false);
+  if (error) throw new Error(`role conflict update failed: ${error.message}`);
+  await auditRbac(ctx, req, "RBAC_CONSTRAINT_DEACTIVATED", "RoleConflict", p.conflictId,
+    "Deactivated SoD constraint");
+  return jsonResponse(ok("Constraint deactivated successfully"), 200);
+}
+
+// ---------------------------------------------------------------------------
+
 const routes = [
   { method: "GET", path: "/admin/users", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleListUsers },
   { method: "POST", path: "/admin/users/:id/unlock", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleUnlockUser },
+  { method: "GET", path: "/admin/rbac/users", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleListUsers },
+  { method: "GET", path: "/admin/rbac/roles", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleListRbacRoles },
+  { method: "GET", path: "/admin/rbac/permissions", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleListRbacPermissions },
+  { method: "GET", path: "/admin/rbac/conflicts", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleListRbacConflicts },
+  { method: "PUT", path: "/admin/rbac/users/:userId/roles/:roleId", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleAssignRole },
+  { method: "DELETE", path: "/admin/rbac/users/:userId/roles/:roleId", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleRevokeRole },
+  { method: "PUT", path: "/admin/rbac/roles/:roleId/permissions/:permissionId", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleGrantPermission },
+  { method: "DELETE", path: "/admin/rbac/roles/:roleId/permissions/:permissionId", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleRevokePermission },
+  { method: "PUT", path: "/admin/rbac/hierarchy/:seniorRoleId/:juniorRoleId", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleAddInheritance },
+  { method: "DELETE", path: "/admin/rbac/hierarchy/:seniorRoleId/:juniorRoleId", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleRemoveInheritance },
+  { method: "POST", path: "/admin/rbac/conflicts", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleCreateConflict },
+  { method: "DELETE", path: "/admin/rbac/conflicts/:conflictId", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleDeactivateConflict },
   { method: "GET", path: "/admin/config", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleListConfigs },
   { method: "GET", path: "/admin/config/:key", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleGetConfig },
   { method: "PUT", path: "/admin/config/:key", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleUpsertConfig },

@@ -22,8 +22,10 @@ public interface UserRepository extends JpaRepository<User, UUID>, JpaSpecificat
 
     boolean existsByEmployeeIdAndDeletedFalse(String employeeId);
 
-    @Query("SELECT u FROM User u JOIN FETCH u.roles r JOIN FETCH r.permissions WHERE u.email = :email AND u.deleted = false")
+    @Query("SELECT DISTINCT u FROM User u LEFT JOIN FETCH u.roles r LEFT JOIN FETCH r.permissions WHERE u.email = :email AND u.deleted = false")
     Optional<User> findByEmailWithRolesAndPermissions(String email);
+
+    List<User> findAllByDeletedFalseOrderByEmailAsc();
 
     @Query("SELECT DISTINCT u FROM User u JOIN u.roles r WHERE r.name = :roleName AND u.deleted = false")
     List<User> findByRoleName(@Param("roleName") String roleName);
