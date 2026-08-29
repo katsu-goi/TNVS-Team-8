@@ -3,9 +3,9 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, LogOut, Search, ShieldCheck, ChevronRight, ChevronDown,
   AlertTriangle, BarChart3, Activity, Monitor, Layers, Download,
-  Settings, Bell, FileText, Cpu,
+  Settings, Bell, FileText, Cpu, KeyRound,
 } from 'lucide-react';
-import { useAuthStore } from '../../stores/authStore';
+import { hasPermission, isSuperAdmin, useAuthStore } from '../../stores/authStore';
 import { useDashboardStore } from '../../stores/dashboardStore';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { logout as apiLogout } from '../../api/authService';
@@ -58,23 +58,26 @@ export const AppLayout: React.FC = () => {
 
   const isExactActive = (path: string) => location.pathname === path;
 
+  const systemAdministrator = isSuperAdmin(user);
   const navItems = [
-  { id: 'dashboard', label: 'Dashboard', path: '/', icon: LayoutDashboard, exact: true },
-  { id: 'integrations', label: 'Integrations', path: '/admin/integrations', icon: Layers, exact: true },
-  { id: 'ai-services', label: 'AI Services', path: '/admin/ai-services', icon: Cpu, exact: true },
-  { id: 'backup', label: 'Backup & DR', path: '/admin/backup', icon: Download, exact: true },
-  { id: 'settings', label: 'System Config', path: '/admin/settings', icon: Settings, exact: true },
-  { id: 'notifications', label: 'Notifications', path: '/admin/notifications', icon: Bell, exact: true },
-  { id: 'analytics', label: 'Analytics', path: '/admin/analytics', icon: BarChart3, exact: true },
+  { id: 'dashboard', label: 'Dashboard', path: '/', icon: LayoutDashboard, exact: true, visible: systemAdministrator },
+  { id: 'integrations', label: 'Integrations', path: '/admin/integrations', icon: Layers, exact: true, visible: systemAdministrator },
+  { id: 'ai-services', label: 'AI Services', path: '/admin/ai-services', icon: Cpu, exact: true, visible: systemAdministrator },
+  { id: 'backup', label: 'Backup & DR', path: '/admin/backup', icon: Download, exact: true, visible: systemAdministrator },
+  { id: 'settings', label: 'System Config', path: '/admin/settings', icon: Settings, exact: true, visible: systemAdministrator },
+  { id: 'notifications', label: 'Notifications', path: '/admin/notifications', icon: Bell, exact: true, visible: systemAdministrator },
+  { id: 'analytics', label: 'Analytics', path: '/admin/analytics', icon: BarChart3, exact: true, visible: systemAdministrator },
+  { id: 'rbac', label: 'RBAC Administration', path: '/admin/rbac', icon: KeyRound, exact: true, visible: hasPermission(user, 'RBAC_ADMINISTER') },
   {
   id: 'security', label: 'Security Center', path: '/security', icon: ShieldCheck,
+  visible: systemAdministrator,
   children: [
   { id: 'security-audit', label: 'Audit Logs', path: '/security/audit-logs', icon: FileText, exact: true },
   { id: 'security-sessions', label: 'Sessions', path: '/admin/sessions', icon: Activity, exact: true },
   { id: 'security-health', label: 'System Health', path: '/admin/system-health', icon: Monitor, exact: true },
   ],
   },
-  ];
+  ].filter((item) => item.visible);
 
   return (
    <div className="min-h-screen bg-[#F8FAFC]">

@@ -74,7 +74,10 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                     .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                     .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
+                    .requestMatchers("/v1/admin/rbac/**").hasAnyAuthority("ROLE_SUPER_ADMIN", "RBAC_ADMINISTER")
                     .requestMatchers("/v1/admin/**").hasRole("SUPER_ADMIN")
+                    .requestMatchers(HttpMethod.GET, "/v1/security/**")
+                        .hasAnyAuthority("ROLE_SUPER_ADMIN", "SECURITY_MONITOR")
                     .requestMatchers("/v1/security/**").hasRole("SUPER_ADMIN")
                     .requestMatchers("/v1/facilities-manager/**").hasRole("FACILITIES_MANAGER")
                     .requestMatchers("/v1/facilities-officer/**").hasRole("FACILITIES_OFFICER")

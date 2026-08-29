@@ -25,8 +25,10 @@ export type AuthUserRow = {
 
 export type AuthUser = {
   row: AuthUserRow;
+  assignedRoles: string[];
   roles: string[];
   permissions: string[];
+  dashboardKey: string;
 };
 
 export async function findUserByEmail(email: string): Promise<AuthUser | null> {
@@ -40,11 +42,40 @@ export async function findUserByEmail(email: string): Promise<AuthUser | null> {
   if (error) throw new Error(`users lookup failed: ${error.message}`);
   if (!data) return null;
 
-  const { names, permissions } = await loadRolesFor(data.id as string);
-  return { row: data as AuthUserRow, roles: names, permissions };
+  const { assignedNames, effectiveNames, permissions, dashboardKey } = await loadRolesFor(data.id as string);
+  return {
+    row: data as AuthUserRow,
+    assignedRoles: assignedNames,
+    roles: effectiveNames,
+    permissions,
+    dashboardKey,
+  };
 }
 
-type RoleLoad = { names: string[]; permissions: string[] };
+type RoleLoad = {
+  assignedNames: string[];
+  effectiveNames: string[];
+  permissions: string[];
+  dashboardKey: string;
+};
+
+type RoleRow = { id: string; name: string; dashboard_key: string | null };
+
+const DASHBOARD_PRIORITY = [
+  "SUPER_ADMIN",
+  "DATA_PROTECTION_OFFICER",
+  "LEGAL_COUNSEL",
+  "RECORDS_OFFICER",
+  "DEPARTMENT_HEAD",
+  "SECURITY_OFFICER",
+  "INFOSEC_OFFICER",
+  "FACILITIES_MANAGER",
+  "FACILITIES_OFFICER",
+  "COMPLIANCE_OFFICER",
+  "LEGAL_OFFICER",
+  "CONTRACT_OFFICER",
+  "EMPLOYEE",
+];
 
 async function loadRolesFor(userId: string): Promise<RoleLoad> {
   const db = adminDb();
@@ -57,21 +88,56 @@ async function loadRolesFor(userId: string): Promise<RoleLoad> {
 
   const roleIds = (linkRows ?? []).map((r) => r.role_id as string);
   if (roleIds.length === 0) {
-    return { names: [], permissions: [] };
+    return { assignedNames: [], effectiveNames: [], permissions: [], dashboardKey: "employee" };
   }
 
-  const { data: roleRows, error: roleErr } = await db
+  const { data: assignedRows, error: assignedErr } = await db
     .from("roles")
-    .select("id, name")
+    .select("id, name, dashboard_key")
     .in("id", roleIds);
-  if (roleErr) throw new Error(`roles lookup failed: ${roleErr.message}`);
+  if (assignedErr) throw new Error(`roles lookup failed: ${assignedErr.message}`);
 
-  const names = (roleRows ?? []).map((r) => r.name as string);
+  const assigned = (assignedRows ?? []) as RoleRow[];
+  const effectiveRoleIds = new Set(roleIds);
+  let frontier = [...roleIds];
+  while (frontier.length > 0) {
+    const { data: hierarchyRows, error: hierarchyErr } = await db
+      .from("role_hierarchy")
+      .select("junior_role_id")
+      .in("senior_role_id", frontier);
+    if (hierarchyErr) throw new Error(`role hierarchy lookup failed: ${hierarchyErr.message}`);
+
+    const next: string[] = [];
+    for (const row of hierarchyRows ?? []) {
+      const juniorId = row.junior_role_id as string;
+      if (!effectiveRoleIds.has(juniorId)) {
+        effectiveRoleIds.add(juniorId);
+        next.push(juniorId);
+      }
+    }
+    frontier = next;
+  }
+
+  const { data: effectiveRows, error: effectiveErr } = await db
+    .from("roles")
+    .select("id, name, dashboard_key")
+    .in("id", [...effectiveRoleIds]);
+  if (effectiveErr) throw new Error(`effective roles lookup failed: ${effectiveErr.message}`);
+
+  const assignedNames = assigned.map((role) => role.name);
+  const effectiveNames = ((effectiveRows ?? []) as RoleRow[]).map((role) => role.name);
+  const dashboardKey = assigned
+    .filter((role) => role.dashboard_key)
+    .sort((left, right) => {
+      const leftIndex = DASHBOARD_PRIORITY.indexOf(left.name);
+      const rightIndex = DASHBOARD_PRIORITY.indexOf(right.name);
+      return (leftIndex < 0 ? 1_000 : leftIndex) - (rightIndex < 0 ? 1_000 : rightIndex);
+    })[0]?.dashboard_key ?? "employee";
 
   const { data: permRows, error: permErr } = await db
     .from("role_permissions")
     .select("permission:permissions(name)")
-    .in("role_id", roleIds);
+    .in("role_id", [...effectiveRoleIds]);
   if (permErr) throw new Error(`permissions lookup failed: ${permErr.message}`);
 
   const permissions = new Set<string>();
@@ -79,7 +145,7 @@ async function loadRolesFor(userId: string): Promise<RoleLoad> {
     const name = (row.permission as { name?: string } | null)?.name;
     if (name) permissions.add(name);
   }
-  return { names, permissions: [...permissions] };
+  return { assignedNames, effectiveNames, permissions: [...permissions], dashboardKey };
 }
 
 /** Comma-joined authority list matching CustomUserDetailsService (ROLE_x + permission names). */
@@ -103,7 +169,9 @@ export function userSummary(user: AuthUser) {
     position: r.position,
     avatarUrl: r.avatar_url,
     roles: user.roles,
+    assignedRoles: user.assignedRoles,
     permissions: user.permissions,
+    dashboardKey: user.dashboardKey,
   };
 }
 

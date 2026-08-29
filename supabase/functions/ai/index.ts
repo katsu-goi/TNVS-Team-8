@@ -367,7 +367,9 @@ async function decryptKey(sealed: string | null | undefined): Promise<string | n
   if (parts.length !== 2) return null;
   try {
     const key = await encryptionKey();
-    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(parts[0]) }, key, unb64(parts[1]));
+    const iv = unb64(parts[0]) as unknown as BufferSource;
+    const ciphertext = unb64(parts[1]) as unknown as BufferSource;
+    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
     return dec.decode(pt);
   } catch {
     return null;

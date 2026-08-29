@@ -1,0 +1,11 @@
+# Set these only in the backend deployment environment.
+# Never commit real values or expose them through VITE_* variables.
+
+RBAC_BOOTSTRAP_ENABLED=false
+RBAC_SUPER_ADMIN_PASSWORD=
+RBAC_DPO_PASSWORD=
+RBAC_LEGAL_COUNSEL_PASSWORD=
+RBAC_RECORDS_PASSWORD=
+RBAC_DEPARTMENT_HEAD_PASSWORD=
+RBAC_SECURITY_PASSWORD=
+RBAC_INFOSEC_PASSWORD=

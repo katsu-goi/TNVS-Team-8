@@ -191,6 +191,17 @@ app:
       lock-duration-seconds: ${LOGIN_LOCK_DURATIONS:10,30}
       permanent-lock-duration-days: ${LOGIN_PERMANENT_LOCK_DAYS:365}
       # Optionally notify this mailbox on HR assistance submissions.
+  rbac:
+    bootstrap:
+      enabled: ${RBAC_BOOTSTRAP_ENABLED:false}
+      passwords:
+        super-admin: ${RBAC_SUPER_ADMIN_PASSWORD:}
+        dpo: ${RBAC_DPO_PASSWORD:}
+        legal-counsel: ${RBAC_LEGAL_COUNSEL_PASSWORD:}
+        records: ${RBAC_RECORDS_PASSWORD:}
+        department-head: ${RBAC_DEPARTMENT_HEAD_PASSWORD:}
+        security: ${RBAC_SECURITY_PASSWORD:}
+        infosec: ${RBAC_INFOSEC_PASSWORD:}
   hr:
     contact-email: ${HR_CONTACT_EMAIL:}
 

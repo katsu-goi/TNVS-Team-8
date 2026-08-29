@@ -1,4 +1,3 @@
-import { supabase } from '../lib/supabase';
 import { apiClient } from './client';
 import type { SecurityLog } from '../types';
 
@@ -93,30 +92,24 @@ export const supabaseMonitoringService = {
   },
 
   /**
-   * Fetch recent security logs from the security_logs table (anon SELECT is
-   * permitted via the realtime RLS policies so the browser can read them).
+   * Fetch recent security logs through the authenticated security endpoint.
    */
   async getRecentSecurityLogs(limit = 10): Promise<SecurityLog[]> {
-    if (!supabase) return [];
     try {
-      const { data, error } = await supabase
-        .from('security_logs')
-        .select('*')
-        .order('timestamp', { ascending: false })
-        .limit(limit);
-
-      if (error || !data) return [];
-
-      return data.map(row => ({
-        id: row.id?.toString() || Math.random().toString(),
-        timestamp: row.timestamp || row.created_at || new Date().toISOString(),
+      const { data } = await apiClient.get('/security/admin/logs', {
+        params: { page: 0, size: limit },
+      });
+      const page = data?.data ?? data ?? {};
+      return (page.content ?? []).map((row: any) => ({
+        id: String(row.id ?? Math.random()),
+        timestamp: row.timestamp || row.createdAt || new Date().toISOString(),
         username: row.username ?? undefined,
-        fullName: row.full_name || row.username || 'System User',
+        fullName: row.fullName || row.username || 'System User',
         role: row.role ?? undefined,
         module: row.module || 'SECURITY',
         action: row.action || 'SECURITY_EVENT',
-        riskLevel: row.risk_level || 'LOW',
-        ipAddress: row.ip_address || '127.0.0.1',
+        riskLevel: row.riskLevel || 'LOW',
+        ipAddress: row.ipAddress || '127.0.0.1',
         status: row.status || 'SUCCESS',
       }));
     } catch {

@@ -2,6 +2,7 @@ package com.photonicomega.facilities.security;
 
 import com.photonicomega.facilities.module.auth.domain.User;
 import com.photonicomega.facilities.module.auth.repository.UserRepository;
+import com.photonicomega.facilities.module.auth.service.RoleHierarchyService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -20,6 +21,7 @@ import java.util.Set;
 public class CustomUserDetailsService implements UserDetailsService {
 
     private final UserRepository userRepository;
+    private final RoleHierarchyService roleHierarchyService;
 
     @Override
     @Transactional(readOnly = true)
@@ -40,7 +42,7 @@ public class CustomUserDetailsService implements UserDetailsService {
 
     private Collection<? extends GrantedAuthority> buildAuthorities(User user) {
         Set<GrantedAuthority> authorities = new HashSet<>();
-        user.getRoles().forEach(role -> {
+        roleHierarchyService.resolveEffectiveRoles(user.getRoles()).forEach(role -> {
             authorities.add(new SimpleGrantedAuthority("ROLE_" + role.getName()));
             role.getPermissions().forEach(permission ->
                     authorities.add(new SimpleGrantedAuthority(permission.getName())));

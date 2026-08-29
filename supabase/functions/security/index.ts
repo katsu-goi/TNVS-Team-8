@@ -541,18 +541,18 @@ async function handleTestThreatEvent(ctx: AuthContext | null, _req: Request, _bo
 // ---------------------------------------------------------------------------
 
 const routes = [
-  { method: "GET", path: "/security/admin/metrics", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleMetrics },
-  { method: "GET", path: "/security/admin/logs", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleLogs },
-  { method: "GET", path: "/security/admin/sessions", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleSessions },
+  { method: "GET", path: "/security/admin/metrics", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleMetrics },
+  { method: "GET", path: "/security/admin/logs", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleLogs },
+  { method: "GET", path: "/security/admin/sessions", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleSessions },
   { method: "POST", path: "/security/admin/sessions/:id/revoke", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleRevokeSession },
-  { method: "GET", path: "/security/admin/blocked-ips", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleBlockedIps },
+  { method: "GET", path: "/security/admin/blocked-ips", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleBlockedIps },
   { method: "POST", path: "/security/admin/blocked-ips", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleBlockIp },
   { method: "DELETE", path: "/security/admin/blocked-ips/:ipAddress", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleUnblockIp },
-  { method: "GET", path: "/security/admin/alerts", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleAlerts },
+  { method: "GET", path: "/security/admin/alerts", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleAlerts },
   { method: "POST", path: "/security/admin/alerts/:id/resolve", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleResolveAlert },
-  { method: "GET", path: "/security/ip-threats/vector-map", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleVectorMap },
-  { method: "GET", path: "/security/ip-threats/stats", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleThreatStats },
-  { method: "GET", path: "/security/ip-threats/diagnostics", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleThreatDiagnostics },
+  { method: "GET", path: "/security/ip-threats/vector-map", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleVectorMap },
+  { method: "GET", path: "/security/ip-threats/stats", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleThreatStats },
+  { method: "GET", path: "/security/ip-threats/diagnostics", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleThreatDiagnostics },
   { method: "POST", path: "/security/ip-threats/test-event", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleTestThreatEvent },
 ] as const;
 

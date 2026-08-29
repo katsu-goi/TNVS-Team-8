@@ -4,6 +4,7 @@ import com.photonicomega.facilities.exception.BusinessRuleViolationException;
 import com.photonicomega.facilities.exception.ResourceNotFoundException;
 import com.photonicomega.facilities.module.auth.domain.User;
 import com.photonicomega.facilities.module.auth.service.AuditService;
+import com.photonicomega.facilities.module.auth.domain.Role;
 import com.photonicomega.facilities.module.employee.domain.EmployeeRequest;
 import com.photonicomega.facilities.module.employee.domain.NotificationType;
 import com.photonicomega.facilities.module.employee.domain.RequestStatus;
@@ -16,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -144,7 +146,15 @@ public class RequestReviewService {
     }
 
     private boolean hasRole(User user, String roleName) {
-        return user.getRoles().stream().anyMatch(role -> roleName.equals(role.getName()));
+        return user.getRoles().stream()
+                .anyMatch(role -> hasRole(role, roleName, new HashSet<>()));
+    }
+
+    private boolean hasRole(Role role, String roleName, HashSet<String> visited) {
+        if (role.getName() == null || !visited.add(role.getName())) return false;
+        if (roleName.equals(role.getName())) return true;
+        return role.getInheritedRoles().stream()
+                .anyMatch(inherited -> hasRole(inherited, roleName, visited));
     }
 
     private Map<String, Object> toDto(EmployeeRequest r) {

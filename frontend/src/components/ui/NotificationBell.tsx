@@ -70,11 +70,8 @@ export const NotificationBell: React.FC<{ className?: string }> = ({ className =
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const rowsRef = useRef<AppNotification[]>([]);
 
   const realtime = useNotificationRealtimeStore();
-
-  useEffect(() => { rowsRef.current = rows; }, [rows]);
 
   const refreshCount = useCallback(async () => {
     try {
@@ -105,19 +102,13 @@ export const NotificationBell: React.FC<{ className?: string }> = ({ className =
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Consume realtime events: prepend to the list and bump the unread badge.
+  // Realtime is a change marker; refresh protected notification data via API.
   useEffect(() => {
     if (!realtime.revision) return;
-    const incoming = [realtime.lastNotification, realtime.lastAdminNotification]
-      .filter((n): n is AppNotification => Boolean(n));
-    if (incoming.length === 0) return;
-    const current = rowsRef.current;
-    const known = new Set(current.map(n => n.id));
-    const fresh = incoming.filter(n => !known.has(n.id));
-    if (fresh.length === 0) return;
-    setRows([...fresh, ...current].sort(byDateDesc));
-    setUnread(u => u + fresh.filter(n => !n.read).length);
-  }, [realtime.revision, realtime.lastNotification, realtime.lastAdminNotification]);
+    void refreshCount();
+    if (open) void loadList();
+  }, [realtime.revision, open, loadList, refreshCount]);
+
 
   // Poll the unread count on mount and on an interval (fallback/reconciliation).
   useEffect(() => {
