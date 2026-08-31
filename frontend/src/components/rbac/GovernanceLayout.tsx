@@ -5,6 +5,7 @@ import { hasPermission, hasRole, useAuthStore } from '../../stores/authStore';
 import { useUserHeartbeat } from '../../hooks/useUserHeartbeat';
 import { NotificationBell } from '../ui/NotificationBell';
 import { UserProfileMenu } from '../ui/UserProfileMenu';
+import { HirnaSidebarDecoration } from '../ui/HirnaSidebarDecoration';
 
 const dashboardLabels: Record<string, string> = {
   privacy: 'Data Protection',
@@ -63,6 +64,7 @@ export const GovernanceLayout: React.FC = () => {
             );
           })}
         </nav>
+        <HirnaSidebarDecoration />
       </aside>
 
       <main className="min-h-screen pl-72">

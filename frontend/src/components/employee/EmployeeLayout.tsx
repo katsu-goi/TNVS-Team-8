@@ -9,6 +9,7 @@ import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { useUserHeartbeat } from '../../hooks/useUserHeartbeat';
 import { NotificationBell } from '../ui/NotificationBell';
 import { UserProfileMenu } from '../ui/UserProfileMenu';
+import { HirnaSidebarDecoration } from '../ui/HirnaSidebarDecoration';
 
 export const EmployeeLayout: React.FC = () => {
   const location = useLocation();
@@ -82,6 +83,8 @@ export const EmployeeLayout: React.FC = () => {
               );
             })}
           </div>
+
+          <HirnaSidebarDecoration />
 
           <div className="shrink-0 px-3 py-2">
             <div className="bg-[#A9252A]/80 rounded-xl border border-white/5 p-3 backdrop-blur-sm">

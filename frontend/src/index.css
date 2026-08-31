@@ -321,3 +321,31 @@ section {
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
   border-color: #D02F34;
 }
+
+/* Shared decorative watermark used by every authenticated sidebar. */
+.sidebar-skyline {
+  display: block;
+  width: 100%;
+  height: 60px;
+  object-fit: contain;
+  object-position: center bottom;
+  opacity: 0.16;
+  pointer-events: none;
+  user-select: none;
+}
+
+.sidebar-skyline-container {
+  padding-bottom: 0.375rem;
+}
+
+@media (max-height: 760px) {
+  .sidebar-skyline {
+    height: 44px;
+  }
+}
+
+@media (max-height: 660px) {
+  .sidebar-skyline-container {
+    display: none;
+  }
+}
