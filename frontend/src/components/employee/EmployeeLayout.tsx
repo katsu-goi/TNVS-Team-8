@@ -1,23 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  LayoutDashboard, LogOut, FileText, FileSignature,
+  LayoutDashboard, FileText, FileSignature,
   CalendarClock, Users, Bell, User, Settings,
-  ChevronRight, AlertTriangle, Search,
+  ChevronRight, Search,
 } from 'lucide-react';
-import { useAuthStore } from '../../stores/authStore';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
-import { logout as apiLogout } from '../../api/authService';
 import { useUserHeartbeat } from '../../hooks/useUserHeartbeat';
 import { NotificationBell } from '../ui/NotificationBell';
+import { UserProfileMenu } from '../ui/UserProfileMenu';
 
 export const EmployeeLayout: React.FC = () => {
-  const { user, logout } = useAuthStore();
   const location = useLocation();
   const navigate = useNavigate();
   useUserHeartbeat();
   const [searchQuery, setSearchQuery] = useState('');
-  const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [clock, setClock] = useState(new Date());
 
   const syncConnected = useRealtimeSyncStore(s => s.connected);
@@ -114,25 +111,6 @@ export const EmployeeLayout: React.FC = () => {
           </div>
         </nav>
 
-        <div className="shrink-0 px-3 py-2">
-          <div className="bg-[#A9252A]/80 rounded-xl border border-white/5 p-2.5 backdrop-blur-sm">
-            <div className="flex items-center justify-between px-3 py-2 rounded-lg">
-              <div className="flex items-center space-x-2.5 min-w-0">
-                <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center font-bold text-white text-xs shrink-0">
-                  {user?.fullName?.charAt(0) || 'E'}
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold text-white truncate leading-tight">{user?.fullName || 'Employee'}</p>
-                  <p className="text-[10px] text-white/70 font-mono truncate leading-tight">EMPLOYEE</p>
-                </div>
-              </div>
-              <button onClick={() => setShowLogoutModal(true)} title="Logout"
-                className="p-1.5 text-white/40 hover:text-red-300 hover:bg-red-500/20 rounded-lg transition-colors shrink-0">
-                <LogOut className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-        </div>
       </aside>
 
       <main className="pl-72 min-h-screen relative bg-[#F8FAFC]">
@@ -145,9 +123,9 @@ export const EmployeeLayout: React.FC = () => {
                 className="w-full bg-white border border-slate-300 text-sm rounded-xl pl-9 pr-4 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-[#D02F34] focus:ring-1 focus:ring-[#D02F34]/30 transition-all" />
             </div>
           </div>
-          <div className="flex items-center space-x-3">
+          <div className="flex shrink-0 items-center space-x-2 sm:space-x-3">
             <NotificationBell />
-            <span className="text-xs text-slate-400 font-mono">Self-Service Portal</span>
+            <UserProfileMenu profilePath="/employee/profile" settingsPath="/employee/settings" />
           </div>
         </header>
 
@@ -155,25 +133,6 @@ export const EmployeeLayout: React.FC = () => {
           <Outlet />
         </div>
       </main>
-
-      {showLogoutModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-5">
-            <div className="flex items-center space-x-3 text-red-600">
-              <div className="p-2.5 rounded-xl bg-red-50 border border-red-100"><AlertTriangle className="w-6 h-6" /></div>
-              <div>
-                <h3 className="font-heading font-bold text-lg text-slate-900">Confirm Logout</h3>
-                <p className="text-xs text-slate-500">End your session?</p>
-              </div>
-            </div>
-            <p className="text-xs text-slate-600 leading-relaxed">Are you sure you want to end your session?</p>
-            <div className="flex justify-end space-x-3 pt-2">
-              <button onClick={() => setShowLogoutModal(false)} className="px-4 py-2 rounded-xl text-slate-500 hover:text-slate-900 text-xs font-semibold">Cancel</button>
-              <button onClick={() => { setShowLogoutModal(false); apiLogout().finally(() => logout()); }} className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold text-xs">Confirm Logout</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

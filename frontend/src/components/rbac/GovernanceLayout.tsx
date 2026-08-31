@@ -1,10 +1,10 @@
 import React from 'react';
-import { LayoutDashboard, LogOut, Scale, ShieldCheck, Database, Building2, LockKeyhole } from 'lucide-react';
+import { LayoutDashboard, Scale, ShieldCheck, Database, Building2, LockKeyhole } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { logout as apiLogout } from '../../api/authService';
 import { hasPermission, hasRole, useAuthStore } from '../../stores/authStore';
 import { useUserHeartbeat } from '../../hooks/useUserHeartbeat';
 import { NotificationBell } from '../ui/NotificationBell';
+import { UserProfileMenu } from '../ui/UserProfileMenu';
 
 const dashboardLabels: Record<string, string> = {
   privacy: 'Data Protection',
@@ -16,7 +16,7 @@ const dashboardLabels: Record<string, string> = {
 };
 
 export const GovernanceLayout: React.FC = () => {
-  const { user, logout } = useAuthStore();
+  const { user } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
   useUserHeartbeat();
@@ -30,8 +30,6 @@ export const GovernanceLayout: React.FC = () => {
   ].filter((item) => item.visible);
 
   const portalLabel = dashboardLabels[user?.dashboardKey || ''] || 'Governance';
-  const primaryRole = user?.assignedRoles?.[0] || user?.roles?.[0] || 'GOVERNANCE_USER';
-
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <aside className="fixed inset-y-0 left-0 z-30 flex w-72 flex-col bg-[#D02F34] shadow-2xl">
@@ -65,24 +63,6 @@ export const GovernanceLayout: React.FC = () => {
             );
           })}
         </nav>
-
-        <div className="p-3">
-          <div className="rounded-xl border border-white/10 bg-[#A9252A]/80 p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-xs font-semibold text-white">{user?.fullName || user?.email}</p>
-                <p className="truncate font-mono text-[10px] text-white/65">{primaryRole}</p>
-              </div>
-              <button
-                title="Logout"
-                onClick={() => apiLogout().finally(() => logout())}
-                className="rounded-lg p-2 text-white/55 hover:bg-white/10 hover:text-white"
-              >
-                <LogOut className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-        </div>
       </aside>
 
       <main className="min-h-screen pl-72">
@@ -91,7 +71,10 @@ export const GovernanceLayout: React.FC = () => {
             <p className="text-sm font-semibold text-slate-800">{portalLabel}</p>
             <p className="text-xs text-slate-500">Role-based dashboard with inherited access and SoD controls</p>
           </div>
-          <NotificationBell />
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+            <NotificationBell />
+            <UserProfileMenu />
+          </div>
         </header>
         <div className="p-8"><Outlet /></div>
       </main>
