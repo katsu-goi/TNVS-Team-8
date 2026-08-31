@@ -27,10 +27,10 @@ const KpiCard: React.FC<{
   <button
     type="button"
     onClick={onClick}
-    className="group min-h-[124px] w-full rounded-2xl border border-slate-200/90 bg-white p-5 text-left shadow-[0_6px_20px_rgba(15,23,42,0.045)] transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_12px_28px_rgba(15,23,42,0.09)] focus:outline-none focus:ring-2 focus:ring-[#D02F34]/20 focus:ring-offset-2"
+    className="group min-h-[148px] w-full rounded-2xl border border-slate-200 bg-white p-6 text-left shadow-[0_4px_16px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-px hover:border-slate-300 hover:shadow-[0_10px_24px_rgba(15,23,42,0.08)] focus:outline-none focus:ring-2 focus:ring-[#D02F34]/20 focus:ring-offset-2"
   >
-    <div className="mb-3 flex items-start justify-between gap-3">
-      <p className="flex min-w-0 items-center gap-1.5 pt-0.5 text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500 transition-colors group-hover:text-slate-700">
+    <div className="mb-2 flex items-start justify-between gap-4">
+      <p className="flex min-w-0 items-center gap-1.5 pt-0.5 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500 transition-colors group-hover:text-slate-700">
         {label}
         {pulse && (
           <span className="relative flex h-2 w-2">
@@ -39,12 +39,12 @@ const KpiCard: React.FC<{
           </span>
         )}
       </p>
-      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ring-1 ring-inset ring-black/[0.025] ${iconBackground || 'bg-slate-50'}`}>
-        <Icon className={`h-[18px] w-[18px] ${color || 'text-slate-400'} transition-transform duration-200 group-hover:scale-110`} />
+      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ring-black/[0.035] ${iconBackground || 'bg-slate-50'}`}>
+        <Icon className={`h-5 w-5 ${color || 'text-slate-400'} transition-transform duration-200 group-hover:scale-105`} />
       </div>
     </div>
-    <p className="text-[26px] font-bold leading-none tracking-tight text-slate-950">{value}</p>
-    {sub && <p className="mt-2 text-[11px] leading-4 text-slate-500">{sub}</p>}
+    <p className="text-[28px] font-bold leading-none tracking-tight text-slate-950">{value}</p>
+    {sub && <p className="mt-2 text-xs leading-4 text-slate-500">{sub}</p>}
   </button>
 );
 
@@ -152,14 +152,19 @@ export const SysAdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Connected Subsystems" value={kpi ? `${[kpi.facilities.totalFacilities, kpi.visitors.totalVisitors, kpi.documents.totalDocuments, kpi.legal.totalCases, kpi.contracts.totalContracts].filter(v => v > 0).length}` : '0'} icon={Layers} color="text-blue-500" iconBackground="bg-blue-50" sub="Modules with data" onClick={() => navigate('/admin/integrations')} />
-        <KpiCard label="Active Users" value={onlineCount} icon={Users} color={onlineCount > 0 ? 'text-emerald-600' : 'text-slate-400'} iconBackground={onlineCount > 0 ? 'bg-emerald-50' : 'bg-slate-50'} sub={`${onlineCount} users online · Peak today: ${peakToday}`} onClick={() => navigate('/security')} pulse />
-        <KpiCard label="AI Services" value={`${metrics.totalDocuments} docs`} icon={Cpu} color={metrics.totalDocuments > 0 ? 'text-[#D02F34]' : 'text-slate-400'} iconBackground={metrics.totalDocuments > 0 ? 'bg-red-50' : 'bg-slate-50'} sub={`${metrics.totalContracts} contracts`} onClick={() => navigate('/admin/ai-services')} />
-        <KpiCard label="Backup Status" value={backupStatus} icon={Download} color={backupStatus === 'COMPLETED' ? 'text-emerald-600' : 'text-amber-500'} iconBackground={backupStatus === 'COMPLETED' ? 'bg-emerald-50' : 'bg-amber-50'} sub={`Last: ${lastBackupTime}`} onClick={() => navigate('/admin/backup')} />
-        <KpiCard label="Security Alerts" value={metrics.activeAlertsCount} icon={Shield} color={metrics.activeAlertsCount > 0 ? 'text-rose-500' : 'text-emerald-600'} iconBackground={metrics.activeAlertsCount > 0 ? 'bg-rose-50' : 'bg-emerald-50'} sub="Open security alerts" onClick={() => navigate('/security')} />
-        <KpiCard label="Failed Logins" value={metrics.failedLoginAttempts} icon={Shield} color={metrics.failedLoginAttempts > 0 ? 'text-amber-500' : 'text-emerald-600'} iconBackground={metrics.failedLoginAttempts > 0 ? 'bg-amber-50' : 'bg-emerald-50'} sub="Failed authentication attempts" onClick={() => navigate('/security')} />
-        <KpiCard label="Notifications" value={unreadNotifs} icon={Bell} color={unreadNotifs > 0 ? 'text-rose-500' : 'text-violet-500'} iconBackground={unreadNotifs > 0 ? 'bg-rose-50' : 'bg-violet-50'} sub={`${notifications.length} total`} onClick={() => navigate('/admin/notifications')} />
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <KpiCard label="Connected Subsystems" value={kpi ? `${[kpi.facilities.totalFacilities, kpi.visitors.totalVisitors, kpi.documents.totalDocuments, kpi.legal.totalCases, kpi.contracts.totalContracts].filter(v => v > 0).length}` : '0'} icon={Layers} color="text-blue-500" iconBackground="bg-blue-50" sub="Modules with data" onClick={() => navigate('/admin/integrations')} />
+          <KpiCard label="Active Users" value={onlineCount} icon={Users} color={onlineCount > 0 ? 'text-emerald-600' : 'text-slate-400'} iconBackground={onlineCount > 0 ? 'bg-emerald-50' : 'bg-slate-50'} sub={`${onlineCount} users online · Peak today: ${peakToday}`} onClick={() => navigate('/security')} pulse />
+          <KpiCard label="AI Services" value={`${metrics.totalDocuments} docs`} icon={Cpu} color={metrics.totalDocuments > 0 ? 'text-[#D02F34]' : 'text-slate-400'} iconBackground={metrics.totalDocuments > 0 ? 'bg-red-50' : 'bg-slate-50'} sub={`${metrics.totalContracts} contracts`} onClick={() => navigate('/admin/ai-services')} />
+          <KpiCard label="Backup Status" value={backupStatus} icon={Download} color={backupStatus === 'COMPLETED' ? 'text-emerald-600' : 'text-amber-500'} iconBackground={backupStatus === 'COMPLETED' ? 'bg-emerald-50' : 'bg-amber-50'} sub={`Last: ${lastBackupTime}`} onClick={() => navigate('/admin/backup')} />
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <KpiCard label="Security Alerts" value={metrics.activeAlertsCount} icon={Shield} color={metrics.activeAlertsCount > 0 ? 'text-rose-500' : 'text-emerald-600'} iconBackground={metrics.activeAlertsCount > 0 ? 'bg-rose-50' : 'bg-emerald-50'} sub="Open security alerts" onClick={() => navigate('/security')} />
+          <KpiCard label="Failed Logins" value={metrics.failedLoginAttempts} icon={Shield} color={metrics.failedLoginAttempts > 0 ? 'text-amber-500' : 'text-emerald-600'} iconBackground={metrics.failedLoginAttempts > 0 ? 'bg-amber-50' : 'bg-emerald-50'} sub="Failed authentication attempts" onClick={() => navigate('/security')} />
+          <KpiCard label="Notifications" value={unreadNotifs} icon={Bell} color={unreadNotifs > 0 ? 'text-rose-500' : 'text-violet-500'} iconBackground={unreadNotifs > 0 ? 'bg-rose-50' : 'bg-violet-50'} sub={`${notifications.length} total`} onClick={() => navigate('/admin/notifications')} />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
