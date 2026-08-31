@@ -210,7 +210,7 @@ export const AppLayout: React.FC = () => {
    </div>
  <div className="flex shrink-0 items-center space-x-2 sm:space-x-3 relative">
     <NotificationBell />
-    <UserProfileMenu />
+    <UserProfileMenu roleLabelOverride="System Admin" />
     </div>
     </header>
 

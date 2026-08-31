@@ -44,9 +44,10 @@ function initialsFor(name: string): string {
 type UserProfileMenuProps = {
   profilePath?: string;
   settingsPath?: string;
+  roleLabelOverride?: string;
 };
 
-export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({ profilePath, settingsPath }) => {
+export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({ profilePath, settingsPath, roleLabelOverride }) => {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -61,7 +62,7 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({ profilePath, s
     return composed || user?.email || 'User';
   }, [user]);
   const primaryRole = user?.assignedRoles?.[0] || user?.roles?.[0];
-  const roleLabel = formatRoleLabel(primaryRole);
+  const roleLabel = roleLabelOverride || formatRoleLabel(primaryRole);
   const initials = initialsFor(displayName);
 
   useEffect(() => {
