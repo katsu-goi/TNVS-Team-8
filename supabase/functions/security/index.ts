@@ -239,6 +239,30 @@ const THREAT_TYPES = [
   "SQL_INJECTION", "XSS", "PORT_SCAN", "FAILED_LOGIN", "RATE_LIMIT", "ACCOUNT_LOCKED", "BLOCKED_IP",
 ];
 
+const SECURITY_THREAT_ACTIONS = [
+  "LOGIN_FAILED", "FAILED_LOGIN", "AUTH_FAILURE",
+  "LOGIN_BLOCKED", "ACCOUNT_LOCKOUT", "ACCOUNT_LOCKED",
+  "RATE_LIMIT_EXCEEDED", "RATE_LIMIT",
+  "SQL_INJECTION", "SQLI", "XSS", "PORT_SCAN", "BLOCKED_IP",
+];
+
+const GEO_LOOKUP_LIMIT = 12;
+const GEO_LOOKUP_TIMEOUT_MS = 3_000;
+
+type ThreatGeo = {
+  country: string | null;
+  countryCode: string | null;
+  region: string | null;
+  city: string | null;
+  latitude: number;
+  longitude: number;
+  timezone: string | null;
+  isp: string | null;
+  asn: string | null;
+  accuracyRadiusKm: number | null;
+  confidence: number | null;
+};
+
 // Synthetic public IPs with plausible geolocation used by the admin Test
 // Security Event action. The map needs public addresses the geolocation layer
 // can place, so demo sources are drawn from this pool.
@@ -270,12 +294,278 @@ function normalizeSeverity(value: string): string {
   return v in SEVERITY_ORDER ? v : "LOW";
 }
 
+function securityLogThreatType(actionValue: unknown): string | null {
+  const action = String(actionValue ?? "").trim().toUpperCase();
+  if (["LOGIN_FAILED", "FAILED_LOGIN", "AUTH_FAILURE"].includes(action)) return "FAILED_LOGIN";
+  if (["LOGIN_BLOCKED", "ACCOUNT_LOCKOUT", "ACCOUNT_LOCKED"].includes(action)) return "ACCOUNT_LOCKED";
+  if (["RATE_LIMIT_EXCEEDED", "RATE_LIMIT"].includes(action)) return "RATE_LIMIT";
+  if (["SQL_INJECTION", "SQLI"].includes(action)) return "SQL_INJECTION";
+  if (action === "XSS") return "XSS";
+  if (action === "PORT_SCAN") return "PORT_SCAN";
+  if (action === "BLOCKED_IP") return "BLOCKED_IP";
+  return null;
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function optionalNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function parseStoredGeo(value: unknown): Partial<ThreatGeo> | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    const latitude = optionalNumber(parsed.latitude ?? parsed.lat);
+    const longitude = optionalNumber(parsed.longitude ?? parsed.lon);
+    if (latitude === null || longitude === null) return null;
+    return {
+      country: optionalString(parsed.country),
+      countryCode: optionalString(parsed.countryCode),
+      region: optionalString(parsed.region),
+      city: optionalString(parsed.city),
+      latitude,
+      longitude,
+      timezone: optionalString(parsed.timezone),
+      isp: optionalString(parsed.isp),
+      asn: optionalString(parsed.asn),
+      accuracyRadiusKm: optionalNumber(parsed.accuracyRadiusKm),
+      confidence: optionalNumber(parsed.confidence),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function securityLogToThreatRow(row: Record<string, unknown>): Record<string, unknown> | null {
+  const threatType = securityLogThreatType(row.action);
+  const ip = optionalString(row.ip_address);
+  if (!threatType || !ip) return null;
+  const timestamp = String(row.timestamp ?? row.created_at ?? new Date().toISOString());
+  const geo = parseStoredGeo(row.geo_location);
+  const blocked = threatType === "ACCOUNT_LOCKED" || threatType === "BLOCKED_IP";
+  return {
+    source: "SECURITY_LOGS",
+    source_log_id: row.id,
+    ip,
+    country: geo?.country ?? null,
+    flag: geo?.countryCode ?? null,
+    region: geo?.region ?? null,
+    city: geo?.city ?? null,
+    latitude: geo?.latitude ?? null,
+    longitude: geo?.longitude ?? null,
+    timezone: geo?.timezone ?? null,
+    isp: geo?.isp ?? null,
+    asn: geo?.asn ?? null,
+    accuracy_radius_km: geo?.accuracyRadiusKm ?? null,
+    confidence: geo?.confidence ?? null,
+    threat_type: threatType,
+    severity: normalizeSeverity(String(row.risk_level ?? "LOW")),
+    requests: 1,
+    status: blocked ? "BLOCKED" : "DETECTED",
+    created_at: timestamp,
+    first_seen: timestamp,
+    last_seen: timestamp,
+  };
+}
+
+function blockedIpToThreatRow(row: Record<string, unknown>, fromIso: string): Record<string, unknown> | null {
+  const ip = optionalString(row.ip_address);
+  const timestamp = String(row.blocked_at ?? row.created_at ?? "");
+  if (!ip || !timestamp || timestamp < fromIso) return null;
+  return {
+    source: "BLOCKED_IPS",
+    ip,
+    country: null,
+    flag: null,
+    region: null,
+    city: null,
+    latitude: null,
+    longitude: null,
+    timezone: null,
+    isp: null,
+    asn: null,
+    accuracy_radius_km: null,
+    confidence: null,
+    threat_type: "BLOCKED_IP",
+    severity: "CRITICAL",
+    requests: Number(row.attempts_count ?? 1),
+    status: "BLOCKED",
+    created_at: timestamp,
+    first_seen: timestamp,
+    last_seen: timestamp,
+  };
+}
+
+async function lookupIpGeolocation(ip: string): Promise<ThreatGeo | null> {
+  if (isPrivateOrLocal(ip)) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GEO_LOOKUP_TIMEOUT_MS);
+  try {
+    const response = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`, {
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const payload = await response.json() as Record<string, unknown>;
+    if (payload.success !== true) return null;
+    const latitude = optionalNumber(payload.latitude);
+    const longitude = optionalNumber(payload.longitude);
+    if (latitude === null || longitude === null) return null;
+    const timezone = payload.timezone && typeof payload.timezone === "object"
+      ? optionalString((payload.timezone as Record<string, unknown>).id)
+      : null;
+    const connection = payload.connection && typeof payload.connection === "object"
+      ? payload.connection as Record<string, unknown>
+      : {};
+    return {
+      country: optionalString(payload.country),
+      countryCode: optionalString(payload.country_code),
+      region: optionalString(payload.region),
+      city: optionalString(payload.city),
+      latitude,
+      longitude,
+      timezone,
+      isp: optionalString(connection.isp),
+      asn: connection.asn === null || connection.asn === undefined ? null : String(connection.asn),
+      accuracyRadiusKm: null,
+      confidence: null,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function applyGeo(row: Record<string, unknown>, geo: ThreatGeo): void {
+  row.country = geo.country;
+  row.flag = geo.countryCode;
+  row.region = geo.region;
+  row.city = geo.city;
+  row.latitude = geo.latitude;
+  row.longitude = geo.longitude;
+  row.timezone = geo.timezone;
+  row.isp = geo.isp;
+  row.asn = geo.asn;
+  row.accuracy_radius_km = geo.accuracyRadiusKm;
+  row.confidence = geo.confidence;
+}
+
+async function cacheGeo(ip: string, geo: ThreatGeo, rows: Record<string, unknown>[]): Promise<void> {
+  const storedGeo: Record<string, unknown> = {
+    country: geo.country,
+    countryCode: geo.countryCode,
+    region: geo.region,
+    city: geo.city,
+    latitude: geo.latitude,
+    longitude: geo.longitude,
+    timezone: geo.timezone,
+    isp: geo.isp,
+    asn: geo.asn,
+  };
+  let compactGeo = JSON.stringify(storedGeo);
+  for (const key of ["isp", "asn", "region", "timezone", "city", "country"] as const) {
+    if (compactGeo.length <= 240) break;
+    delete storedGeo[key];
+    compactGeo = JSON.stringify(storedGeo);
+  }
+  const securityLogIds = rows
+    .filter((row) => row.source === "SECURITY_LOGS" && row.source_log_id)
+    .map((row) => String(row.source_log_id));
+  const writes: PromiseLike<unknown>[] = [
+    db.from("ip_threats").update({
+      country: geo.country,
+      city: geo.city,
+      latitude: geo.latitude,
+      longitude: geo.longitude,
+      isp: geo.isp,
+      asn: geo.asn,
+      flag: geo.countryCode,
+    }).eq("ip", ip).is("latitude", null),
+  ];
+  if (securityLogIds.length) {
+    writes.push(db.from("security_logs").update({ geo_location: compactGeo }).in("id", securityLogIds));
+  }
+  await Promise.allSettled(writes);
+}
+
+async function enrichThreatRows(rows: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+  const rowsByIp = new Map<string, Record<string, unknown>[]>();
+  for (const row of rows) {
+    const ip = String(row.ip ?? "");
+    if (!ip) continue;
+    const grouped = rowsByIp.get(ip) ?? [];
+    grouped.push(row);
+    rowsByIp.set(ip, grouped);
+  }
+
+  const unresolved: string[] = [];
+  for (const [ip, ipRows] of rowsByIp) {
+    const resolvedRow = ipRows.find((row) => optionalNumber(row.latitude) !== null && optionalNumber(row.longitude) !== null);
+    if (resolvedRow) {
+      const geo: ThreatGeo = {
+        country: optionalString(resolvedRow.country),
+        countryCode: optionalString(resolvedRow.flag),
+        region: optionalString(resolvedRow.region),
+        city: optionalString(resolvedRow.city),
+        latitude: Number(resolvedRow.latitude),
+        longitude: Number(resolvedRow.longitude),
+        timezone: optionalString(resolvedRow.timezone),
+        isp: optionalString(resolvedRow.isp),
+        asn: optionalString(resolvedRow.asn),
+        accuracyRadiusKm: optionalNumber(resolvedRow.accuracy_radius_km),
+        confidence: optionalNumber(resolvedRow.confidence),
+      };
+      ipRows.forEach((row) => applyGeo(row, geo));
+    } else if (!isPrivateOrLocal(ip) && unresolved.length < GEO_LOOKUP_LIMIT) {
+      unresolved.push(ip);
+    }
+  }
+
+  await Promise.all(unresolved.map(async (ip) => {
+    const geo = await lookupIpGeolocation(ip);
+    if (!geo) return;
+    const ipRows = rowsByIp.get(ip) ?? [];
+    ipRows.forEach((row) => applyGeo(row, geo));
+    await cacheGeo(ip, geo, ipRows);
+  }));
+  return rows;
+}
+
 async function loadThreatRows(fromIso: string): Promise<Record<string, unknown>[]> {
-  const { data, error } = await db.from("ip_threats").select("*")
-    .gte("created_at", fromIso)
-    .order("created_at", { ascending: false });
-  if (error) throw new Error(`ip_threats load failed: ${error.message}`);
-  return data ?? [];
+  const [storedThreats, securityLogs, blockedIps] = await Promise.all([
+    db.from("ip_threats").select("*").gte("created_at", fromIso).order("created_at", { ascending: false }),
+    db.from("security_logs")
+      .select("id,timestamp,created_at,action,status,risk_level,ip_address,geo_location")
+      .in("action", SECURITY_THREAT_ACTIONS)
+      .gte("timestamp", fromIso)
+      .order("timestamp", { ascending: false }),
+    db.from("blocked_ips").select("*").eq("status", "ACTIVE"),
+  ]);
+  if (storedThreats.error) throw new Error(`ip_threats load failed: ${storedThreats.error.message}`);
+  if (securityLogs.error) throw new Error(`security_logs threat load failed: ${securityLogs.error.message}`);
+  if (blockedIps.error) throw new Error(`blocked_ips threat load failed: ${blockedIps.error.message}`);
+
+  const securityThreatRows = (securityLogs.data ?? [])
+    .map((row) => securityLogToThreatRow(row as Record<string, unknown>))
+    .filter((row): row is Record<string, unknown> => row !== null);
+  const blockedThreatRows = (blockedIps.data ?? [])
+    .map((row) => blockedIpToThreatRow(row as Record<string, unknown>, fromIso))
+    .filter((row): row is Record<string, unknown> => row !== null);
+  const rows: Record<string, unknown>[] = [
+    ...(storedThreats.data ?? []).map((row) => ({ ...row, source: "IP_THREATS" })),
+    ...securityThreatRows,
+    ...blockedThreatRows,
+  ];
+  return enrichThreatRows(rows);
 }
 
 function aggregateThreats(rows: Record<string, unknown>[]): Record<string, unknown>[] {
@@ -296,6 +586,7 @@ function aggregateThreats(rows: Record<string, unknown>[]): Record<string, unkno
     let eventCount = 0;
     let firstSeen: string | null = null;
     let lastSeen: string | null = null;
+    const sources = new Set<string>();
     for (const r of rs) {
       const type = normalizeThreatType(String(r.threat_type ?? "FAILED_LOGIN"));
       const sevStr = normalizeSeverity(String(r.severity ?? "LOW"));
@@ -313,20 +604,22 @@ function aggregateThreats(rows: Record<string, unknown>[]): Record<string, unkno
       if (fs && (!firstSeen || fs < firstSeen)) firstSeen = fs;
       if (ls && (!lastSeen || ls > lastSeen)) lastSeen = ls;
       if (String(r.status ?? "").toUpperCase() === "BLOCKED") status = "BLOCKED";
+      sources.add(String(r.source ?? "IP_THREATS"));
     }
+    const geoRow = rs.find((r) => optionalNumber(r.latitude) !== null && optionalNumber(r.longitude) !== null) ?? rs[0];
     out.push({
       ip,
-      country: rs[0].country ? String(rs[0].country) : null,
-      countryCode: rs[0].flag ? String(rs[0].flag) : null,
-      region: null,
-      city: rs[0].city ? String(rs[0].city) : null,
-      latitude: typeof rs[0].latitude === "number" ? rs[0].latitude : null,
-      longitude: typeof rs[0].longitude === "number" ? rs[0].longitude : null,
-      timezone: null,
-      isp: rs[0].isp ? String(rs[0].isp) : null,
-      asn: rs[0].asn ? String(rs[0].asn) : null,
-      accuracyRadiusKm: null,
-      confidence: null,
+      country: optionalString(geoRow.country),
+      countryCode: optionalString(geoRow.flag),
+      region: optionalString(geoRow.region),
+      city: optionalString(geoRow.city),
+      latitude: optionalNumber(geoRow.latitude),
+      longitude: optionalNumber(geoRow.longitude),
+      timezone: optionalString(geoRow.timezone),
+      isp: optionalString(geoRow.isp),
+      asn: optionalString(geoRow.asn),
+      accuracyRadiusKm: optionalNumber(geoRow.accuracy_radius_km),
+      confidence: optionalNumber(geoRow.confidence),
       ipVersion: ip.includes(":") ? 6 : 4,
       privateIp: isPrivateOrLocal(ip),
       threatTypes: [...types.entries()].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count),
@@ -336,7 +629,7 @@ function aggregateThreats(rows: Record<string, unknown>[]): Record<string, unkno
       status,
       firstSeen,
       lastSeen,
-      source: "IP_THREATS",
+      source: [...sources].join(","),
     });
   }
   return out;
@@ -404,6 +697,7 @@ async function loadRecentLogs(limit: number): Promise<Record<string, unknown>[]>
   if (error) throw new Error(`security logs load failed: ${error.message}`);
   return (data ?? []).map((r) => {
     const ip = String((r as Record<string, unknown>).ip_address ?? "0.0.0.0");
+    const geo = parseStoredGeo((r as Record<string, unknown>).geo_location);
     return {
       timestamp: String((r as Record<string, unknown>).timestamp ?? (r as Record<string, unknown>).created_at ?? ""),
       action: String((r as Record<string, unknown>).action ?? "AUDIT"),
@@ -414,16 +708,16 @@ async function loadRecentLogs(limit: number): Promise<Record<string, unknown>[]>
       module: String((r as Record<string, unknown>).module ?? "SECURITY"),
       status: String((r as Record<string, unknown>).status ?? "SUCCESS"),
       reason: String((r as Record<string, unknown>).reason ?? "Security log entry"),
-      country: null,
-      countryCode: null,
-      city: null,
+      country: geo?.country ?? null,
+      countryCode: geo?.countryCode ?? null,
+      city: geo?.city ?? null,
       privateIp: isPrivateOrLocal(ip),
-      latitude: null,
-      longitude: null,
-      accuracyRadiusKm: null,
-      confidence: null,
-      isp: null,
-      asn: null,
+      latitude: geo?.latitude ?? null,
+      longitude: geo?.longitude ?? null,
+      accuracyRadiusKm: geo?.accuracyRadiusKm ?? null,
+      confidence: geo?.confidence ?? null,
+      isp: geo?.isp ?? null,
+      asn: geo?.asn ?? null,
     };
   });
 }
@@ -459,6 +753,7 @@ async function handleThreatStats(_ctx: AuthContext | null, req: Request, _body: 
 
 async function handleThreatDiagnostics(_ctx: AuthContext | null, req: Request, _body: unknown, _p: RouteParams) {
   const resolved = resolveClientIp(req);
+  const geolocation = await lookupIpGeolocation(resolved.ip);
   const chain = [
     `x-forwarded-for: ${req.headers.get("x-forwarded-for") ?? "absent"}`,
     `x-real-ip: ${req.headers.get("x-real-ip") ?? "absent"}`,
@@ -469,9 +764,9 @@ async function handleThreatDiagnostics(_ctx: AuthContext | null, req: Request, _
     clientIp: resolved.ip,
     ipVersion: resolved.ipVersion,
     privateIp: resolved.isPrivate,
-    geoProvider: "offline-approximation",
-    geoResolved: false,
-    geolocation: null,
+    geoProvider: "ipwho.is-https",
+    geoResolved: geolocation !== null,
+    geolocation,
     broadcastWindow: "24h",
     trustedHeaderChain: chain,
   });

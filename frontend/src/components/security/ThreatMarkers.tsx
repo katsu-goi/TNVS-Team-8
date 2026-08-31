@@ -9,6 +9,7 @@ import {
   getMarkerColor,
   getMarkerRadius,
   MARKER_COLORS,
+  matchesThreatFilter,
   THREAT_TYPE_LABEL,
 } from '../../types/threatMap';
 
@@ -61,8 +62,13 @@ const ThreatMarkers: React.FC<{
     const markers: L.Marker[] = [];
 
     threatEntries.forEach((t) => {
-      if (filter !== 'ALL' && t.primaryThreat !== filter) return;
-      const marker = buildThreatMarker(t);
+      if (!matchesThreatFilter(t, filter)) return;
+      // In a specific classification view, color the shared IP vector for the
+      // selected classification even when a higher-risk event is its overall primary.
+      const displayedThreat = filter !== 'ALL' && filter !== 'TRUSTED'
+        ? { ...t, primaryThreat: filter }
+        : t;
+      const marker = buildThreatMarker(displayedThreat);
       if (marker) markers.push(marker);
     });
 

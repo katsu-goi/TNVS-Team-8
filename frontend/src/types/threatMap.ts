@@ -165,6 +165,14 @@ export const THREAT_WINDOW_LABEL: Record<ThreatWindow, string> = {
   '7d': 'Last 7 days',
 };
 
+/** Matches a threat against the selected map filter, including secondary classifications. */
+export function matchesThreatFilter(threat: IpThreatEntry, filter: ThreatFilterType): boolean {
+  if (filter === 'ALL') return true;
+  if (filter === 'TRUSTED') return false;
+  return threat.primaryThreat === filter
+    || threat.threatTypes.some((entry) => entry.type === filter);
+}
+
 /**
  * Marker color mapping:
  * 🔴 Red = Critical attack sources (SQL Injection, XSS, Blocked IP, Account Lockout)

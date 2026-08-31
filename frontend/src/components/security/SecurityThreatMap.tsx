@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import ThreatMarkers from './ThreatMarkers';
 import type { ThreatFilterType, ThreatWindow } from '../../types/threatMap';
-import { THREAT_TYPE_LABEL, THREAT_WINDOWS, THREAT_WINDOW_LABEL } from '../../types/threatMap';
+import { matchesThreatFilter, THREAT_TYPE_LABEL, THREAT_WINDOWS, THREAT_WINDOW_LABEL } from '../../types/threatMap';
 
 const MapResizeHandler: React.FC = () => {
   const map = useMap();
@@ -95,11 +95,16 @@ export const SecurityThreatMap: React.FC<{
     'FAILED_LOGIN', 'PORT_SCAN', 'RATE_LIMIT', 'TRUSTED',
   ];
 
-  const hasMarkers = threats.some((t) => t.latitude != null && t.longitude != null)
-    || trustedSessions.some((s) => s.latitude != null && s.longitude != null);
-
-  const geolocatedCount = threats.filter((t) => t.latitude != null && t.longitude != null).length;
-  const unmappedCount = threats.length - geolocatedCount;
+  const matchingThreats = threats.filter((threat) => matchesThreatFilter(threat, filter));
+  const matchingTrustedSessions = filter === 'ALL' || filter === 'TRUSTED' ? trustedSessions : [];
+  const geolocatedThreatCount = matchingThreats.filter((threat) => threat.latitude != null && threat.longitude != null).length;
+  const geolocatedTrustedCount = matchingTrustedSessions.filter((session) => session.latitude != null && session.longitude != null).length;
+  const geolocatedCount = geolocatedThreatCount + geolocatedTrustedCount;
+  const matchingSourceCount = matchingThreats.length + matchingTrustedSessions.length;
+  const hasMarkers = geolocatedCount > 0;
+  const unmappedCount = filter === 'TRUSTED'
+    ? matchingTrustedSessions.length - geolocatedTrustedCount
+    : matchingThreats.length - geolocatedThreatCount;
 
   return (
     <div className="card-stat overflow-hidden relative" style={{ minHeight: '540px' }}>
@@ -149,7 +154,7 @@ export const SecurityThreatMap: React.FC<{
           </div>
           <span
             className="px-2 py-1 rounded-lg bg-slate-100 text-slate-600 font-mono text-xs font-bold"
-            title={`${threats.length} threat IPs total · ${geolocatedCount} mapped on the map. IPs with LOCAL/PRIVATE sources or unknown locations cannot be mapped to a country.`}
+            title={`${matchingSourceCount} matching security sources · ${geolocatedCount} mapped. LOCAL/PRIVATE sources and unresolved public IPs cannot be placed geographically.`}
           >
             {geolocatedCount} VECTORS
           </span>
@@ -203,11 +208,10 @@ export const SecurityThreatMap: React.FC<{
           <div className="absolute inset-0 z-[1002] flex items-center justify-center pointer-events-none">
             <div className="bg-white/95 border border-slate-200 rounded-2xl shadow-xl px-6 py-5 text-center pointer-events-auto max-w-md">
               <ShieldAlert className="w-8 h-8 mx-auto text-amber-500 mb-2" />
-              <p className="text-sm font-bold text-slate-800">Threats present but not mappable</p>
+              <p className="text-sm font-bold text-slate-800">Security sources present but not mappable</p>
               <p className="text-xs text-slate-500 mt-1">
-                {unmappedCount} threat {unmappedCount === 1 ? 'source has' : 'sources have'} LOCAL/PRIVATE IP
-                addresses or unresolved locations. Geographic mapping requires a public IP that the
-                geolocation provider can place.
+                {unmappedCount} matching security {unmappedCount === 1 ? 'source cannot' : 'sources cannot'} be placed
+                because the IP is LOCAL/PRIVATE or its public location could not be resolved.
               </p>
             </div>
           </div>
