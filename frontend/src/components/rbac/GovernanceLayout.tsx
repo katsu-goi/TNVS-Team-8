@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, Scale, ShieldCheck, Database, Building2, LockKeyhole } from 'lucide-react';
+import { LayoutDashboard, Scale, ShieldCheck, Building2, LockKeyhole } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { hasPermission, hasRole, useAuthStore } from '../../stores/authStore';
 import { useUserHeartbeat } from '../../hooks/useUserHeartbeat';
@@ -33,10 +33,10 @@ export const GovernanceLayout: React.FC = () => {
   const portalLabel = dashboardLabels[user?.dashboardKey || ''] || 'Governance';
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
-      <aside className="fixed inset-y-0 left-0 z-30 flex w-72 flex-col bg-[#D02F34] shadow-2xl">
-        <div className="flex items-center gap-3 border-b border-white/10 bg-[#A9252A] p-5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15">
-            <Database className="h-5 w-5 text-white" />
+      <aside className="hirna-sidebar fixed inset-y-0 left-0 z-30 flex w-72 flex-col overflow-hidden shadow-2xl">
+        <div className="hirna-sidebar-header flex items-center gap-3 p-5">
+          <div className="hirna-sidebar-logo flex items-center justify-center overflow-hidden">
+            <img src="/hirna-logo.png" alt="Hirna Logo" className="h-full w-full object-contain" draggable={false} />
           </div>
           <div className="min-w-0">
             <h1 className="truncate text-sm font-bold text-white">Hirna Portal</h1>
@@ -44,7 +44,7 @@ export const GovernanceLayout: React.FC = () => {
           </div>
         </div>
 
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+        <nav className="hirna-sidebar-nav flex flex-1 flex-col overflow-y-auto px-3 py-4">
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = item.path === '/governance'
@@ -54,11 +54,11 @@ export const GovernanceLayout: React.FC = () => {
               <button
                 key={item.path}
                 onClick={() => navigate(item.path)}
-                className={`flex w-full items-center gap-3 rounded-full px-4 py-2.5 text-left text-sm font-medium transition-colors ${
-                  active ? 'bg-[#A9252A] text-white' : 'text-white/75 hover:bg-white/10 hover:text-white'
+                className={`hirna-nav-item flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm font-medium ${
+                  active ? 'hirna-nav-item-active font-semibold' : ''
                 }`}
               >
-                <Icon className="h-[18px] w-[18px]" />
+                <Icon className="hirna-nav-icon h-[18px] w-[18px]" />
                 <span>{item.label}</span>
               </button>
             );
