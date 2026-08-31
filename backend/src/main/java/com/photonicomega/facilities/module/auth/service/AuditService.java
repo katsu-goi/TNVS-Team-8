@@ -41,12 +41,19 @@ public class AuditService {
                     .description(description)
                     .ipAddress(ipAddress)
                     .severity(severity != null ? severity : AuditSeverity.INFO)
-                    .status("SUCCESS")
+                    .status(auditStatus(action))
                     .build();
             auditLogRepository.save(auditLog);
         } catch (Exception e) {
             log.error("Failed to persist audit log: {}", e.getMessage());
         }
+    }
+
+    private String auditStatus(String action) {
+        if (action != null && (action.contains("FAILED") || action.contains("BLOCKED") || action.contains("LOCKED"))) {
+            return "FAILED";
+        }
+        return "SUCCESS";
     }
 
     @Async

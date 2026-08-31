@@ -61,7 +61,7 @@ public class SecurityAuditInterceptor implements HandlerInterceptor {
 
             // Decide Module, Action, and Risk Level dynamically
             SecurityModule module = resolveModule(url);
-            String action = resolveAction(method, url);
+            String action = resolveAction(method, url, status);
             RiskLevel risk = resolveRiskLevel(status, method, url);
 
             // Persist cached geolocation (non-blocking, cache-only) with the log
@@ -207,14 +207,14 @@ public class SecurityAuditInterceptor implements HandlerInterceptor {
         return SecurityModule.API_GATEWAY;
     }
 
-    private String resolveAction(String method, String url) {
+    private String resolveAction(String method, String url, int status) {
         String prefix = "READ";
         if ("POST".equalsIgnoreCase(method)) prefix = "CREATE";
         if ("PUT".equalsIgnoreCase(method) || "PATCH".equalsIgnoreCase(method)) prefix = "UPDATE";
         if ("DELETE".equalsIgnoreCase(method)) prefix = "DELETE";
 
         String target = "RESOURCE";
-        if (url.contains("/auth/login")) return "LOGIN_SUCCESS";
+        if (url.contains("/auth/login")) return status >= 400 ? "LOGIN_FAILED" : "LOGIN_SUCCESS";
         if (url.contains("/auth/logout")) return "LOGOUT";
         if (url.contains("/facilities")) target = "FACILITY_ROOM";
         if (url.contains("/visitor")) target = "VISITOR_RECORD";

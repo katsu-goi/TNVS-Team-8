@@ -44,7 +44,7 @@ export async function consumeRateLimit(
   // Align windows to spec.windowSeconds boundaries for predictable expiry.
   const windowStart = Math.floor(nowSec / spec.windowSeconds) * spec.windowSeconds;
 
-  const { error } = await db.rpc("consume_rate_limit_token", {
+  const { data, error } = await db.rpc("consume_rate_limit_token", {
     p_key: limitKey,
     p_window_start: windowStart,
     p_window_seconds: spec.windowSeconds,
@@ -58,5 +58,5 @@ export async function consumeRateLimit(
     console.error("consume_rate_limit_token failed:", error.message);
     return false;
   }
-  return true;
+  return data === true;
 }

@@ -60,7 +60,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(LoginFailedException.class)
     public ResponseEntity<ApiResponse<LoginLockoutInfo>> handleLoginFailed(LoginFailedException ex) {
         LoginLockoutInfo info = ex.getInfo();
-        boolean locked = info.isPermanentlyLocked() || info.getLockSecondsRemaining() > 0;
+        boolean locked = info.getLockSecondsRemaining() > 0;
         HttpStatus status = locked ? HttpStatus.LOCKED : HttpStatus.UNAUTHORIZED;
         return ResponseEntity.status(status)
                 .body(ApiResponse.<LoginLockoutInfo>builder()
@@ -74,7 +74,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BadCredentialsException.class)
     public ResponseEntity<ApiResponse<Void>> handleBadCredentials(HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                .body(ApiResponse.failure("Invalid email or password", "INVALID_CREDENTIALS"));
+                .body(ApiResponse.failure("Incorrect email or password.", "INVALID_CREDENTIALS"));
     }
 
     @ExceptionHandler(LockedException.class)

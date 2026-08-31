@@ -84,11 +84,8 @@ export const HRAssistancePage: React.FC = () => {
         <div className="w-full max-h-[92vh] overflow-y-auto scrollbar-none" style={{ maxWidth: '445px' }}>
           <div className="rounded-[28px] p-8" style={{ background: 'rgba(255,255,255,0.15)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', border: '1px solid rgba(255,255,255,0.25)', boxShadow: '0 25px 70px rgba(0,0,0,0.35)' }}>
             <div className="flex flex-col items-center text-center mb-5">
-              <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center shadow-[0_0_20px_rgba(255,255,255,0.2)] mb-3">
-                <svg className="w-6 h-6 text-[#FFC629]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                  <polyline points="22 4 12 14.01 9 11.01" />
-                </svg>
+              <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center shadow-[0_0_20px_rgba(255,255,255,0.2)] mb-3 overflow-hidden">
+                <img src="/hirna-logo.png" alt="Hirna Logo" className="w-full h-full object-contain" draggable={false} />
               </div>
               <h1 className="text-lg font-bold text-white tracking-tight">Hirna Portal</h1>
               <p className="text-[10px] text-[#FFC629] font-medium tracking-widest uppercase">Enterprise</p>

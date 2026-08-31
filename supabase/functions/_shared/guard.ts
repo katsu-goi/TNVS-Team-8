@@ -4,6 +4,8 @@ import { corsHeaders, isPreflight, jsonResponse, preflightResponse } from "./cor
 import { fail } from "./envelope.ts";
 import { assertEnv } from "./config.ts";
 import { resolveClientIp } from "./ip.ts";
+import { consumeRateLimit, tierFor } from "./rate-limit.ts";
+import { writeSecurityLog } from "./lockout.ts";
 
 export type AuthContext = {
   user: AuthUser;
@@ -177,6 +179,25 @@ export function createHandler(routes: Route[], options: RouterOptions = {}): (re
     const route = routes.find((r) => r.method === req.method && matchPath(path, r.path));
     if (!route) return notFoundResponse(req);
     const params = matchPath(path, route.path) ?? {};
+
+    // Database-backed IP/path protection is independent of per-account
+    // restrictions and is shared by every Edge Function instance.
+    if (path.includes("/auth/login")) {
+      const clientIp = resolveClientIp(req).ip;
+      const limit = tierFor("guest", path);
+      const withinLimit = await consumeRateLimit(`ip:${clientIp}:${path}:${limit.name}`, limit.spec);
+      if (!withinLimit) {
+        await writeSecurityLog(null, "RATE_LIMIT_EXCEEDED", "FAILED", "HIGH", clientIp,
+          req.headers.get("User-Agent"), `HTTP 429 on ${path}`);
+        const headers = corsHeaders();
+        headers.set("Retry-After", String(limit.spec.windowSeconds));
+        return jsonResponse(
+          fail("Too many requests. Please try again shortly.", "RATE_LIMIT_EXCEEDED"),
+          429,
+          headers,
+        );
+      }
+    }
 
     let body: unknown = null;
     if (["POST", "PUT", "PATCH"].includes(req.method)) {

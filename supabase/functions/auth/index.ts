@@ -11,8 +11,13 @@ import { verifyPassword, hashPassword } from "../_shared/password.ts";
 import { signAccessToken, signRefreshToken } from "../_shared/jwt.ts";
 import { adminDb } from "../_shared/db.ts";
 import {
-  currentLockoutInfo,
+  getLoginRestriction,
+  identifierReference,
+  safeIdentifier,
   recordFailedAttempt,
+  failureMessage,
+  publicLockoutData,
+  logFailedLogin,
   writeAudit,
   writeLoginHistory,
   writeSecurityLog,
@@ -38,6 +43,8 @@ import { resolveClientIp } from "../_shared/ip.ts";
 import { relevantRoleConflicts } from "../_shared/rbac.ts";
 
 const ACCESS_TTL_SECONDS = 900;
+// A valid cost-12 BCrypt hash used only to equalize unknown-account password work.
+const DUMMY_PASSWORD_HASH = "$2a$12$R9h/cIPz0gi.URNNX3kh2OPST9/PgBkqquzi.Ss7KIUgO2t0jWMUW";
 
 type Ctx = { ip: string; userAgent: string | null };
 
@@ -45,10 +52,13 @@ function requestCtx(ctx: AuthContext | null, req: Request): Ctx {
   return { ip: resolveClientIp(req).ip, userAgent: req.headers.get("User-Agent") };
 }
 
-function lockoutResponse(info: LockoutInfo, message: string, errorCode: string) {
-  const locked = info.permanentlyLocked || info.lockSecondsRemaining > 0;
+function lockoutResponse(info: LockoutInfo) {
+  const locked = info.lockSecondsRemaining > 0;
   return jsonResponse(
-    { ...fail(message, errorCode), data: info },
+    {
+      ...fail(failureMessage(info), locked ? "ACCOUNT_TEMP_LOCKED" : "INVALID_CREDENTIALS"),
+      data: publicLockoutData(info),
+    },
     locked ? 423 : 401,
   );
 }
@@ -96,46 +106,20 @@ async function handleLogin(_ctx: AuthContext | null, req: Request, body: unknown
   }
 
   const user = await findUserByEmail(email);
-
-  if (user) {
-    const lockout = currentLockoutInfo(user, new Date());
-    if (lockout) {
-      const message = lockout.permanentlyLocked
-        ? "Your account has been temporarily locked due to multiple failed login attempts."
-        : `Too many failed login attempts. Please wait ${lockout.lockSecondsRemaining} seconds before trying again.`;
-      return lockoutResponse(
-        lockout,
-        message,
-        lockout.permanentlyLocked ? "ACCOUNT_LOCKED" : "ACCOUNT_TEMP_LOCKED",
-      );
-    }
+  const reference = await identifierReference(email);
+  const identifier = user?.row.email ?? safeIdentifier(reference);
+  const lockout = await getLoginRestriction(email, reference);
+  if (lockout.lockSecondsRemaining > 0) {
+    await logFailedLogin(user, identifier, lockout, ctx.ip, ctx.userAgent ?? "", true);
+    return lockoutResponse(lockout);
   }
 
-  const passwordOk = user ? await verifyPassword(password, user.row.password_hash) : false;
+  const passwordOk = await verifyPassword(password, user?.row.password_hash ?? DUMMY_PASSWORD_HASH);
 
   if (!user || !passwordOk) {
-    if (user) {
-      const info = await recordFailedAttempt(user, ctx.ip, ctx.userAgent ?? "");
-      await writeLoginHistory(user.row.email, user.row.id, ctx.ip, "FAILED", "INVALID_CREDENTIALS", ctx.userAgent ?? "");
-      await writeSecurityLog(user, "LOGIN_FAILED", "FAILED", "MEDIUM", ctx.ip, ctx.userAgent,
-        `Failed login attempt ${info.failedAttempts}/3`);
-      if (info.permanentlyLocked) {
-        return lockoutResponse(
-          info,
-          "Your account has been temporarily locked due to multiple failed login attempts.",
-          "ACCOUNT_LOCKED",
-        );
-      }
-      if (info.lockSecondsRemaining > 0) {
-        return lockoutResponse(
-          info,
-          `Too many failed login attempts. Please wait ${info.lockSecondsRemaining} seconds before trying again.`,
-          "ACCOUNT_TEMP_LOCKED",
-        );
-      }
-      return lockoutResponse(info, "Invalid email or password", "INVALID_CREDENTIALS");
-    }
-    return jsonResponse(fail("Invalid email or password", "INVALID_CREDENTIALS"), 401);
+    const info = await recordFailedAttempt(email, reference);
+    await logFailedLogin(user, identifier, info, ctx.ip, ctx.userAgent ?? "");
+    return lockoutResponse(info);
   }
 
   if (!isAccountActive(user)) {
@@ -146,13 +130,26 @@ async function handleLogin(_ctx: AuthContext | null, req: Request, body: unknown
   }
 
   const db = adminDb();
-  await db.from("users").update({
-    last_login_at: naiveIso(),
-    last_login_ip: ctx.ip,
-    failed_login_attempts: 0,
-    locked_until: null,
-    last_failed_attempt_at: null,
-  }).eq("id", user.row.id);
+  const { data: finalized, error: finalizeError } = await db.rpc("finalize_login_success", {
+    p_email: email,
+    p_ip: ctx.ip,
+  });
+  if (finalizeError) throw new Error(`finalize_login_success failed: ${finalizeError.message}`);
+  const finalizedRow = (Array.isArray(finalized) ? finalized[0] : finalized) as {
+    allowed: boolean; failed_attempts: number; locked_until: string | null;
+  } | null;
+  if (!finalizedRow?.allowed) {
+    const retryAt = finalizedRow?.locked_until ? new Date(finalizedRow.locked_until).toISOString() : null;
+    const info: LockoutInfo = {
+      accountExists: true,
+      failedAttempts: finalizedRow?.failed_attempts ?? lockout.failedAttempts,
+      retryAt,
+      lockSecondsRemaining: retryAt ? Math.max(0, Math.ceil((Date.parse(retryAt) - Date.now()) / 1000)) : 0,
+      counted: false,
+    };
+    await logFailedLogin(user, user.row.email, info, ctx.ip, ctx.userAgent ?? "", true);
+    return lockoutResponse(info);
+  }
 
   const auth = await buildAuthResponse(user, ctx);
 

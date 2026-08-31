@@ -3,42 +3,57 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore, getDashboardPath } from '../../stores/authStore';
 import { login, extractLoginLockout } from '../../api/authService';
 import { extractErrorMessage } from '../../api/client';
-import { AlertTriangle, Eye, EyeOff, HelpCircle, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import { validateCorporateEmail } from '../../utils/emailValidation';
+
+const savedRestriction = (): { email: string; retryAt: string } | null => {
+  try {
+    const value = JSON.parse(sessionStorage.getItem('loginRestriction') ?? 'null');
+    return typeof value?.email === 'string' && typeof value?.retryAt === 'string' ? value : null;
+  } catch {
+    return null;
+  }
+};
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const setAuthTokens = useAuthStore((s) => s.setAuthTokens);
 
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(() => savedRestriction()?.email ?? '');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Server-authoritative lockout state (mirrored from LoginLockoutInfo).
-  const [attempts, setAttempts] = useState(0);
-  const [maxAttempts, setMaxAttempts] = useState(3);
+  const [retryAt, setRetryAt] = useState<string | null>(() => {
+    return savedRestriction()?.retryAt ?? null;
+  });
   const [countdown, setCountdown] = useState(0);
-  const [permanentlyLocked, setPermanentlyLocked] = useState(false);
 
-  const locked = countdown > 0 || permanentlyLocked;
+  const locked = retryAt !== null && Date.parse(retryAt) > Date.now();
 
   useEffect(() => {
-    if (countdown <= 0) return;
-    const timer = setTimeout(() => {
-      const next = Math.max(0, countdown - 1);
-      if (next === 0) {
-        // Cooldown finished: drop the stale "Please wait..." message so the
-        // alert and its spacing fully disappear and the form looks normal.
-        setError('');
-      }
+    if (!retryAt) {
+      setCountdown(0);
+      return;
+    }
+    const update = () => {
+      const next = Math.max(0, Math.ceil((Date.parse(retryAt) - Date.now()) / 1000));
       setCountdown(next);
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [countdown]);
+      if (next === 0) {
+        setRetryAt(null);
+        setError('');
+        try { sessionStorage.removeItem('loginRestriction'); } catch {}
+      }
+    };
+    update();
+    const timer = window.setInterval(update, 250);
+    return () => window.clearInterval(timer);
+  }, [retryAt]);
+
+  const countdownLabel = `${String(Math.floor(countdown / 60)).padStart(2, '0')}:${String(countdown % 60).padStart(2, '0')}`;
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,31 +73,23 @@ export const LoginPage: React.FC = () => {
     try {
       const res = await login({ email: email.trim(), password });
       setAuthTokens(res.user, res.accessToken, res.refreshToken);
-      setAttempts(0);
-      setCountdown(0);
-      setPermanentlyLocked(false);
+      setRetryAt(null);
+      try { sessionStorage.removeItem('loginRestriction'); } catch {}
       const returnTo = new URLSearchParams(location.search).get('returnTo');
       const safeReturnTo = returnTo?.startsWith('/') && !returnTo.startsWith('//') ? returnTo : null;
       navigate(safeReturnTo || getDashboardPath(res.user), { replace: true });
     } catch (err) {
       const info = extractLoginLockout(err);
-      if (info) {
-        setAttempts(info.failedAttempts);
-        setMaxAttempts(info.maxAttempts > 0 ? info.maxAttempts : 3);
-        if (info.permanentlyLocked) {
-          setPermanentlyLocked(true);
-          setCountdown(0);
-          setError('Too many failed login attempts. Please contact the HR Department for assistance.');
-        } else if (info.lockSecondsRemaining > 0) {
-          setPermanentlyLocked(false);
-          setCountdown(info.lockSecondsRemaining);
-          setError(`Please wait ${info.lockSecondsRemaining} seconds before trying again.`);
-        } else {
-          setPermanentlyLocked(false);
-          setCountdown(0);
-          setError(extractErrorMessage(err));
-        }
+      if (info?.retryAt && Date.parse(info.retryAt) > Date.now()) {
+        setRetryAt(info.retryAt);
+        try {
+          sessionStorage.setItem('loginRestriction', JSON.stringify({
+            email: email.trim().toLowerCase(), retryAt: info.retryAt,
+          }));
+        } catch {}
+        setError('');
       } else {
+        setRetryAt(null);
         setError(extractErrorMessage(err));
       }
     } finally {
@@ -107,57 +114,16 @@ export const LoginPage: React.FC = () => {
               <p className="text-sm text-white/50 leading-relaxed mt-2 max-w-xs">Sign in to your account to continue.</p>
             </div>
 
-            {permanentlyLocked ? (
-              <div className="mb-5 px-4 py-4 rounded-xl bg-rose-500/15 border border-rose-400/40 space-y-3">
-                <div className="flex items-start space-x-2">
-                  <AlertTriangle className="w-5 h-5 text-rose-300 shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <p className="text-rose-200 text-sm font-semibold">
-                      Your account has been temporarily locked due to multiple failed login attempts.
-                    </p>
-                    <p className="text-rose-200/90 text-sm">
-                      Too many failed login attempts. Please contact the HR Department for assistance.
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => navigate('/hr-assistance')}
-                  className="w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-400 text-white font-semibold text-sm transition-colors"
-                >
-                  <HelpCircle className="w-4 h-4" />
-                  <span>Contact HR Department</span>
-                </button>
-              </div>
-            ) : locked ? (
+            {locked ? (
               <div className="mb-5 px-4 py-3 rounded-xl bg-amber-500/15 border border-amber-400/30 text-amber-200 text-sm">
                 <div className="flex items-center justify-between">
-                  <span>Please wait {countdown} seconds before trying again.</span>
-                  <span className="font-mono text-lg font-bold tabular-nums">{countdown}s</span>
+                  <span>Too many unsuccessful login attempts. Try again in</span>
+                  <span className="font-mono text-lg font-bold tabular-nums">{countdownLabel}</span>
                 </div>
               </div>
             ) : error ? (
               <div className="mb-5 px-4 py-3 rounded-xl bg-rose-500/15 border border-rose-400/30 text-rose-200 text-sm">{error}</div>
             ) : null}
-
-            {attempts > 0 && !permanentlyLocked && (
-              <div className="mb-5 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-white/60">Failed login attempts</span>
-                  <span className="text-white/90 font-semibold tabular-nums">
-                    {Math.min(attempts, maxAttempts)}/{maxAttempts}
-                  </span>
-                </div>
-                <div className="mt-1.5 flex space-x-1">
-                  {Array.from({ length: maxAttempts }).map((_, i) => (
-                    <div
-                      key={i}
-                      className={`h-1.5 flex-1 rounded-full ${i < Math.min(attempts, maxAttempts) ? 'bg-rose-400' : 'bg-white/15'}`}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
 
             <form onSubmit={handleLogin} className="space-y-3">
               <div>
@@ -168,7 +134,7 @@ export const LoginPage: React.FC = () => {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                     </svg>
                   </div>
-                  <input type="text" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin@photonicomega.com" autoComplete="username" className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-white/15 bg-white/10 text-white placeholder-white/40 text-sm focus:outline-none focus:ring-2 focus:ring-[#D02F34] focus:border-transparent transition-shadow" />
+                  <input type="text" value={email} onChange={(e) => setEmail(e.target.value)} disabled={locked} placeholder="admin@photonicomega.com" autoComplete="username" className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-white/15 bg-white/10 text-white placeholder-white/40 text-sm focus:outline-none focus:ring-2 focus:ring-[#D02F34] focus:border-transparent transition-shadow disabled:opacity-60 disabled:cursor-not-allowed" />
                 </div>
               </div>
               <div>

@@ -6,8 +6,8 @@ import lombok.Getter;
 /**
  * Raised for every failed login attempt that maps to a known account, and for
  * any attempt against an account that is currently locked out (progressive
- * countdown or permanent lock). Carries the server-side lockout state so the
- * exception handler can render the attempt counter and remaining countdown.
+ * temporary countdown). Carries only the retry timing exposed to the client;
+ * attempt counters remain server-side.
  */
 @Getter
 public class LoginFailedException extends AuthenticationException {

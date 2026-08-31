@@ -16,17 +16,12 @@ export interface AuthTokenResponse {
 
 /**
  * Server-side lockout state attached to a failed-login error response. The
- * counters here are authoritative database state - the client uses them only
- * to render the attempt progress and the progressive countdown, never as the
- * security mechanism itself.
+ * The server exposes an absolute retry timestamp. Account counters and
+ * existence stay private to prevent enumeration.
  */
 export interface LoginLockoutInfo {
-  failedAttempts: number;
-  maxAttempts: number;
-  remainingAttempts: number;
   lockSecondsRemaining: number;
-  permanentlyLocked: boolean;
-  lockedUntil?: string;
+  retryAt: string | null;
 }
 
 export interface HrAssistanceRequest {
@@ -70,5 +65,9 @@ export function extractLoginLockout(error: unknown): LoginLockoutInfo | null {
   const errObj = error as Record<string, any>;
   const payload = errObj?.response?.data?.data;
   if (!payload || typeof payload !== 'object') return null;
-  return payload as LoginLockoutInfo;
+  const retryAt = typeof payload.retryAt === 'string' ? payload.retryAt : null;
+  const lockSecondsRemaining = typeof payload.lockSecondsRemaining === 'number'
+    ? payload.lockSecondsRemaining
+    : 0;
+  return { retryAt, lockSecondsRemaining };
 }

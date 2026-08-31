@@ -1,311 +1,314 @@
 package com.photonicomega.facilities.module.auth;
 
-import com.photonicomega.facilities.module.auth.domain.Role;
-import com.photonicomega.facilities.module.auth.domain.User;
-import com.photonicomega.facilities.module.auth.domain.UserStatus;
-import com.photonicomega.facilities.module.auth.repository.HrAssistanceRequestRepository;
-import com.photonicomega.facilities.module.auth.repository.RoleRepository;
-import com.photonicomega.facilities.module.auth.repository.UserRepository;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.photonicomega.facilities.module.auth.domain.*;
+import com.photonicomega.facilities.module.auth.repository.*;
+import com.photonicomega.facilities.module.security.repository.LoginHistoryRepository;
+import com.photonicomega.facilities.module.security.repository.SecurityLogRepository;
 import com.photonicomega.facilities.security.JwtTokenProvider;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.junit.jupiter.api.*;
+import org.springframework.beans.factory.annotation.*;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.context.*;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.*;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-/**
- * End-to-end verification of the progressive login lockout and HR assistance
- * flow. Exercises the real HTTP layer (MockMvc) against the H2-backed test
- * profile so counters, lock windows, and audit rows are checked exactly as
- * they would be in production - the lock cannot be bypassed from the client.
- */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Import(LoginLockoutTest.SeedConfig.class)
 class LoginLockoutTest {
-
-    @Autowired
-    private MockMvc mockMvc;
-
-    @Autowired
-    private UserRepository userRepository;
-
-    @Autowired
-    private PasswordEncoder passwordEncoder;
-
-    @Autowired
-    private HrAssistanceRequestRepository hrAssistanceRequestRepository;
-
-    @Autowired
-    private JwtTokenProvider jwtTokenProvider;
-
-    @Autowired
-    private TestSeedHelper seedHelper;
-
     private static final String EMAIL = "lockout@test.local";
     private static final String PASSWORD = "S3cure-Passw0rd!";
+    private static final AtomicInteger IP_SEQUENCE = new AtomicInteger(10);
+
+    @Autowired MockMvc mockMvc;
+    @Autowired UserRepository userRepository;
+    @Autowired HrAssistanceRequestRepository hrAssistanceRequestRepository;
+    @Autowired PasswordEncoder passwordEncoder;
+    @Autowired JwtTokenProvider jwtTokenProvider;
+    @Autowired TestSeedHelper seedHelper;
+    @Autowired ObjectMapper objectMapper;
+    @Autowired LoginHistoryRepository loginHistoryRepository;
+    @Autowired SecurityLogRepository securityLogRepository;
+    @Autowired AuditLogRepository auditLogRepository;
+
+    private String clientIp;
 
     @BeforeEach
     void seedAccount() {
+        clientIp = "203.0.113." + IP_SEQUENCE.getAndIncrement();
         hrAssistanceRequestRepository.deleteAll();
         seedHelper.resetAccount(EMAIL, PASSWORD, "EMPLOYEE");
     }
 
     @Test
-    @DisplayName("1st wrong password -> 423 temp lock, 10s countdown, counter persisted server-side")
-    void firstFailureLocksForTenSeconds() throws Exception {
-        attempt(EMAIL, "wrong-password")
-                .andExpect(status().isLocked())
-                .andExpect(jsonPath("$.errorCode").value("ACCOUNT_TEMP_LOCKED"))
-                .andExpect(jsonPath("$.data.failedAttempts").value(1))
-                .andExpect(jsonPath("$.data.maxAttempts").value(3))
-                .andExpect(jsonPath("$.data.remainingAttempts").value(2))
-                .andExpect(jsonPath("$.data.permanentlyLocked").value(false))
-                .andExpect(jsonPath("$.data.lockSecondsRemaining").isNumber());
+    @DisplayName("Attempts 1-2 are generic 401 responses without public counters or a lock")
+    void firstTwoFailuresDoNotLockOrExposeCounters() throws Exception {
+        for (int expected = 1; expected <= 2; expected++) {
+            attempt(EMAIL, "wrong", clientIp, "Browser-A")
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.message").value("Incorrect email or password."))
+                    .andExpect(jsonPath("$.errorCode").value("INVALID_CREDENTIALS"))
+                    .andExpect(jsonPath("$.data.failedAttempts").doesNotExist())
+                    .andExpect(jsonPath("$.data.retryAt").isEmpty());
+            assertEquals(expected, reload().getFailedLoginAttempts());
+            assertNull(reload().getLockedUntil());
+        }
+    }
+
+    @Test
+    @DisplayName("Attempt 3 locks 30s, attempt 4 locks 60s, attempt 5 locks 5m; none is permanent")
+    void progressiveTemporaryPolicy() throws Exception {
+        attempt(EMAIL, "wrong", clientIp, "Browser-A").andExpect(status().isUnauthorized());
+        attempt(EMAIL, "wrong", clientIp, "Browser-A").andExpect(status().isUnauthorized());
+
+        assertLockResponse(30);
+        expireLock();
+        assertLockResponse(60);
+        expireLock();
+        assertLockResponse(300);
 
         User stored = reload();
-        assertEquals(1, stored.getFailedLoginAttempts(), "counter must persist in the DB");
-        assertNotNull(stored.getLockedUntil(), "lock expiry must be persisted");
-        assertTrue(stored.getLockedUntil().isAfter(LocalDateTime.now()));
-        long seconds = java.time.Duration.between(LocalDateTime.now(), stored.getLockedUntil()).getSeconds();
-        assertTrue(seconds >= 1 && seconds <= 10, "expected ~10s lock, got " + seconds);
+        assertEquals(5, stored.getFailedLoginAttempts());
+        assertTrue(stored.getLockedUntil().isBefore(LocalDateTime.now().plusMinutes(6)));
     }
 
     @Test
-    @DisplayName("2nd wrong password -> 30s countdown, then 3rd failure locks the account permanently")
-    void progressiveLockoutEndsInPermanentLock() throws Exception {
-        attempt(EMAIL, "wrong-password").andExpect(status().isLocked());
-        expireTempLock();
-
-        attempt(EMAIL, "wrong-password")
+    @DisplayName("An active restriction survives device changes and does not consume another attempt")
+    void activeLockCannotBeBypassedByAnotherDevice() throws Exception {
+        reachAttemptThree();
+        attempt(EMAIL, PASSWORD, clientIp, "Completely-Different-Device")
                 .andExpect(status().isLocked())
                 .andExpect(jsonPath("$.errorCode").value("ACCOUNT_TEMP_LOCKED"))
-                .andExpect(jsonPath("$.data.failedAttempts").value(2))
-                .andExpect(jsonPath("$.data.lockSecondsRemaining").isNumber());
-
-        User stored = reload();
-        long seconds = java.time.Duration.between(LocalDateTime.now(), stored.getLockedUntil()).getSeconds();
-        assertTrue(seconds >= 1 && seconds <= 30, "expected ~30s lock, got " + seconds);
-
-        expireTempLock();
-
-        attempt(EMAIL, "wrong-password")
-                .andExpect(status().isLocked())
-                .andExpect(jsonPath("$.errorCode").value("ACCOUNT_LOCKED"))
-                .andExpect(jsonPath("$.data.failedAttempts").value(3))
-                .andExpect(jsonPath("$.data.remainingAttempts").value(0))
-                .andExpect(jsonPath("$.data.permanentlyLocked").value(true));
-
-        // A permanently locked account rejects even the correct password.
-        attempt(EMAIL, PASSWORD)
-                .andExpect(status().isLocked())
-                .andExpect(jsonPath("$.errorCode").value("ACCOUNT_LOCKED"));
-
-        stored = reload();
-        assertTrue(stored.getFailedLoginAttempts() >= 3);
+                .andExpect(jsonPath("$.data.retryAt").isString());
+        assertEquals(3, reload().getFailedLoginAttempts());
     }
 
     @Test
-    @DisplayName("Attempts during the active countdown are rejected without consuming a new attempt")
-    void attemptsDuringCountdownAreRejected() throws Exception {
-        attempt(EMAIL, "wrong-password").andExpect(status().isLocked());
-
-        // Correct password submitted while the 10s lock is still active.
-        attempt(EMAIL, PASSWORD)
-                .andExpect(status().isLocked())
-                .andExpect(jsonPath("$.errorCode").value("ACCOUNT_TEMP_LOCKED"))
-                .andExpect(jsonPath("$.data.failedAttempts").value(1));
-
-        assertEquals(1, reload().getFailedLoginAttempts(), "lockout-period attempts must not increment");
-    }
-
-    @Test
-    @DisplayName("Successful login after failures resets the counter and clears the lock")
-    void successfulLoginResetsCounter() throws Exception {
-        User user = reload();
-        user.setFailedLoginAttempts(2);
-        user.setLockedUntil(LocalDateTime.now().minusSeconds(1));
-        userRepository.save(user);
-
-        assertTrue(passwordEncoder.matches(PASSWORD, reload().getPasswordHash()),
-                "seeded password hash must verify");
-        assertEquals(2, reload().getFailedLoginAttempts());
-
-        attempt(EMAIL, PASSWORD)
+    @DisplayName("Successful login after expiry atomically resets attempts and retains no lock")
+    void successResetsState() throws Exception {
+        reachAttemptThree();
+        expireLock();
+        attempt(EMAIL, PASSWORD, clientIp, "Browser-A")
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
-
-        User after = reload();
-        assertEquals(0, after.getFailedLoginAttempts());
-        assertNull(after.getLockedUntil());
+        assertEquals(0, reload().getFailedLoginAttempts());
+        assertNull(reload().getLockedUntil());
+        assertNull(reload().getLastFailedAttemptAt());
     }
 
     @Test
-    @DisplayName("Unknown account returns a generic 401 without exposing account existence")
-    void unknownAccountReturnsGenericError() throws Exception {
-        attempt("nobody@test.local", PASSWORD)
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.errorCode").value("INVALID_CREDENTIALS"))
-                .andExpect(jsonPath("$.message").value("Invalid email or password"));
+    @DisplayName("Unknown and registered identifiers have the same external failure sequence")
+    void unknownAccountDoesNotChangeResponseShapeOrTiming() throws Exception {
+        String unknown = "unknown-" + UUID.randomUUID() + "@test.local";
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            JsonNode known = responseJson(attempt(EMAIL, "wrong", clientIp, "Browser-A"));
+            JsonNode missing = responseJson(attempt(unknown, "wrong", clientIp, "Browser-A"));
+            assertEquals(known.get("errorCode"), missing.get("errorCode"));
+            assertEquals(known.get("message").asText().replaceAll("\\d{2}:\\d{2}", "TIME"),
+                    missing.get("message").asText().replaceAll("\\d{2}:\\d{2}", "TIME"));
+            assertEquals(fieldNames(known.get("data")), fieldNames(missing.get("data")));
+        }
     }
 
     @Test
-    @DisplayName("HR assistance endpoint is public and persists the request")
-    void hrAssistanceSubmissionIsPublic() throws Exception {
+    @DisplayName("Concurrent failures stop at the first active restriction")
+    void concurrentFailuresAreSerialized() throws Exception {
+        attempt(EMAIL, "wrong", clientIp, "Browser-A").andExpect(status().isUnauthorized());
+        attempt(EMAIL, "wrong", clientIp, "Browser-A").andExpect(status().isUnauthorized());
+
+        ExecutorService executor = Executors.newFixedThreadPool(6);
+        try {
+            List<Callable<Integer>> calls = new ArrayList<>();
+            for (int i = 0; i < 6; i++) {
+                calls.add(() -> attempt(EMAIL, "wrong", clientIp, "Browser-Parallel")
+                        .andReturn().getResponse().getStatus());
+            }
+            for (Future<Integer> result : executor.invokeAll(calls)) {
+                assertEquals(423, result.get());
+            }
+        } finally {
+            executor.shutdownNow();
+        }
+        assertEquals(3, reload().getFailedLoginAttempts());
+    }
+
+    @Test
+    @DisplayName("IP throttling is separate from accounts and returns HTTP 429")
+    void ipRateLimitSpansMultipleIdentifiers() throws Exception {
+        String ip = "198.51.100.250";
+        for (int i = 0; i < 20; i++) {
+            attempt("guess-" + i + "@test.local", "wrong", ip, "RateBot").andReturn();
+        }
+        attempt("guess-final@test.local", "wrong", ip, "RateBot")
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().exists("Retry-After"));
+    }
+
+    @Test
+    @DisplayName("Failed logins are retained with FAILED results in all existing security feeds")
+    void failedLoginLoggingUsesCorrectResultValues() throws Exception {
+        java.time.Instant started = java.time.Instant.now().minusSeconds(1);
+        LocalDateTime auditStarted = LocalDateTime.now().minusSeconds(1);
+        attempt(EMAIL, "wrong", clientIp, "Logging-Browser").andExpect(status().isUnauthorized());
+
+        awaitAsync(() -> loginHistoryRepository.findByTimestampBetween(started, java.time.Instant.now()).stream()
+                .anyMatch(row -> EMAIL.equals(row.getUsername()) && "FAILED".equals(row.getStatus())));
+        awaitAsync(() -> securityLogRepository.findByTimestampBetween(started, java.time.Instant.now()).stream()
+                .anyMatch(row -> "LOGIN_FAILED".equals(row.getAction()) && "FAILED".equals(row.getStatus())));
+        awaitAsync(() -> auditLogRepository.findByCreatedAtAfterOrderByCreatedAtDesc(auditStarted).stream()
+                .anyMatch(row -> "LOGIN_FAILED".equals(row.getAction()) && "FAILED".equals(row.getStatus())));
+    }
+
+    @Test
+    void hrAssistanceSubmissionRemainsPublic() throws Exception {
         mockMvc.perform(post("/v1/auth/hr/assistance")
+                        .header("X-Forwarded-For", clientIp)
                         .contentType("application/json")
-                        .content("{\"name\":\"Locked User\",\"email\":\"" + EMAIL + "\","
-                                + "\"subject\":\"Account locked\",\"message\":\"Please help me regain access to my account\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
-
-        assertEquals(1, hrAssistanceRequestRepository.count(),
-                "HR assistance request must be persisted");
+                        .content("{\"name\":\"Locked User\",\"email\":\"" + EMAIL + "\"," +
+                                "\"subject\":\"Account access\",\"message\":\"Please help me regain access\"}"))
+                .andExpect(status().isOk());
+        assertEquals(1, hrAssistanceRequestRepository.count());
     }
 
     @Test
-    @DisplayName("Super admin can unlock a permanently locked account")
-    void adminCanUnlockAccount() throws Exception {
+    void adminUnlockStillClearsTemporaryState() throws Exception {
         seedHelper.seedUser("admin.lockout@test.local", PASSWORD, "SUPER_ADMIN");
-        String adminToken = token("admin.lockout@test.local");
-
+        String token = token("admin.lockout@test.local");
         User locked = reload();
-        locked.setFailedLoginAttempts(3);
-        locked.setLockedUntil(LocalDateTime.now().plusDays(365));
+        locked.setFailedLoginAttempts(5);
+        locked.setLockedUntil(LocalDateTime.now().plusMinutes(5));
         userRepository.save(locked);
 
         mockMvc.perform(post("/v1/admin/users/" + locked.getId() + "/unlock")
-                        .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
-
-        User after = reload();
-        assertEquals(0, after.getFailedLoginAttempts());
-        assertNull(after.getLockedUntil());
+                        .header("Authorization", "Bearer " + token)
+                        .header("X-Forwarded-For", clientIp))
+                .andExpect(status().isOk());
+        assertEquals(0, reload().getFailedLoginAttempts());
+        assertNull(reload().getLockedUntil());
     }
 
-    // ------------------------------------------------------------------
-    // helpers
-    // ------------------------------------------------------------------
+    private void reachAttemptThree() throws Exception {
+        attempt(EMAIL, "wrong", clientIp, "Browser-A").andExpect(status().isUnauthorized());
+        attempt(EMAIL, "wrong", clientIp, "Browser-A").andExpect(status().isUnauthorized());
+        attempt(EMAIL, "wrong", clientIp, "Browser-A").andExpect(status().isLocked());
+    }
 
-    private ResultActions attempt(String email, String password) throws Exception {
+    private void assertLockResponse(int expectedSeconds) throws Exception {
+        attempt(EMAIL, "wrong", clientIp, "Browser-A")
+                .andExpect(status().isLocked())
+                .andExpect(jsonPath("$.errorCode").value("ACCOUNT_TEMP_LOCKED"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.matchesPattern(
+                        "Too many unsuccessful login attempts\\. Try again in \\d{2}:\\d{2}\\.")))
+                .andExpect(jsonPath("$.data.retryAt").isString())
+                .andExpect(jsonPath("$.data.failedAttempts").doesNotExist());
+        long seconds = java.time.Duration.between(LocalDateTime.now(), reload().getLockedUntil()).getSeconds();
+        assertTrue(seconds >= expectedSeconds - 2 && seconds <= expectedSeconds,
+                "expected approximately " + expectedSeconds + " seconds but got " + seconds);
+    }
+
+    private ResultActions attempt(String email, String password, String ip, String userAgent) throws Exception {
         return mockMvc.perform(post("/v1/auth/login")
+                .header("X-Forwarded-For", ip)
+                .header("User-Agent", userAgent)
                 .contentType("application/json")
                 .content("{\"email\":\"" + email + "\",\"password\":\"" + password + "\"}"));
+    }
+
+    private JsonNode responseJson(ResultActions actions) throws Exception {
+        return objectMapper.readTree(actions.andReturn().getResponse().getContentAsString());
+    }
+
+    private Set<String> fieldNames(JsonNode node) {
+        Set<String> result = new TreeSet<>();
+        if (node != null) node.fieldNames().forEachRemaining(result::add);
+        return result;
+    }
+
+    private void awaitAsync(BooleanSupplier condition) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+        while (!condition.getAsBoolean() && System.nanoTime() < deadline) {
+            Thread.sleep(25);
+        }
+        assertTrue(condition.getAsBoolean(), "expected asynchronous security record was not persisted");
     }
 
     private User reload() {
         return userRepository.findByEmailAndDeletedFalse(EMAIL).orElseThrow();
     }
 
-    /** Simulates the progressive countdown reaching zero so the next attempt can run. */
-    private void expireTempLock() {
+    private void expireLock() {
         User user = reload();
         user.setLockedUntil(LocalDateTime.now().minusSeconds(1));
         userRepository.save(user);
     }
 
     private String token(String email) {
-        String roleName = userRepository.findByEmailWithRolesAndPermissions(email)
+        String role = userRepository.findByEmailWithRolesAndPermissions(email)
                 .orElseThrow().getRoles().iterator().next().getName();
-        UserDetails userDetails = new org.springframework.security.core.userdetails.User(
+        UserDetails details = new org.springframework.security.core.userdetails.User(
                 email, "unused", true, true, true, true,
-                java.util.List.of(new SimpleGrantedAuthority("ROLE_" + roleName)));
-        return jwtTokenProvider.generateAccessToken(userDetails);
+                List.of(new SimpleGrantedAuthority("ROLE_" + role)));
+        return jwtTokenProvider.generateAccessToken(details);
     }
 
-    /**
-     * Seeds users together with their roles inside a single transaction so a
-     * freshly-created Role stays managed when it is attached to the User. The
-     * test itself must NOT be @Transactional: the lockout flow relies on
-     * REQUIRES_NEW commits being visible to later reads.
-     */
     static class TestSeedHelper {
-        private final UserRepository userRepository;
-        private final RoleRepository roleRepository;
-        private final PasswordEncoder passwordEncoder;
+        private final UserRepository users;
+        private final RoleRepository roles;
+        private final PasswordEncoder encoder;
 
-        TestSeedHelper(UserRepository userRepository, RoleRepository roleRepository,
-                       PasswordEncoder passwordEncoder) {
-            this.userRepository = userRepository;
-            this.roleRepository = roleRepository;
-            this.passwordEncoder = passwordEncoder;
+        TestSeedHelper(UserRepository users, RoleRepository roles, PasswordEncoder encoder) {
+            this.users = users; this.roles = roles; this.encoder = encoder;
         }
 
         @Transactional
         public void resetAccount(String email, String password, String roleName) {
             Role role = ensureRole(roleName);
-            User existing = userRepository.findByEmailAndDeletedFalse(email).orElse(null);
-            if (existing != null) {
-                existing.resetFailedAttempts();
-                existing.setPasswordHash(passwordEncoder.encode(password));
-                if (existing.getRoles().isEmpty()) {
-                    existing.setRoles(new HashSet<>(Set.of(role)));
-                }
-                userRepository.save(existing);
-            } else {
-                userRepository.save(User.builder()
-                        .firstName("Lock")
-                        .lastName("Tester")
-                        .email(email)
-                        .department("IT")
-                        .passwordHash(passwordEncoder.encode(password))
-                        .status(UserStatus.ACTIVE)
-                        .roles(new HashSet<>(Set.of(role)))
-                        .build());
-            }
+            User user = users.findByEmailAndDeletedFalse(email).orElseGet(() -> User.builder()
+                    .firstName("Lock").lastName("Tester").email(email).department("IT")
+                    .status(UserStatus.ACTIVE).roles(new HashSet<>(Set.of(role))).build());
+            user.resetFailedAttempts();
+            user.setPasswordHash(encoder.encode(password));
+            users.save(user);
         }
 
         @Transactional
         public void seedUser(String email, String password, String roleName) {
+            if (users.findByEmailAndDeletedFalse(email).isPresent()) return;
             Role role = ensureRole(roleName);
-            userRepository.save(User.builder()
-                    .firstName("Admin")
-                    .lastName("User")
-                    .email(email)
-                    .passwordHash(passwordEncoder.encode(password))
-                    .status(UserStatus.ACTIVE)
-                    .roles(new HashSet<>(Set.of(role)))
-                    .build());
+            users.save(User.builder().firstName("Admin").lastName("User").email(email)
+                    .passwordHash(encoder.encode(password)).status(UserStatus.ACTIVE)
+                    .roles(new HashSet<>(Set.of(role))).build());
         }
 
         private Role ensureRole(String name) {
-            return roleRepository.findByName(name)
-                    .orElseGet(() -> roleRepository.save(Role.builder()
-                            .name(name)
-                            .displayName(name.replace('_', ' ').toLowerCase())
-                            .description("lockout test role")
-                            .build()));
+            return roles.findByName(name).orElseGet(() -> roles.save(Role.builder()
+                    .name(name).displayName(name).description("lockout test role").build()));
         }
     }
 
     @TestConfiguration
     static class SeedConfig {
-        @Bean
-        TestSeedHelper testSeedHelper(UserRepository userRepository, RoleRepository roleRepository,
-                                      PasswordEncoder passwordEncoder) {
-            return new TestSeedHelper(userRepository, roleRepository, passwordEncoder);
+        @Bean TestSeedHelper testSeedHelper(UserRepository users, RoleRepository roles, PasswordEncoder encoder) {
+            return new TestSeedHelper(users, roles, encoder);
         }
     }
 }

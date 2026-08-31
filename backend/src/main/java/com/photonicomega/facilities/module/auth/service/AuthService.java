@@ -22,6 +22,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Locale;
 import java.util.UUID;
 
 @Service
@@ -39,6 +40,7 @@ public class AuthService {
     private final JavaMailSender mailSender;
     private final AuditService auditService;
     private final LoginAttemptService loginAttemptService;
+    private final com.photonicomega.facilities.module.security.service.SecurityAuditService securityAuditService;
     private final RbacProfileService rbacProfileService;
     private final com.photonicomega.facilities.module.security.service.UserActivityService userActivityService;
 
@@ -52,11 +54,12 @@ public class AuthService {
         String email = normalizeEmail(request.getEmail());
 
         // Server-side lockout gate: a locked account is rejected before any
-        // password is checked, so the progressive/permanent lock cannot be
+        // password is checked, so the progressive temporary lock cannot be
         // bypassed by refreshing the page, opening another browser, or
         // clearing browser storage.
         LoginLockoutInfo lockout = loginAttemptService.getCurrentLockoutInfo(email);
         if (lockout != null) {
+            loginAttemptService.logBlockedAttempt(email, lockout, ipAddress, userAgent);
             throw lockoutException(lockout);
         }
 
@@ -65,12 +68,13 @@ public class AuthService {
                     new UsernamePasswordAuthenticationToken(email, request.getPassword()));
         } catch (org.springframework.security.core.AuthenticationException ex) {
             LoginLockoutInfo info = loginAttemptService.recordFailedAttempt(email, ipAddress, userAgent);
-            if (info == null) {
-                // Unknown account: keep the response generic so account existence
-                // is never revealed.
-                throw ex;
-            }
             throw lockoutException(info);
+        }
+
+        LoginLockoutInfo concurrentLock = loginAttemptService.finalizeSuccessfulLogin(email, ipAddress);
+        if (concurrentLock != null) {
+            loginAttemptService.logBlockedAttempt(email, concurrentLock, ipAddress, userAgent);
+            throw lockoutException(concurrentLock);
         }
 
         User user = userRepository.findByEmailAndDeletedFalse(email)
@@ -79,11 +83,6 @@ public class AuthService {
         if (!user.isAccountActive()) {
             throw new BusinessRuleViolationException("Account is not active. Contact administrator.");
         }
-
-        user.setLastLoginAt(LocalDateTime.now());
-        user.setLastLoginIp(ipAddress);
-        user.resetFailedAttempts();
-        userRepository.save(user);
 
         UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
         String accessToken = jwtTokenProvider.generateAccessToken(userDetails);
@@ -101,6 +100,8 @@ public class AuthService {
 
         auditService.log(user, "LOGIN_SUCCESS", "AUTH", null, null,
                 "User logged in successfully", ipAddress);
+        securityAuditService.logLoginAttemptAsync(user.getEmail(), user.getId().toString(),
+                ipAddress, "SUCCESS", null, userAgent);
 
         userActivityService.registerSession(user, ipAddress, userAgent);
 
@@ -219,17 +220,14 @@ public class AuthService {
     }
 
     private LoginFailedException lockoutException(LoginLockoutInfo info) {
-        if (info.isPermanentlyLocked()) {
-            return new LoginFailedException(
-                    "Your account has been temporarily locked due to multiple failed login attempts.",
-                    "ACCOUNT_LOCKED", info);
-        }
         if (info.getLockSecondsRemaining() > 0) {
+            long minutes = info.getLockSecondsRemaining() / 60;
+            long seconds = info.getLockSecondsRemaining() % 60;
             return new LoginFailedException(
-                    "Too many failed login attempts. Please wait " + info.getLockSecondsRemaining()
-                            + " seconds before trying again.",
+                    String.format(Locale.ROOT,
+                            "Too many unsuccessful login attempts. Try again in %02d:%02d.", minutes, seconds),
                     "ACCOUNT_TEMP_LOCKED", info);
         }
-        return new LoginFailedException("Invalid email or password", "INVALID_CREDENTIALS", info);
+        return new LoginFailedException("Incorrect email or password.", "INVALID_CREDENTIALS", info);
     }
 }

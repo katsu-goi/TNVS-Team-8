@@ -51,6 +51,7 @@ public class RateLimitingFilter implements Filter {
             log.warn("RATE LIMIT TRIGGERED: Blocked IP {} for path {}", ip, path);
             httpResponse.setStatus(429); // Too Many Requests
             httpResponse.setContentType("application/json");
+            httpResponse.setHeader("Retry-After", "60");
             httpResponse.getWriter().write("{\"error\": \"Too Many Requests: You have exceeded the permitted request quota. Please slow down and try again later.\"}");
 
             recordRateLimitEvent(httpRequest, ip, path);
