@@ -286,7 +286,7 @@ export const SysAdminDashboard: React.FC = () => {
       <div className="glass-panel p-3 flex items-center justify-between text-xs text-slate-400">
         <span className="flex items-center space-x-2">
           <Activity className="w-3.5 h-3.5 text-emerald-600" />
-          <span>All data sourced from live backend database · No mock data used</span>
+          <span>All data sourced from live backend database</span>
         </span>
         <button onClick={() => setRetry(r => r + 1)} className="flex items-center space-x-1 text-emerald-600 hover:underline">
           <RefreshCw className="w-3 h-3" /><span>Refresh</span>
