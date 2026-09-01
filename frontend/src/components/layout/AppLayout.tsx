@@ -5,7 +5,7 @@ import {
   BarChart3, Activity, Monitor, Layers, Download,
   Settings, Bell, FileText, Cpu, KeyRound,
 } from 'lucide-react';
-import { hasPermission, isSuperAdmin, useAuthStore } from '../../stores/authStore';
+import { hasPermission, hasRole, isSuperAdmin, useAuthStore } from '../../stores/authStore';
 import { useDashboardStore } from '../../stores/dashboardStore';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { useUserHeartbeat } from '../../hooks/useUserHeartbeat';
@@ -58,7 +58,7 @@ export const AppLayout: React.FC = () => {
 
   const isExactActive = (path: string) => location.pathname === path;
 
-  const systemAdministrator = isSuperAdmin(user);
+  const systemAdministrator = isSuperAdmin(user) || hasRole(user, 'SYSTEM_ADMIN');
   const navItems = [
   { id: 'dashboard', label: 'Dashboard', path: '/', icon: LayoutDashboard, exact: true, visible: systemAdministrator },
   { id: 'integrations', label: 'Integrations', path: '/admin/integrations', icon: Layers, exact: true, visible: systemAdministrator },
