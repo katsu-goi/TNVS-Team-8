@@ -133,8 +133,8 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
 /**
  * Guards system-administrator surfaces (`/`, `/admin/*`, `/security*`).
- * Requires the SUPER_ADMIN role (the only system-administrator role the
- * backend defines); any other role is redirected to its own dashboard.
+ * SUPER_ADMIN retains oversight access, while SYSTEM_ADMIN is the dedicated
+ * role for the operational system-administrator dashboard.
  */
 const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const accessToken = useAuthStore((s) => s.accessToken);
@@ -142,7 +142,7 @@ const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   if (!accessToken) {
     return <Navigate to="/login" replace />;
   }
-  if (!isSuperAdmin(user)) {
+  if (!isSuperAdmin(user) && !hasRole(user, 'SYSTEM_ADMIN')) {
     const destination = getDashboardPath(user);
     return <Navigate to={destination === '/' ? '/login' : destination} replace />;
   }
