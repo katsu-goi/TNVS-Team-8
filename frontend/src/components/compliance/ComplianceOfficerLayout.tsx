@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, LogOut, FileText, FileSignature,
-  Archive, ScrollText, User, Settings,
+  User, Settings,
   ChevronRight, AlertTriangle, Search,
-  BellRing, Trash2,
+  BellRing,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
@@ -43,9 +43,6 @@ export const ComplianceOfficerLayout: React.FC = () => {
     { id: 'documents', label: 'Documents', path: '/compliance/documents', icon: FileText },
     { id: 'contracts', label: 'Contracts', path: '/compliance/contracts', icon: FileSignature },
     { id: 'alerts', label: 'Compliance Alerts', path: '/compliance/alerts', icon: BellRing },
-    { id: 'retention', label: 'Retention Policies', path: '/compliance/retention-policies', icon: Archive },
-    { id: 'disposals', label: 'Disposal Approvals', path: '/compliance/disposals', icon: Trash2 },
-    { id: 'audit', label: 'Audit Trail', path: '/compliance/audit-logs', icon: ScrollText },
     { id: 'profile', label: 'Profile', path: '/compliance/profile', icon: User },
     { id: 'settings', label: 'Settings', path: '/compliance/settings', icon: Settings },
   ];

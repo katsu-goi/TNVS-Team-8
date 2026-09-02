@@ -17,8 +17,6 @@ import {
 } from './components/sysadmin/AdminPages';
 import { AnalyticsPage } from './components/sysadmin/AnalyticsDashboard';
 import { RbacAdminPage } from './components/sysadmin/RbacAdminPage';
-import { GovernanceLayout } from './components/rbac/GovernanceLayout';
-import { GovernanceDashboard } from './components/rbac/GovernanceDashboard';
 import { FacilitiesManagerLayout } from './components/facilities/FacilitiesManagerLayout';
 import { FacilitiesDashboard } from './components/facilities/FacilitiesDashboard';
 import {
@@ -43,18 +41,6 @@ import {
   FoProfilePage,
   FoSettingsPage,
 } from './components/facilities-officer/FacilitiesOfficerPages';
-import { ComplianceOfficerLayout } from './components/compliance/ComplianceOfficerLayout';
-import { ComplianceOfficerDashboard } from './components/compliance/ComplianceOfficerDashboard';
-import {
-  CoDocumentsPage,
-  CoContractsPage,
-  CoRetentionPoliciesPage,
-  CoDisposalApprovalsPage,
-  CoComplianceAlertsPage,
-  CoAuditLogsPage,
-  CoProfilePage,
-  CoSettingsPage,
-} from './components/compliance/ComplianceOfficerPages';
 import { LegalOfficerLayout } from './components/legal/LegalOfficerLayout';
 import { LegalOfficerDashboard } from './components/legal/LegalOfficerDashboard';
 import { RequestReviewPage } from './components/requests/RequestReviewPage';
@@ -63,8 +49,6 @@ import {
   LoLegalCasesPage,
   LoLegalNoticesPage,
   LoDocumentsPage,
-  LoRetentionPage,
-  LoAuditLogsPage,
   LoProfilePage,
   LoSettingsPage,
 } from './components/legal/LegalOfficerPages';
@@ -91,7 +75,14 @@ import {
   EmpProfilePage,
   EmpSettingsPage,
 } from './components/employee/EmployeePages';
-import { useAuthStore, getDashboardPath, isSuperAdmin, hasPermission, hasRole } from './stores/authStore';
+import { useAuthStore, getDashboardPath, isActorSuperAdmin, isActorSystemAdmin, hasAssignedRole } from './stores/authStore';
+import { OversightBanner } from './components/oversight';
+import { RoleWorkspaceLayout } from './components/workspaces/RoleWorkspaceLayout';
+import { RoleWorkspacePage } from './components/workspaces/RoleWorkspacePage';
+import { workspaceConfigs } from './components/workspaces/workspaceConfig';
+import type { WorkspaceConfig } from './components/workspaces/workspaceConfig';
+import { useParams } from 'react-router-dom';
+import { AccountLockoutsPage } from './components/sysadmin/AccountLockoutsPage';
 
 class ErrorBoundary extends React.Component<
   { fallback: React.ReactNode; children: React.ReactNode },
@@ -131,30 +122,58 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
   return <>{children}</>;
 };
 
-/**
- * Guards system-administrator surfaces (`/`, `/admin/*`, `/security*`).
- * Requires the SUPER_ADMIN role (the only system-administrator role the
- * backend defines); any other role is redirected to its own dashboard.
- */
-const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+const AdminPortalRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
-  if (!accessToken) {
-    return <Navigate to="/login" replace />;
-  }
-  if (!isSuperAdmin(user)) {
+  if (!accessToken) return <Navigate to="/login" replace />;
+  if (!isActorSuperAdmin(user) && !isActorSystemAdmin(user)) {
     const destination = getDashboardPath(user);
     return <Navigate to={destination === '/' ? '/login' : destination} replace />;
   }
   return <>{children}</>;
 };
 
+const SuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const user = useAuthStore((s) => s.user);
+  if (!accessToken) return <Navigate to="/login" replace />;
+  if (!isActorSuperAdmin(user)) return <Navigate to={getDashboardPath(user)} replace />;
+  return <>{children}</>;
+};
+
+const SystemAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const user = useAuthStore((s) => s.user);
+  if (!accessToken) return <Navigate to="/login" replace />;
+  if (!isActorSystemAdmin(user)) return <Navigate to={getDashboardPath(user)} replace />;
+  return <>{children}</>;
+};
+
+const DashboardRedirect: React.FC = () => {
+  const user = useAuthStore((s) => s.user);
+  const destination = getDashboardPath(user);
+  return <Navigate to={destination === '/' ? '/login' : destination} replace />;
+};
+
+const AssignedRoleRoute: React.FC<{ role: string; children: React.ReactNode }> = ({ role, children }) => {
+  const accessToken = useAuthStore((state) => state.accessToken);
+  const user = useAuthStore((state) => state.user);
+  if (!accessToken) return <Navigate to="/login" replace />;
+  if (!hasAssignedRole(user, role)) return <Navigate to={getDashboardPath(user)} replace />;
+  return <>{children}</>;
+};
+
+const WorkspaceSectionRoute: React.FC<{ config: WorkspaceConfig }> = ({ config }) => {
+  const { section = 'dashboard' } = useParams();
+  const validSection = config.nav.some((item) => item.section === section) ? section : 'dashboard';
+  return <RoleWorkspacePage config={config} section={validSection} />;
+};
+
 const FacilitiesRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
-  if (!roles.includes('FACILITIES_MANAGER') && !roles.includes('ROLE_FACILITIES_MANAGER')) return <Navigate to="/" replace />;
+  if (!hasAssignedRole(user, 'FACILITIES_MANAGER')) return <Navigate to={getDashboardPath(user)} replace />;
   return <>{children}</>;
 };
 
@@ -162,17 +181,7 @@ const FacilitiesOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ child
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
-  if (!roles.includes('FACILITIES_OFFICER') && !roles.includes('ROLE_FACILITIES_OFFICER')) return <Navigate to="/" replace />;
-  return <>{children}</>;
-};
-
-const ComplianceOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const accessToken = useAuthStore((s) => s.accessToken);
-  const user = useAuthStore((s) => s.user);
-  if (!accessToken) return <Navigate to="/login" replace />;
-  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
-  if (!roles.includes('COMPLIANCE_OFFICER') && !roles.includes('ROLE_COMPLIANCE_OFFICER')) return <Navigate to="/" replace />;
+  if (!hasAssignedRole(user, 'FACILITIES_OFFICER')) return <Navigate to={getDashboardPath(user)} replace />;
   return <>{children}</>;
 };
 
@@ -180,8 +189,7 @@ const LegalOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ children }
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
-  if (!roles.includes('LEGAL_OFFICER') && !roles.includes('ROLE_LEGAL_OFFICER')) return <Navigate to="/" replace />;
+  if (!hasAssignedRole(user, 'LEGAL_OFFICER')) return <Navigate to={getDashboardPath(user)} replace />;
   return <>{children}</>;
 };
 
@@ -189,8 +197,7 @@ const ContractOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ childre
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
-  if (!roles.includes('CONTRACT_OFFICER') && !roles.includes('ROLE_CONTRACT_OFFICER')) return <Navigate to="/" replace />;
+  if (!hasAssignedRole(user, 'CONTRACT_OFFICER')) return <Navigate to={getDashboardPath(user)} replace />;
   return <>{children}</>;
 };
 
@@ -198,99 +205,68 @@ const EmployeeRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  const roles = user?.roles ? user.roles.map(r => r.toUpperCase()) : [];
-  if (!roles.includes('EMPLOYEE') && !roles.includes('ROLE_EMPLOYEE')) return <Navigate to="/" replace />;
-  return <>{children}</>;
-};
-
-const GovernanceRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const accessToken = useAuthStore((s) => s.accessToken);
-  const user = useAuthStore((s) => s.user);
-  if (!accessToken) return <Navigate to="/login" replace />;
-  const allowed = [
-    'DATA_PROTECTION_OFFICER',
-    'LEGAL_COUNSEL',
-    'RECORDS_OFFICER',
-    'DEPARTMENT_HEAD',
-    'SECURITY_OFFICER',
-    'INFOSEC_OFFICER',
-  ].some((role) => hasRole(user, role));
-  if (!allowed) return <Navigate to={getDashboardPath(user)} replace />;
-  return <>{children}</>;
-};
-
-const RbacAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const accessToken = useAuthStore((s) => s.accessToken);
-  const user = useAuthStore((s) => s.user);
-  if (!accessToken) return <Navigate to="/login" replace />;
-  if (!isSuperAdmin(user) && !hasPermission(user, 'RBAC_ADMINISTER')) {
-    return <Navigate to={getDashboardPath(user)} replace />;
-  }
-  return <>{children}</>;
-};
-
-const SecurityMonitorRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const accessToken = useAuthStore((s) => s.accessToken);
-  const user = useAuthStore((s) => s.user);
-  if (!accessToken) return <Navigate to="/login" replace />;
-  if (!isSuperAdmin(user) && !hasPermission(user, 'SECURITY_MONITOR')) {
-    return <Navigate to={getDashboardPath(user)} replace />;
-  }
+  if (!hasAssignedRole(user, 'EMPLOYEE')) return <Navigate to={getDashboardPath(user)} replace />;
   return <>{children}</>;
 };
 
 export const App: React.FC = () => {
   return (
     <BrowserRouter>
+      <OversightBanner />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/hr-assistance" element={<HRAssistancePage />} />
         <Route element={
           <ProtectedRoute>
-            <AppLayout />
+            <AdminPortalRoute>
+              <AppLayout />
+            </AdminPortalRoute>
           </ProtectedRoute>
         }>
-          <Route index element={<AdminRoute><SysAdminDashboard /></AdminRoute>} />
+          <Route index element={<DashboardRedirect />} />
+          <Route path="super-admin" element={<SuperAdminRoute><SysAdminDashboard /></SuperAdminRoute>} />
+          <Route path="system-admin" element={<SystemAdminRoute><SysAdminDashboard /></SystemAdminRoute>} />
 
-          {/* System Administrator modules only */}
-          <Route path="admin/integrations" element={<AdminRoute><IntegrationsPage /></AdminRoute>} />
-          <Route path="admin/ai-services" element={<AdminRoute><AiServicesPage /></AdminRoute>} />
-          <Route path="admin/backup" element={<AdminRoute><BackupPage /></AdminRoute>} />
-          <Route path="admin/settings" element={<AdminRoute><SettingsPage /></AdminRoute>} />
-          <Route path="admin/notifications" element={<AdminRoute><NotificationsPage /></AdminRoute>} />
-          <Route path="admin/analytics" element={<AdminRoute><AnalyticsPage /></AdminRoute>} />
+          {/* System Administrator infrastructure modules */}
+          <Route path="admin/integrations" element={<SystemAdminRoute><IntegrationsPage /></SystemAdminRoute>} />
+          <Route path="admin/ai-services" element={<SystemAdminRoute><AiServicesPage /></SystemAdminRoute>} />
+          <Route path="admin/backup" element={<SystemAdminRoute><BackupPage /></SystemAdminRoute>} />
+          <Route path="admin/settings" element={<SystemAdminRoute><SettingsPage /></SystemAdminRoute>} />
+          <Route path="admin/notifications" element={<SystemAdminRoute><NotificationsPage /></SystemAdminRoute>} />
+          <Route path="admin/system-health" element={<SystemAdminRoute><SystemHealthPage /></SystemAdminRoute>} />
+           <Route path="admin/sessions" element={<SystemAdminRoute><SessionsPage /></SystemAdminRoute>} />
+           <Route path="admin/account-lockouts" element={<SystemAdminRoute><AccountLockoutsPage /></SystemAdminRoute>} />
+
+          {/* Super Administrator business, RBAC, and security oversight */}
+          <Route path="admin/analytics" element={<SuperAdminRoute><AnalyticsPage /></SuperAdminRoute>} />
           {/* Legacy path preserved for bookmarks/links to the renamed Analytics page */}
-          <Route path="admin/reports" element={<AdminRoute><Navigate to="/admin/analytics" replace /></AdminRoute>} />
-          <Route path="admin/system-health" element={<AdminRoute><SystemHealthPage /></AdminRoute>} />
-          <Route path="admin/sessions" element={<AdminRoute><SessionsPage /></AdminRoute>} />
-          <Route path="admin/rbac" element={<RbacAdminRoute><RbacAdminPage /></RbacAdminRoute>} />
+          <Route path="admin/reports" element={<SuperAdminRoute><Navigate to="/admin/analytics" replace /></SuperAdminRoute>} />
+          <Route path="admin/rbac" element={<SuperAdminRoute><RbacAdminPage /></SuperAdminRoute>} />
 
           {/* Security Center */}
           <Route path="security" element={
-            <AdminRoute>
+            <SuperAdminRoute>
               <ErrorBoundary fallback={<div className="text-rose-400">Security Center failed to load.</div>}>
                 <SecurityCenterPage />
               </ErrorBoundary>
-            </AdminRoute>
+            </SuperAdminRoute>
           } />
-          <Route path="security/audit-logs" element={<AdminRoute><AuditLogsPage /></AdminRoute>} />
+          <Route path="security/audit-logs" element={<SuperAdminRoute><AuditLogsPage /></SuperAdminRoute>} />
         </Route>
 
-        {/* Governance dashboards for RBAC3 oversight roles */}
-        <Route element={
-          <GovernanceRoute>
-            <GovernanceLayout />
-          </GovernanceRoute>
-        }>
-          <Route path="governance" element={<GovernanceDashboard />} />
-          <Route path="governance/security" element={
-            <SecurityMonitorRoute>
-              <ErrorBoundary fallback={<div className="text-rose-400">Security monitoring failed to load.</div>}>
-                <SecurityCenterPage />
-              </ErrorBoundary>
-            </SecurityMonitorRoute>
-          } />
-        </Route>
+        {workspaceConfigs.map((config) => (
+          <Route
+            key={config.role}
+            element={
+              <AssignedRoleRoute role={config.role}>
+                <RoleWorkspaceLayout config={config} />
+              </AssignedRoleRoute>
+            }
+          >
+            <Route path={config.slug} element={<Navigate to={`/${config.slug}/dashboard`} replace />} />
+            <Route path={`${config.slug}/:section`} element={<WorkspaceSectionRoute config={config} />} />
+          </Route>
+        ))}
 
         {/* Facilities Manager routes */}
         <Route element={
@@ -326,23 +302,6 @@ export const App: React.FC = () => {
           <Route path="facilities-officer/settings" element={<FoSettingsPage />} />
         </Route>
 
-        {/* Compliance Officer routes */}
-        <Route element={
-          <ComplianceOfficerRoute>
-            <ComplianceOfficerLayout />
-          </ComplianceOfficerRoute>
-        }>
-          <Route path="compliance" element={<ComplianceOfficerDashboard />} />
-          <Route path="compliance/documents" element={<CoDocumentsPage />} />
-          <Route path="compliance/contracts" element={<CoContractsPage />} />
-          <Route path="compliance/alerts" element={<CoComplianceAlertsPage />} />
-          <Route path="compliance/retention-policies" element={<CoRetentionPoliciesPage />} />
-          <Route path="compliance/disposals" element={<CoDisposalApprovalsPage />} />
-          <Route path="compliance/audit-logs" element={<CoAuditLogsPage />} />
-          <Route path="compliance/profile" element={<CoProfilePage />} />
-          <Route path="compliance/settings" element={<CoSettingsPage />} />
-        </Route>
-
         {/* Legal Officer routes */}
         <Route element={
           <LegalOfficerRoute>
@@ -355,8 +314,6 @@ export const App: React.FC = () => {
           <Route path="legal/cases" element={<LoLegalCasesPage />} />
           <Route path="legal/notices" element={<LoLegalNoticesPage />} />
           <Route path="legal/documents" element={<LoDocumentsPage />} />
-          <Route path="legal/retention-policies" element={<LoRetentionPage />} />
-          <Route path="legal/audit-logs" element={<LoAuditLogsPage />} />
           <Route path="legal/profile" element={<LoProfilePage />} />
           <Route path="legal/settings" element={<LoSettingsPage />} />
         </Route>

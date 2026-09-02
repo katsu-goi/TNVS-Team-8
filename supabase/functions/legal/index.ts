@@ -263,6 +263,12 @@ async function loadContract(id: string): Promise<Row | null> {
   return (data as unknown as Row) ?? null;
 }
 
+async function loadLegalWorkflowByContract(contractId: string): Promise<Row | null> {
+  const { data, error } = await db.from("legal_contract_workflows").select("*").eq("contract_id", contractId).maybeSingle();
+  if (error) throw new Error(`legal workflow lookup failed: ${error.message}`);
+  return (data as unknown as Row) ?? null;
+}
+
 async function loadClause(id: string): Promise<Row | null> {
   const { data, error } = await db.from("contract_clauses").select("*").eq("id", id).maybeSingle();
   if (error) throw new Error(`clause lookup failed: ${error.message}`);
@@ -514,7 +520,25 @@ async function handleListContracts(ctx: AuthContext | null, req: Request) {
     ({ data, error } = await db.from("contracts").select("*"));
   }
   if (error) throw new Error(`contracts query failed: ${error.message}`);
-  const result = ((data as unknown as Row[]) ?? []).map(toContractDto);
+  const contracts = (data as unknown as Row[]) ?? [];
+  const contractIds = contracts.map((contract) => contract.id);
+  const workflowResult = contractIds.length
+    ? await db.from("legal_contract_workflows").select("id, contract_id, state, locked, counsel_comments, submitted_at, reviewed_at").in("contract_id", contractIds)
+    : { data: [], error: null };
+  if (workflowResult.error) throw new Error(`legal workflow lookup failed: ${workflowResult.error.message}`);
+  const workflows = new Map((workflowResult.data ?? []).map((workflow) => [String(workflow.contract_id), workflow]));
+  const result = contracts.map((contract) => {
+    const workflow = workflows.get(contract.id);
+    return {
+      ...toContractDto(contract),
+      workflowId: workflow?.id ?? null,
+      workflowState: workflow?.state ?? "DRAFT",
+      workflowLocked: Boolean(workflow?.locked),
+      counselComments: workflow?.counsel_comments ?? null,
+      submittedAt: workflow?.submitted_at ?? null,
+      reviewedAt: workflow?.reviewed_at ?? null,
+    };
+  });
   return jsonResponse(ok(result, "Contracts retrieved"), 200);
 }
 
@@ -585,6 +609,14 @@ async function handleCreateContract(ctx: AuthContext | null, req: Request, body:
     (saved as unknown as { id: string }).id, `Created contract: ${title}`,
     ctx ? resolveClientIp(req).ip : null, "INFO");
 
+  const { error: workflowError } = await db.from("legal_contract_workflows").upsert({
+    contract_id: (saved as unknown as { id: string }).id,
+    state: "DRAFT",
+    created_at: now,
+    updated_at: now,
+  }, { onConflict: "contract_id" });
+  if (workflowError) throw new Error(`legal workflow creation failed: ${workflowError.message}`);
+
   return jsonResponse(ok(toContractDto(saved as unknown as Row), "Contract created"), 200);
 }
 
@@ -592,6 +624,10 @@ async function handleUpdateContract(ctx: AuthContext | null, req: Request, body:
   if (!isUuid(p.id)) return generic500();
   const c = await loadContract(p.id);
   if (!c) return resourceNotFound("Contract", p.id);
+  const workflow = await loadLegalWorkflowByContract(p.id);
+  if (workflow?.locked) {
+    return businessRule("This contract is locked while Legal Counsel reviews or has approved it.");
+  }
   const b = (body ?? {}) as Record<string, unknown>;
 
   const patch: Record<string, unknown> = { updated_at: naiveIso(), updated_by: ctx ? ctx.email : "SYSTEM" };
@@ -1122,33 +1158,28 @@ async function handleLegalCasesCreate(ctx: AuthContext | null, req: Request, bod
 // ---------------------------------------------------------------------------
 
 const routes = [
-  { method: "GET", path: "/legal/dashboard/summary", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleDashboard },
-  { method: "GET", path: "/legal/contracts", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleListContracts },
-  { method: "GET", path: "/legal/contracts/:id", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleGetContract },
-  { method: "POST", path: "/legal/contracts", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleCreateContract },
-  { method: "PUT", path: "/legal/contracts/:id", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleUpdateContract },
-  { method: "POST", path: "/legal/contracts/:id/submit-review", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleSubmitReview },
-  { method: "POST", path: "/legal/contracts/:id/approve", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleApproveContract },
-  { method: "POST", path: "/legal/contracts/:id/activate", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleActivateContract },
-  { method: "POST", path: "/legal/contracts/:id/renew", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleRenewContract },
-  { method: "POST", path: "/legal/contracts/:id/terminate", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleTerminateContract },
-  { method: "POST", path: "/legal/contracts/:id/clauses", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleAddClause },
-  { method: "PUT", path: "/legal/clauses/:id", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleUpdateClause },
-  { method: "DELETE", path: "/legal/clauses/:id", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleDeleteClause },
-  { method: "GET", path: "/legal/cases", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleListCases },
-  { method: "GET", path: "/legal/cases/:id", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleGetCase },
-  { method: "POST", path: "/legal/cases", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleCreateCase },
-  { method: "PUT", path: "/legal/cases/:id", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleUpdateCase },
-  { method: "POST", path: "/legal/cases/:id/status", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleChangeCaseStatus },
-  { method: "GET", path: "/legal/documents", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleListDocuments },
-  { method: "POST", path: "/legal/documents/:id/approve", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleApproveDocument },
-  { method: "GET", path: "/legal/retention-policies", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleRetentionPolicies },
-  { method: "GET", path: "/legal/notices", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleNotices },
-  { method: "POST", path: "/legal/notices/:id/acknowledge", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleAcknowledgeNotice },
-  { method: "POST", path: "/legal/notices/:id/dismiss", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleDismissNotice },
-  { method: "GET", path: "/legal/audit-logs", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleAuditLogs },
-  { method: "GET", path: "/legal-cases", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleLegalCasesList },
-  { method: "POST", path: "/legal-cases", guard: { kind: "roles", roles: LEGAL_ROLES }, handler: handleLegalCasesCreate },
+  { method: "GET", path: "/legal/dashboard/summary", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleDashboard },
+  { method: "GET", path: "/legal/contracts", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleListContracts },
+  { method: "GET", path: "/legal/contracts/:id", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleGetContract },
+  { method: "POST", path: "/legal/contracts", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleCreateContract },
+  { method: "PUT", path: "/legal/contracts/:id", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleUpdateContract },
+  { method: "POST", path: "/legal/contracts/:id/clauses", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleAddClause },
+  { method: "PUT", path: "/legal/clauses/:id", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleUpdateClause },
+  { method: "DELETE", path: "/legal/clauses/:id", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleDeleteClause },
+  { method: "GET", path: "/legal/cases", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleListCases },
+  { method: "GET", path: "/legal/cases/:id", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleGetCase },
+  { method: "POST", path: "/legal/cases", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleCreateCase },
+  { method: "PUT", path: "/legal/cases/:id", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleUpdateCase },
+  { method: "POST", path: "/legal/cases/:id/status", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleChangeCaseStatus },
+  { method: "GET", path: "/legal/documents", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleListDocuments },
+  { method: "POST", path: "/legal/documents/:id/approve", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleApproveDocument },
+  { method: "GET", path: "/legal/retention-policies", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleRetentionPolicies },
+  { method: "GET", path: "/legal/notices", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleNotices },
+  { method: "POST", path: "/legal/notices/:id/acknowledge", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleAcknowledgeNotice },
+  { method: "POST", path: "/legal/notices/:id/dismiss", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleDismissNotice },
+  { method: "GET", path: "/legal/audit-logs", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleAuditLogs },
+  { method: "GET", path: "/legal-cases", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleLegalCasesList },
+  { method: "POST", path: "/legal-cases", guard: { kind: "assignedRoles", roles: LEGAL_ROLES }, handler: handleLegalCasesCreate },
 ] as const;
 
 Deno.serve(createHandler(routes as never, { name: "legal" }));

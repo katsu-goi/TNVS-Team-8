@@ -3,9 +3,15 @@ import { ArrowRight, CheckCircle2, GitBranch, KeyRound, ShieldAlert, UsersRound 
 import { useNavigate } from 'react-router-dom';
 import { extractErrorMessage } from '../../api/client';
 import { rbacService, RbacDashboardProfile } from '../../api/rbacService';
-import { useAuthStore } from '../../stores/authStore';
+import { hasRole, useAuthStore } from '../../stores/authStore';
+import { OversightPanel } from '../oversight';
 
 const profiles: Record<string, { title: string; subtitle: string; focus: string[] }> = {
+  compliance: {
+    title: 'Compliance Manager Dashboard',
+    subtitle: 'Management oversight, compliance coordination, and controlled approval visibility.',
+    focus: ['Compliance program oversight', 'Officer workload coordination', 'Management approvals and exceptions'],
+  },
   privacy: {
     title: 'Data Protection Dashboard',
     subtitle: 'Privacy oversight, data-subject risk, and compliance assurance.',
@@ -38,6 +44,29 @@ const profiles: Record<string, { title: string; subtitle: string; focus: string[
   },
 };
 
+const roleDashboardKeys = [
+  { role: 'COMPLIANCE_MANAGER', dashboardKey: 'compliance' },
+  { role: 'DATA_PROTECTION_OFFICER', dashboardKey: 'privacy' },
+  { role: 'RECORDS_OFFICER', dashboardKey: 'records' },
+  { role: 'LEGAL_COUNSEL', dashboardKey: 'counsel' },
+  { role: 'DEPARTMENT_HEAD', dashboardKey: 'department' },
+  { role: 'SECURITY_OFFICER', dashboardKey: 'security' },
+  { role: 'INFOSEC_OFFICER', dashboardKey: 'infosec' },
+];
+
+const dashboardAliases: Record<string, string> = {
+  compliance_manager: 'compliance',
+  'compliance-manager': 'compliance',
+  data_protection: 'privacy',
+  legal_counsel: 'counsel',
+  records_governance: 'records',
+  department_head: 'department',
+  security_operations: 'security',
+  information_security: 'infosec',
+};
+
+const normalizeRole = (role: string) => role.toUpperCase().replace(/^ROLE_/, '');
+
 export const GovernanceDashboard: React.FC = () => {
   const user = useAuthStore((state) => state.user);
   const navigate = useNavigate();
@@ -48,11 +77,14 @@ export const GovernanceDashboard: React.FC = () => {
     rbacService.getDashboard().then(setProfile).catch((reason) => setError(extractErrorMessage(reason)));
   }, []);
 
-  const dashboardKey = profile?.dashboardKey || user?.dashboardKey || 'department';
+  const effectiveRoles = (profile?.effectiveRoles || user?.roles || []).map(normalizeRole);
+  const roleDashboardKey = roleDashboardKeys.find(({ role }) => effectiveRoles.includes(role))?.dashboardKey;
+  const requestedDashboardKey = profile?.dashboardKey || user?.dashboardKey || '';
+  const dashboardKey = roleDashboardKey || dashboardAliases[requestedDashboardKey] || requestedDashboardKey || 'department';
   const content = profiles[dashboardKey] || profiles.department;
   const portalLinks = useMemo(() => {
-    const roles = new Set(profile?.effectiveRoles || user?.roles || []);
-    const permissions = new Set(profile?.permissions || user?.permissions || []);
+    const roles = new Set((profile?.effectiveRoles || user?.roles || []).map(normalizeRole));
+    const permissions = new Set((profile?.permissions || user?.permissions || []).map((permission) => permission.toUpperCase()));
     return [
       { label: 'Open Compliance Workspace', path: '/compliance', role: 'COMPLIANCE_OFFICER' },
       { label: 'Open Legal Workspace', path: '/legal', role: 'LEGAL_OFFICER' },
@@ -103,6 +135,8 @@ export const GovernanceDashboard: React.FC = () => {
           );
         })}
       </section>
+
+      {hasRole(user, 'COMPLIANCE_MANAGER') && <OversightPanel />}
 
       <section className="grid gap-6 lg:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

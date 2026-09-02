@@ -3,9 +3,9 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, LogOut, Search, ShieldCheck, ChevronRight, ChevronDown,
   AlertTriangle, BarChart3, Activity, Monitor, Layers, Download,
-  Settings, Bell, FileText, Cpu, KeyRound,
+  Settings, Bell, FileText, Cpu, KeyRound, LockKeyhole,
 } from 'lucide-react';
-import { hasPermission, isSuperAdmin, useAuthStore } from '../../stores/authStore';
+import { getAssignedRoles, isActorSuperAdmin, isActorSystemAdmin, useAuthStore } from '../../stores/authStore';
 import { useDashboardStore } from '../../stores/dashboardStore';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { logout as apiLogout } from '../../api/authService';
@@ -53,30 +53,38 @@ export const AppLayout: React.FC = () => {
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/';
-    return location.pathname === path;
+    return location.pathname === path || location.pathname.startsWith(`${path}/`);
   };
 
   const isExactActive = (path: string) => location.pathname === path;
 
-  const systemAdministrator = isSuperAdmin(user);
+  const superAdministrator = isActorSuperAdmin(user);
+  const systemAdministrator = isActorSystemAdmin(user);
+  const actorRole = getAssignedRoles(user)[0] || user?.roles?.[0] || 'ADMINISTRATOR';
+  const dashboardPath = superAdministrator ? '/super-admin' : '/system-admin';
+  const portalLabel = superAdministrator ? 'Super Administration' : 'System Administration';
+  const searchPlaceholder = superAdministrator
+    ? 'Search analytics, RBAC, or security oversight...'
+    : 'Search infrastructure, integrations, or settings...';
   const navItems = [
-  { id: 'dashboard', label: 'Dashboard', path: '/', icon: LayoutDashboard, exact: true, visible: systemAdministrator },
+  { id: 'dashboard', label: superAdministrator ? 'Executive Dashboard' : 'System Dashboard', path: dashboardPath, icon: LayoutDashboard, exact: true, visible: true },
+  { id: 'analytics', label: 'Business Analytics', path: '/admin/analytics', icon: BarChart3, exact: true, visible: superAdministrator },
+  { id: 'rbac', label: 'RBAC Administration', path: '/admin/rbac', icon: KeyRound, exact: true, visible: superAdministrator },
+  {
+  id: 'security', label: 'Security Oversight', path: '/security', icon: ShieldCheck,
+  visible: superAdministrator,
+  children: [
+  { id: 'security-audit', label: 'Audit Logs', path: '/security/audit-logs', icon: FileText, exact: true },
+  ],
+  },
   { id: 'integrations', label: 'Integrations', path: '/admin/integrations', icon: Layers, exact: true, visible: systemAdministrator },
   { id: 'ai-services', label: 'AI Services', path: '/admin/ai-services', icon: Cpu, exact: true, visible: systemAdministrator },
   { id: 'backup', label: 'Backup & DR', path: '/admin/backup', icon: Download, exact: true, visible: systemAdministrator },
   { id: 'settings', label: 'System Config', path: '/admin/settings', icon: Settings, exact: true, visible: systemAdministrator },
   { id: 'notifications', label: 'Notifications', path: '/admin/notifications', icon: Bell, exact: true, visible: systemAdministrator },
-  { id: 'analytics', label: 'Analytics', path: '/admin/analytics', icon: BarChart3, exact: true, visible: systemAdministrator },
-  { id: 'rbac', label: 'RBAC Administration', path: '/admin/rbac', icon: KeyRound, exact: true, visible: hasPermission(user, 'RBAC_ADMINISTER') },
-  {
-  id: 'security', label: 'Security Center', path: '/security', icon: ShieldCheck,
-  visible: systemAdministrator,
-  children: [
-  { id: 'security-audit', label: 'Audit Logs', path: '/security/audit-logs', icon: FileText, exact: true },
-  { id: 'security-sessions', label: 'Sessions', path: '/admin/sessions', icon: Activity, exact: true },
-  { id: 'security-health', label: 'System Health', path: '/admin/system-health', icon: Monitor, exact: true },
-  ],
-  },
+  { id: 'system-health', label: 'System Health', path: '/admin/system-health', icon: Monitor, exact: true, visible: systemAdministrator },
+  { id: 'sessions', label: 'Sessions', path: '/admin/sessions', icon: Activity, exact: true, visible: systemAdministrator },
+  { id: 'account-lockouts', label: 'Account Lockouts', path: '/admin/account-lockouts', icon: LockKeyhole, exact: true, visible: systemAdministrator },
   ].filter((item) => item.visible);
 
   return (
@@ -88,7 +96,7 @@ export const AppLayout: React.FC = () => {
      </div>
     <div className="min-w-0">
      <h1 className="font-heading font-bold text-sm text-white leading-tight truncate">Hirna Portal</h1>
-     <p className="text-[10px] text-[#FFC629] font-medium truncate">System Administration</p>
+     <p className="text-[10px] text-[#FFC629] font-medium truncate">{portalLabel}</p>
     </div>
     </div>
  
@@ -203,7 +211,7 @@ export const AppLayout: React.FC = () => {
     </div>
     <div className="min-w-0">
     <p className="text-xs font-semibold text-white truncate leading-tight">{user?.fullName || 'Administrator'}</p>
-    <p className="text-[10px] text-white/70 font-mono truncate leading-tight">{user?.roles?.[0] || 'SUPER_ADMIN'}</p>
+      <p className="text-[10px] text-white/70 font-mono truncate leading-tight">{actorRole}</p>
     </div>
     </div>
     <button onClick={() => setShowLogoutModal(true)} title="Logout"
@@ -220,14 +228,15 @@ export const AppLayout: React.FC = () => {
    <div className="flex items-center space-x-4 flex-1 max-w-md">
    <div className="relative w-full">
    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-    <input type="text" placeholder="Search logs, settings, or admin pages..."
+     <input type="text" placeholder={searchPlaceholder}
    value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
    className="w-full bg-white border border-slate-300 text-sm rounded-xl pl-9 pr-4 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-[#D02F34] focus:ring-1 focus:ring-[#D02F34]/30 transition-all" />
    </div>
    </div>
  <div className="flex items-center space-x-3 relative">
-    <NotificationBell />
-    </div>
+     <NotificationBell />
+     <span className="text-xs text-slate-400 font-mono">{portalLabel}</span>
+     </div>
     </header>
 
  <div className="p-8">

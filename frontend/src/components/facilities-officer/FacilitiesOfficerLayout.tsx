@@ -39,9 +39,9 @@ export const FacilitiesOfficerLayout: React.FC = () => {
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', path: '/facilities-officer', icon: LayoutDashboard },
-    { id: 'reservations', label: 'Facilities Reservation', path: '/facilities-officer/reservations', icon: Calendar },
-    { id: 'visitors', label: 'Visitor Management', path: '/facilities-officer/visitors', icon: Eye },
-    { id: 'documents', label: 'Documents', path: '/facilities-officer/documents', icon: FileText },
+    { id: 'reservations', label: 'Hub Queue & Desk Allocation', path: '/facilities-officer/reservations', icon: Calendar },
+    { id: 'visitors', label: 'Driver/Visitor Screening', path: '/facilities-officer/visitors', icon: Eye },
+    { id: 'documents', label: 'Facility Documents & Permits', path: '/facilities-officer/documents', icon: FileText },
     { id: 'notifications', label: 'Notifications', path: '/facilities-officer/notifications', icon: Bell },
     { id: 'profile', label: 'Profile', path: '/facilities-officer/profile', icon: User },
     { id: 'settings', label: 'Settings', path: '/facilities-officer/settings', icon: Settings },

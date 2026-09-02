@@ -4,6 +4,7 @@ import {
   Building2, Settings, ShieldCheck, ShieldAlert, Plus, Loader2,
 } from 'lucide-react';
 import { safeFetchJson } from '../../api/client';
+import { facilitiesService } from '../../api/facilitiesService';
 import { DocumentUploadPanel } from '../documents/DocumentUploadPanel';
 import { visitorService } from '../../api/visitorService';
 import { ID_TYPES } from '../../types/visitors';
@@ -533,6 +534,7 @@ export const FoDocumentsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const [documentCategory, setDocumentCategory] = useState('GENERAL_FACILITY_DOCUMENT');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -562,7 +564,29 @@ export const FoDocumentsPage: React.FC = () => {
         <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
       </div>
 
-      <DocumentUploadPanel onUploaded={() => setRetry(r => r + 1)} />
+      <DocumentUploadPanel
+        documentCategory={documentCategory}
+        onDocumentCategoryChange={setDocumentCategory}
+        documentCategoryOptions={[
+          'GENERAL_FACILITY_DOCUMENT',
+          "MAYOR'S_BUSINESS_PERMIT",
+          'FIRE_SAFETY_CLEARANCE',
+          'SANITARY_CERTIFICATE',
+          'LTFRB_CPC',
+          'GOVERNMENT_MEMO_CIRCULAR',
+        ]}
+        onUploaded={async (uploaded) => {
+          try {
+            await facilitiesService.routeFacilityDocument({
+              documentId: uploaded.id,
+              documentCategory,
+            });
+            setRetry(r => r + 1);
+          } catch (err: any) {
+            setError(err?.message || 'Document uploaded but routing failed');
+          }
+        }}
+      />
 
       {documents.length === 0 ? (
         <EmptyState icon={FileText} title="No Documents" desc="No facility-related documents have been uploaded." />

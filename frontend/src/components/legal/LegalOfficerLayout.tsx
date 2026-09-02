@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, LogOut, FileText, FileSignature,
-  Archive, ScrollText, User, Settings,
+  User, Settings,
   ChevronRight, AlertTriangle, Search,
   BellRing, Gavel,
 } from 'lucide-react';
@@ -45,8 +45,6 @@ export const LegalOfficerLayout: React.FC = () => {
     { id: 'cases', label: 'Legal Cases', path: '/legal/cases', icon: Gavel },
     { id: 'notices', label: 'Legal Notices', path: '/legal/notices', icon: BellRing },
     { id: 'documents', label: 'Documents', path: '/legal/documents', icon: FileText },
-    { id: 'retention', label: 'Retention', path: '/legal/retention-policies', icon: Archive, view: true },
-    { id: 'audit', label: 'Audit Trail', path: '/legal/audit-logs', icon: ScrollText, view: true },
     { id: 'profile', label: 'Profile', path: '/legal/profile', icon: User },
     { id: 'settings', label: 'Settings', path: '/legal/settings', icon: Settings },
   ];
@@ -83,9 +81,6 @@ export const LegalOfficerLayout: React.FC = () => {
                     <Icon className={`w-[18px] h-[18px] shrink-0 ${navIsActive ? 'text-white' : 'text-white/60'}`} />
                     <span className="truncate">{item.label}</span>
                   </div>
-                  {item.view && (
-                    <span className="text-[9px] text-white/40 font-mono px-1.5 py-0.5 rounded-full border border-white/20">view</span>
-                  )}
                   {navIsActive && <ChevronRight className="w-3.5 h-3.5 shrink-0 text-white" />}
                 </button>
               );

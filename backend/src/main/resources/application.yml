@@ -195,6 +195,9 @@ app:
     bootstrap:
       enabled: ${RBAC_BOOTSTRAP_ENABLED:false}
       passwords:
+        system-admin: ${RBAC_SYSTEM_ADMIN_PASSWORD:}
+        compliance-manager: ${RBAC_COMPLIANCE_MANAGER_PASSWORD:}
+        legal-officer: ${RBAC_LEGAL_OFFICER_PASSWORD:}
         super-admin: ${RBAC_SUPER_ADMIN_PASSWORD:}
         dpo: ${RBAC_DPO_PASSWORD:}
         legal-counsel: ${RBAC_LEGAL_COUNSEL_PASSWORD:}

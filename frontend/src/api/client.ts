@@ -1,4 +1,5 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
+import { clearOversightSession, getOversightSessionId } from '../utils/oversightSession';
 
 const DEFAULT_SUPABASE_PROJECT_URL = 'https://dunijfrvfozwlykpkfhy.supabase.co';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim();
@@ -35,6 +36,7 @@ const SUPABASE_FUNCTION_ALIASES: Record<string, string> = {
   'facilities-manager': 'facilities',
   'facilities-officer': 'facilities',
   facilities: 'facilities',
+  governance: 'governance',
   legal: 'legal',
   monitoring: 'monitoring',
   notifications: 'notifications',
@@ -63,6 +65,10 @@ function routeSupabaseFunction(url: string): string {
   const functionName = firstSegment ? SUPABASE_FUNCTION_ALIASES[firstSegment] : undefined;
   if (!functionName) return normalized;
 
+  if (firstSegment === functionName) {
+    return `${pathname}${query ? `?${query}` : ''}`;
+  }
+
   return `/${functionName}${pathname}${query ? `?${query}` : ''}`;
 }
 
@@ -88,6 +94,10 @@ const prepareRequest = (config: InternalAxiosRequestConfig) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  const oversightSessionId = getOversightSessionId();
+  if (oversightSessionId) {
+    config.headers['X-Oversight-Session'] = oversightSessionId;
+  }
   return config;
 };
 
@@ -110,6 +120,7 @@ function clearStoredSession() {
   localStorage.removeItem('accessToken');
   localStorage.removeItem('refreshToken');
   localStorage.removeItem('user');
+  clearOversightSession();
   window.dispatchEvent(new Event('auth:session-expired'));
 }
 

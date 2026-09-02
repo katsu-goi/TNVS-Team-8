@@ -9,7 +9,7 @@ export const DEFAULT_CORS: CorsOptions = {
   allowOrigin: "*",
   allowMethods: "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   allowHeaders:
-    "Authorization,Content-Type,X-Requested-With,Accept,Origin,User-Agent,Accept-Language,apikey,x-client-info",
+    "Authorization,Content-Type,X-Requested-With,X-Oversight-Session,Accept,Origin,User-Agent,Accept-Language,apikey,x-client-info",
   exposeHeaders: "Content-Disposition",
 };
 
@@ -20,7 +20,7 @@ export function corsHeaders(options: CorsOptions = DEFAULT_CORS): Headers {
   headers.set(
     "Access-Control-Allow-Headers",
     options.allowHeaders ??
-      "Authorization,Content-Type,X-Requested-With,Accept,Origin,User-Agent,Accept-Language,apikey,x-client-info",
+      "Authorization,Content-Type,X-Requested-With,X-Oversight-Session,Accept,Origin,User-Agent,Accept-Language,apikey,x-client-info",
   );
   headers.set("Access-Control-Max-Age", "86400");
   if (options.exposeHeaders) headers.set("Access-Control-Expose-Headers", options.exposeHeaders);
@@ -40,7 +40,7 @@ export function preflightResponse(req: Request): Response {
   headers.set(
     "Access-Control-Allow-Headers",
     requestedHeaders ??
-      "Authorization,Content-Type,X-Requested-With,Accept,Origin,User-Agent,Accept-Language,apikey,x-client-info",
+      "Authorization,Content-Type,X-Requested-With,X-Oversight-Session,Accept,Origin,User-Agent,Accept-Language,apikey,x-client-info",
   );
   return new Response(null, { status: 204, headers });
 }

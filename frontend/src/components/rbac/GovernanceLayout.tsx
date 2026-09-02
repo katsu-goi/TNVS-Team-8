@@ -13,7 +13,18 @@ const dashboardLabels: Record<string, string> = {
   department: 'Department Leadership',
   security: 'Security Operations',
   infosec: 'Information Security',
+  compliance: 'Compliance Management',
 };
+
+const roleNavigation = [
+  { role: 'COMPLIANCE_MANAGER', portalLabel: 'Compliance Management', dashboardLabel: 'Compliance Manager Dashboard' },
+  { role: 'DATA_PROTECTION_OFFICER', portalLabel: 'Data Protection', dashboardLabel: 'Privacy Dashboard' },
+  { role: 'RECORDS_OFFICER', portalLabel: 'Records Governance', dashboardLabel: 'Records Dashboard' },
+  { role: 'LEGAL_COUNSEL', portalLabel: 'Legal Counsel', dashboardLabel: 'Legal Counsel Dashboard' },
+  { role: 'DEPARTMENT_HEAD', portalLabel: 'Department Leadership', dashboardLabel: 'Department Dashboard' },
+  { role: 'SECURITY_OFFICER', portalLabel: 'Security Operations', dashboardLabel: 'Security Operations Dashboard' },
+  { role: 'INFOSEC_OFFICER', portalLabel: 'Information Security', dashboardLabel: 'Information Security Dashboard' },
+];
 
 export const GovernanceLayout: React.FC = () => {
   const { user, logout } = useAuthStore();
@@ -21,15 +32,18 @@ export const GovernanceLayout: React.FC = () => {
   const location = useLocation();
   useUserHeartbeat();
 
+  const roleProfile = roleNavigation.find((profile) => hasRole(user, profile.role));
+  const portalLabel = roleProfile?.portalLabel || dashboardLabels[user?.dashboardKey || ''] || 'Governance';
+  const dashboardLabel = roleProfile?.dashboardLabel || 'Governance Dashboard';
+
   const navItems = [
-    { label: 'Dashboard', path: '/governance', icon: LayoutDashboard, visible: true },
+    { label: dashboardLabel, path: '/governance', icon: LayoutDashboard, visible: true },
     { label: 'Compliance Workspace', path: '/compliance', icon: ShieldCheck, visible: hasRole(user, 'COMPLIANCE_OFFICER') },
     { label: 'Legal Workspace', path: '/legal', icon: Scale, visible: hasRole(user, 'LEGAL_OFFICER') },
     { label: 'Employee Services', path: '/employee', icon: Building2, visible: hasRole(user, 'EMPLOYEE') },
     { label: 'Security Monitoring', path: '/governance/security', icon: LockKeyhole, visible: hasPermission(user, 'SECURITY_MONITOR') },
   ].filter((item) => item.visible);
 
-  const portalLabel = dashboardLabels[user?.dashboardKey || ''] || 'Governance';
   const primaryRole = user?.assignedRoles?.[0] || user?.roles?.[0] || 'GOVERNANCE_USER';
 
   return (

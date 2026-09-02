@@ -1,8 +1,9 @@
 import { verifyAccessToken } from "./jwt.ts";
-import { findUserByEmail, AuthUser, isAccountActive, userSummary } from "./auth-users.ts";
+import { findUserByEmail, findUserById, AuthUser, isAccountActive, userSummary } from "./auth-users.ts";
 import { corsHeaders, isPreflight, jsonResponse, preflightResponse } from "./cors.ts";
 import { fail } from "./envelope.ts";
 import { assertEnv } from "./config.ts";
+import { adminDb } from "./db.ts";
 import { resolveClientIp } from "./ip.ts";
 
 export type AuthContext = {
@@ -29,6 +30,17 @@ export function forbiddenResponse(): Response {
   // Mirrors GlobalExceptionHandler.handleAccessDenied.
   return jsonResponse(
     fail("Access denied: insufficient permissions", "ACCESS_DENIED"),
+    403,
+    corsHeaders(),
+  );
+}
+
+function oversightReadOnlyResponse(): Response {
+  return jsonResponse(
+    fail(
+      "Oversight sessions are read-only. Exit oversight mode before making changes.",
+      "OVERSIGHT_READ_ONLY",
+    ),
     403,
     corsHeaders(),
   );
@@ -94,6 +106,11 @@ export function hasRole(ctx: AuthContext, role: string): boolean {
   return hasAnyRole(ctx, [role]);
 }
 
+export function hasAnyAssignedRole(ctx: AuthContext, roles: string[]): boolean {
+  const normalized = new Set(ctx.user.assignedRoles.map((role) => role.toUpperCase()));
+  return roles.some((role) => normalized.has(role.toUpperCase()));
+}
+
 export function isSuperAdmin(ctx: AuthContext): boolean {
   return hasRole(ctx, "SUPER_ADMIN");
 }
@@ -107,10 +124,67 @@ export function hasPermission(ctx: AuthContext, permission: string): boolean {
   return hasAnyPermission(ctx, [permission]);
 }
 
+const OVERSIGHT_SESSION_HEADER = "X-Oversight-Session";
+const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type ActiveOversightSession = { id: string; target_user_id: string };
+
+async function activeOversightSession(ctx: AuthContext): Promise<ActiveOversightSession | null> {
+  const { data, error } = await adminDb()
+    .from("oversight_sessions")
+    .select("id, target_user_id")
+    .eq("actor_user_id", ctx.userId)
+    .eq("read_only", true)
+    .eq("status", "ACTIVE")
+    .is("ended_at", null)
+    .gt("expires_at", new Date().toISOString())
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`oversight session lookup failed: ${error.message}`);
+  return data as ActiveOversightSession | null;
+}
+
+function isOversightControlPath(req: Request): boolean {
+  return new URL(req.url).pathname.replace(/\/+$/, "").includes("/admin/oversight/");
+}
+
+async function activeReadOnlyOversightSession(ctx: AuthContext, req: Request): Promise<boolean> {
+  if (!MUTATING_METHODS.has(req.method)) return false;
+  if (new URL(req.url).pathname.replace(/\/+$/, "").endsWith("/admin/oversight/stop")) return false;
+
+  const sessionId = req.headers.get(OVERSIGHT_SESSION_HEADER)?.trim();
+  if (sessionId && !UUID_PATTERN.test(sessionId)) return true;
+  return (await activeOversightSession(ctx)) !== null;
+}
+
+async function oversightTargetContext(ctx: AuthContext, req: Request): Promise<AuthContext> {
+  if (isOversightControlPath(req)) return ctx;
+  const session = await activeOversightSession(ctx);
+  if (!session) return ctx;
+
+  const target = await findUserById(session.target_user_id);
+  if (!target || !isAccountActive(target)) {
+    throw new Error("oversight target is unavailable");
+  }
+  const authorities = target.roles.map((role) => `ROLE_${role}`).concat(target.permissions);
+  return {
+    ...ctx,
+    user: target,
+    email: target.row.email,
+    userId: target.row.id,
+    roles: target.roles,
+    permissions: target.permissions,
+    authorities,
+  };
+}
+
 export type RouteGuard =
   | { kind: "public" }
   | { kind: "auth" }
   | { kind: "roles"; roles: string[] }
+  | { kind: "assignedRoles"; roles: string[] }
   | { kind: "permissions"; permissions: string[] }
   | { kind: "rolesOrPermissions"; roles: string[]; permissions: string[] };
 
@@ -196,10 +270,28 @@ export function createHandler(routes: Route[], options: RouterOptions = {}): (re
       return safeRun(route.handler, null, req, body, params);
     }
 
-    const ctx = await extractAuthContext(req);
-    if (!ctx) return unauthorizedResponse();
+    const actorCtx = await extractAuthContext(req);
+    if (!actorCtx) return unauthorizedResponse();
+
+    try {
+      if (await activeReadOnlyOversightSession(actorCtx, req)) {
+        return oversightReadOnlyResponse();
+      }
+    } catch (e) {
+      return internalErrorResponse(e);
+    }
+
+    let ctx = actorCtx;
+    try {
+      ctx = await oversightTargetContext(actorCtx, req);
+    } catch (e) {
+      return internalErrorResponse(e);
+    }
 
     if (route.guard.kind === "roles" && !hasAnyRole(ctx, route.guard.roles)) {
+      return forbiddenResponse();
+    }
+    if (route.guard.kind === "assignedRoles" && !hasAnyAssignedRole(ctx, route.guard.roles)) {
       return forbiddenResponse();
     }
     if (route.guard.kind === "permissions" && !hasAnyPermission(ctx, route.guard.permissions)) {

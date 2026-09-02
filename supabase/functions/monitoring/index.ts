@@ -21,8 +21,8 @@ async function handleSubsystemDetail(_ctx: unknown, _req: Request, _body: unknow
 }
 
 const routes = [
-  { method: "GET", path: "/admin/system-monitoring/subsystems", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleSubsystems },
-  { method: "GET", path: "/admin/system-monitoring/subsystems/:id", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleSubsystemDetail },
+  { method: "GET", path: "/admin/system-monitoring/subsystems", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN", "SYSTEM_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleSubsystems },
+  { method: "GET", path: "/admin/system-monitoring/subsystems/:id", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN", "SYSTEM_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleSubsystemDetail },
 ] as const;
 
 Deno.serve(createHandler(routes as never, { name: "monitoring" }));

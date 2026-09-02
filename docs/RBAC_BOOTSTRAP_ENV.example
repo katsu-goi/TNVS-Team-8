@@ -2,6 +2,10 @@
 # Never commit real values or expose them through VITE_* variables.
 
 RBAC_BOOTSTRAP_ENABLED=false
+# Optional password for the backend-created system administrator account.
+# The account is systemadmin@photonicomega.com and defaults to Systemadmin2026! only when
+# this value is omitted. Set it in every non-local deployment.
+RBAC_SYSTEM_ADMIN_PASSWORD=
 RBAC_SUPER_ADMIN_PASSWORD=
 RBAC_DPO_PASSWORD=
 RBAC_LEGAL_COUNSEL_PASSWORD=
@@ -9,3 +13,5 @@ RBAC_RECORDS_PASSWORD=
 RBAC_DEPARTMENT_HEAD_PASSWORD=
 RBAC_SECURITY_PASSWORD=
 RBAC_INFOSEC_PASSWORD=
+RBAC_COMPLIANCE_MANAGER_PASSWORD=
+RBAC_LEGAL_OFFICER_PASSWORD=
