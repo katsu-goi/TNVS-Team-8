@@ -501,6 +501,66 @@ async function handleVaultArchive(ctx: AuthContext | null, _req: Request, _body:
   return jsonResponse(ok("Record validated and vaulted."), 200);
 }
 
+async function pendingDisposalQueue(): Promise<any[]> {
+  return rows(
+    "retention_disposal_queue",
+    "id, source_table, source_record_id, reason, flagged_at, status",
+    (query) => query.eq("status", "PENDING_DELETION").order("flagged_at", { ascending: false }),
+  );
+}
+
+async function handlePendingDisposalQueue() {
+  return jsonResponse(ok(await pendingDisposalQueue()), 200);
+}
+
+async function handleExecuteDisposal(ctx: AuthContext | null, _req: Request, body: unknown, params: RouteParams) {
+  const input = body as Record<string, unknown> | null;
+  const notes = String(input?.notes ?? "").trim();
+  if (notes.length > 2000) {
+    return jsonResponse(fail("Notes must be 2000 characters or fewer.", "VALIDATION_ERROR"), 400);
+  }
+
+  const completedAt = new Date().toISOString();
+  const { data, error } = await db
+    .from("retention_disposal_queue")
+    .update({
+      status: "DISPOSED",
+      reviewed_by: ctx?.userId,
+      reviewed_at: completedAt,
+      completed_at: completedAt,
+      notes: notes || null,
+    })
+    .eq("id", params.id)
+    .eq("status", "PENDING_DELETION")
+    .select("id")
+    .maybeSingle();
+  if (error) throw new Error(`disposal execution failed: ${error.message}`);
+  if (!data) {
+    return jsonResponse(fail("The disposal item is no longer pending review.", "BUSINESS_RULE_VIOLATION"), 409);
+  }
+  return jsonResponse(ok("Disposal recorded and queue item closed."), 200);
+}
+
+async function handlePlaceDisposalOnLegalHold(ctx: AuthContext | null, _req: Request, _body: unknown, params: RouteParams) {
+  const reviewedAt = new Date().toISOString();
+  const { data, error } = await db
+    .from("retention_disposal_queue")
+    .update({
+      status: "ON_HOLD",
+      reviewed_by: ctx?.userId,
+      reviewed_at: reviewedAt,
+    })
+    .eq("id", params.id)
+    .eq("status", "PENDING_DELETION")
+    .select("id")
+    .maybeSingle();
+  if (error) throw new Error(`legal hold update failed: ${error.message}`);
+  if (!data) {
+    return jsonResponse(fail("The disposal item is no longer pending review.", "BUSINESS_RULE_VIOLATION"), 409);
+  }
+  return jsonResponse(ok("Disposal item placed on legal hold."), 200);
+}
+
 async function handleRetentionRun(ctx: AuthContext | null) {
   const policies = await rows("retention_policies", "name, retention_period_days, action_on_expiry", (query) => query.eq("active", true).eq("is_deleted", false));
   let deleted = 0;
@@ -548,6 +608,9 @@ const routes = [
   { method: "POST", path: "/governance/privacy/retention/run", guard: { kind: "assignedRoles", roles: ["DATA_PROTECTION_OFFICER"] }, handler: handleRetentionRun },
   { method: "POST", path: "/governance/records/cctv/:id/decision", guard: { kind: "assignedRoles", roles: ["RECORDS_OFFICER"] }, handler: handleCctvCustody },
   { method: "POST", path: "/governance/records/archives/:id/vault", guard: { kind: "assignedRoles", roles: ["RECORDS_OFFICER"] }, handler: handleVaultArchive },
+  { method: "GET", path: "/governance/records/disposal-queue", guard: { kind: "assignedRoles", roles: ["RECORDS_OFFICER"] }, handler: handlePendingDisposalQueue },
+  { method: "POST", path: "/governance/records/disposal-queue/:id/dispose", guard: { kind: "assignedRoles", roles: ["RECORDS_OFFICER"] }, handler: handleExecuteDisposal },
+  { method: "POST", path: "/governance/records/disposal-queue/:id/legal-hold", guard: { kind: "assignedRoles", roles: ["RECORDS_OFFICER"] }, handler: handlePlaceDisposalOnLegalHold },
 ] as const;
 
 Deno.serve(createHandler(routes as never, { name: "governance" }));

@@ -1,88 +1,80 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { AppLayout } from './components/layout/AppLayout';
-import { LoginPage } from './components/auth/LoginPage';
-import { HRAssistancePage } from './components/auth/HRAssistancePage';
-import { SysAdminDashboard } from './components/sysadmin/SysAdminDashboard';
-import {
-  IntegrationsPage,
-  AiServicesPage,
-  SecurityCenterPage,
-  AuditLogsPage,
-  BackupPage,
-  SettingsPage,
-  NotificationsPage,
-  SystemHealthPage,
-  SessionsPage,
-} from './components/sysadmin/AdminPages';
-import { AnalyticsPage } from './components/sysadmin/AnalyticsDashboard';
-import { RbacAdminPage } from './components/sysadmin/RbacAdminPage';
-import { FacilitiesManagerLayout } from './components/facilities/FacilitiesManagerLayout';
-import { FacilitiesDashboard } from './components/facilities/FacilitiesDashboard';
-import {
-  ReservationsPage,
-  ApprovalPage,
-  RoomsPage,
-  CalendarPage,
-  AssetsPage,
-  ReportsPage as FacilitiesReportsPage,
-  AnalyticsPage as FacilitiesAnalyticsPage,
-  FacilitiesNotificationsPage,
-  ProfilePage,
-  FacilitiesSettingsPage,
-} from './components/facilities/FacilitiesPages';
-import { FacilitiesOfficerLayout } from './components/facilities-officer/FacilitiesOfficerLayout';
-import { FacilitiesOfficerDashboard } from './components/facilities-officer/FacilitiesOfficerDashboard';
-import { FoReservationsPage } from './components/facilities-officer/FoReservationsPage';
-import {
-  FoVisitorManagementPage,
-  FoDocumentsPage,
-  FoNotificationsPage,
-  FoProfilePage,
-  FoSettingsPage,
-} from './components/facilities-officer/FacilitiesOfficerPages';
-import { LegalOfficerLayout } from './components/legal/LegalOfficerLayout';
-import { LegalOfficerDashboard } from './components/legal/LegalOfficerDashboard';
-import { RequestReviewPage } from './components/requests/RequestReviewPage';
-import {
-  LoContractsPage,
-  LoLegalCasesPage,
-  LoLegalNoticesPage,
-  LoDocumentsPage,
-  LoProfilePage,
-  LoSettingsPage,
-} from './components/legal/LegalOfficerPages';
-import { ProcurementOfficerLayout } from './components/procurement/ProcurementOfficerLayout';
-import { ProcurementOfficerDashboard } from './components/procurement/ProcurementOfficerDashboard';
-import {
-  PoContractsPage,
-  PoVendorsPage,
-  PoNoticesPage,
-  PoDocumentsPage,
-  PoLegalCasesPage,
-  PoAuditLogsPage,
-  PoProfilePage,
-  PoSettingsPage,
-} from './components/procurement/ProcurementOfficerPages';
-import { EmployeeLayout } from './components/employee/EmployeeLayout';
-import { EmployeeDashboard } from './components/employee/EmployeeDashboard';
-import {
-  EmpReservationsPage,
-  EmpVisitorsPage,
-  EmpDocumentsPage,
-  EmpRequestsPage,
-  EmpNotificationsPage,
-  EmpProfilePage,
-  EmpSettingsPage,
-} from './components/employee/EmployeePages';
 import { useAuthStore, getDashboardPath, isActorSuperAdmin, isActorSystemAdmin, hasAssignedRole } from './stores/authStore';
 import { OversightBanner } from './components/oversight';
-import { RoleWorkspaceLayout } from './components/workspaces/RoleWorkspaceLayout';
-import { RoleWorkspacePage } from './components/workspaces/RoleWorkspacePage';
 import { workspaceConfigs } from './components/workspaces/workspaceConfig';
 import type { WorkspaceConfig } from './components/workspaces/workspaceConfig';
 import { useParams } from 'react-router-dom';
-import { AccountLockoutsPage } from './components/sysadmin/AccountLockoutsPage';
+
+const lazyNamed = (loader: () => Promise<any>, exportName: string) =>
+  lazy(() => loader().then((module) => ({ default: module[exportName] }))) as React.LazyExoticComponent<React.ComponentType<any>>;
+
+const AppLayout = lazyNamed(() => import('./components/layout/AppLayout'), 'AppLayout');
+const LoginPage = lazyNamed(() => import('./components/auth/LoginPage'), 'LoginPage');
+const HRAssistancePage = lazyNamed(() => import('./components/auth/HRAssistancePage'), 'HRAssistancePage');
+const SysAdminDashboard = lazyNamed(() => import('./components/sysadmin/SysAdminDashboard'), 'SysAdminDashboard');
+const IntegrationsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'IntegrationsPage');
+const AiServicesPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'AiServicesPage');
+const SecurityCenterPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'SecurityCenterPage');
+const AuditLogsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'AuditLogsPage');
+const BackupPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'BackupPage');
+const SettingsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'SettingsPage');
+const NotificationsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'NotificationsPage');
+const SystemHealthPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'SystemHealthPage');
+const SessionsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'SessionsPage');
+const AnalyticsPage = lazyNamed(() => import('./components/sysadmin/AnalyticsDashboard'), 'AnalyticsPage');
+const RbacAdminPage = lazyNamed(() => import('./components/sysadmin/RbacAdminPage'), 'RbacAdminPage');
+const FacilitiesManagerLayout = lazyNamed(() => import('./components/facilities/FacilitiesManagerLayout'), 'FacilitiesManagerLayout');
+const FacilitiesDashboard = lazyNamed(() => import('./components/facilities/FacilitiesDashboard'), 'FacilitiesDashboard');
+const ReservationsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'ReservationsPage');
+const ApprovalPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'ApprovalPage');
+const RoomsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'RoomsPage');
+const CalendarPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'CalendarPage');
+const AssetsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'AssetsPage');
+const FacilitiesReportsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'ReportsPage');
+const FacilitiesAnalyticsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'AnalyticsPage');
+const FacilitiesNotificationsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'FacilitiesNotificationsPage');
+const ProfilePage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'ProfilePage');
+const FacilitiesSettingsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'FacilitiesSettingsPage');
+const FacilitiesOfficerLayout = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerLayout'), 'FacilitiesOfficerLayout');
+const FacilitiesOfficerDashboard = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerDashboard'), 'FacilitiesOfficerDashboard');
+const FoReservationsPage = lazyNamed(() => import('./components/facilities-officer/FoReservationsPage'), 'FoReservationsPage');
+const FoVisitorManagementPage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'FoVisitorManagementPage');
+const FoDocumentsPage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'FoDocumentsPage');
+const FoNotificationsPage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'FoNotificationsPage');
+const FoProfilePage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'FoProfilePage');
+const FoSettingsPage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'FoSettingsPage');
+const LegalOfficerLayout = lazyNamed(() => import('./components/legal/LegalOfficerLayout'), 'LegalOfficerLayout');
+const LegalOfficerDashboard = lazyNamed(() => import('./components/legal/LegalOfficerDashboard'), 'LegalOfficerDashboard');
+const RequestReviewPage = lazyNamed(() => import('./components/requests/RequestReviewPage'), 'RequestReviewPage');
+const LoContractsPage = lazyNamed(() => import('./components/legal/LegalOfficerPages'), 'LoContractsPage');
+const LoLegalCasesPage = lazyNamed(() => import('./components/legal/LegalOfficerPages'), 'LoLegalCasesPage');
+const LoLegalNoticesPage = lazyNamed(() => import('./components/legal/LegalOfficerPages'), 'LoLegalNoticesPage');
+const LoDocumentsPage = lazyNamed(() => import('./components/legal/LegalOfficerPages'), 'LoDocumentsPage');
+const LoProfilePage = lazyNamed(() => import('./components/legal/LegalOfficerPages'), 'LoProfilePage');
+const LoSettingsPage = lazyNamed(() => import('./components/legal/LegalOfficerPages'), 'LoSettingsPage');
+const ProcurementOfficerLayout = lazyNamed(() => import('./components/procurement/ProcurementOfficerLayout'), 'ProcurementOfficerLayout');
+const ProcurementOfficerDashboard = lazyNamed(() => import('./components/procurement/ProcurementOfficerDashboard'), 'ProcurementOfficerDashboard');
+const PoContractsPage = lazyNamed(() => import('./components/procurement/ProcurementOfficerPages'), 'PoContractsPage');
+const PoVendorsPage = lazyNamed(() => import('./components/procurement/ProcurementOfficerPages'), 'PoVendorsPage');
+const PoNoticesPage = lazyNamed(() => import('./components/procurement/ProcurementOfficerPages'), 'PoNoticesPage');
+const PoDocumentsPage = lazyNamed(() => import('./components/procurement/ProcurementOfficerPages'), 'PoDocumentsPage');
+const PoLegalCasesPage = lazyNamed(() => import('./components/procurement/ProcurementOfficerPages'), 'PoLegalCasesPage');
+const PoAuditLogsPage = lazyNamed(() => import('./components/procurement/ProcurementOfficerPages'), 'PoAuditLogsPage');
+const PoProfilePage = lazyNamed(() => import('./components/procurement/ProcurementOfficerPages'), 'PoProfilePage');
+const PoSettingsPage = lazyNamed(() => import('./components/procurement/ProcurementOfficerPages'), 'PoSettingsPage');
+const EmployeeLayout = lazyNamed(() => import('./components/employee/EmployeeLayout'), 'EmployeeLayout');
+const EmployeeDashboard = lazyNamed(() => import('./components/employee/EmployeeDashboard'), 'EmployeeDashboard');
+const EmpReservationsPage = lazyNamed(() => import('./components/employee/EmployeePages'), 'EmpReservationsPage');
+const EmpVisitorsPage = lazyNamed(() => import('./components/employee/EmployeePages'), 'EmpVisitorsPage');
+const EmpDocumentsPage = lazyNamed(() => import('./components/employee/EmployeePages'), 'EmpDocumentsPage');
+const EmpRequestsPage = lazyNamed(() => import('./components/employee/EmployeePages'), 'EmpRequestsPage');
+const EmpNotificationsPage = lazyNamed(() => import('./components/employee/EmployeePages'), 'EmpNotificationsPage');
+const EmpProfilePage = lazyNamed(() => import('./components/employee/EmployeePages'), 'EmpProfilePage');
+const EmpSettingsPage = lazyNamed(() => import('./components/employee/EmployeePages'), 'EmpSettingsPage');
+const RoleWorkspaceLayout = lazyNamed(() => import('./components/workspaces/RoleWorkspaceLayout'), 'RoleWorkspaceLayout');
+const RoleWorkspacePage = lazyNamed(() => import('./components/workspaces/RoleWorkspacePage'), 'RoleWorkspacePage');
+const AccountLockoutsPage = lazyNamed(() => import('./components/sysadmin/AccountLockoutsPage'), 'AccountLockoutsPage');
 
 class ErrorBoundary extends React.Component<
   { fallback: React.ReactNode; children: React.ReactNode },
@@ -213,7 +205,8 @@ export const App: React.FC = () => {
   return (
     <BrowserRouter>
       <OversightBanner />
-      <Routes>
+      <Suspense fallback={<div className="min-h-screen bg-slate-50 p-8 text-sm text-slate-500">Loading workspace...</div>}>
+        <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/hr-assistance" element={<HRAssistancePage />} />
         <Route element={
@@ -353,7 +346,8 @@ export const App: React.FC = () => {
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   );
 };

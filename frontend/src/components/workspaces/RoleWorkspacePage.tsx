@@ -4,6 +4,7 @@ import { extractErrorMessage } from '../../api/client';
 import { governanceService, WorkspacePayload } from '../../api/governanceService';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { OversightPanel } from '../oversight';
+import { RecordsDisposalConsole } from '../records/RecordsDisposalConsole';
 import type { WorkspaceConfig } from './workspaceConfig';
 
 const toneClass = {
@@ -42,6 +43,11 @@ function rowDetails(row: Record<string, any>): Array<[string, string]> {
 }
 
 export const RoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: string }> = ({ config, section }) => {
+  if (config.slug === 'records' && section === 'disposal') return <RecordsDisposalConsole />;
+  return <GenericRoleWorkspacePage config={config} section={section} />;
+};
+
+const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: string }> = ({ config, section }) => {
   const [payload, setPayload] = useState<WorkspacePayload | null>(null);
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState('');

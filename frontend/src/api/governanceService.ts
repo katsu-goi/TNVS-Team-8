@@ -16,6 +16,15 @@ export type WorkspacePayload = {
   alerts: Record<string, any>[];
 };
 
+export type RetentionDisposalQueueItem = {
+  id: string;
+  source_table: string;
+  source_record_id: string;
+  reason: string;
+  flagged_at: string;
+  status: 'PENDING_DELETION';
+};
+
 const dataOf = <T>(response: { data?: { data?: T } }): T => response.data?.data as T;
 
 export const governanceService = {
@@ -57,5 +66,17 @@ export const governanceService = {
 
   async vaultArchive(id: string): Promise<void> {
     await apiClient.post(`/governance/records/archives/${id}/vault`);
+  },
+
+  async getPendingDisposalQueue(): Promise<RetentionDisposalQueueItem[]> {
+    return dataOf<RetentionDisposalQueueItem[]>(await apiClient.get('/governance/records/disposal-queue')) || [];
+  },
+
+  async executeDisposal(id: string, notes?: string): Promise<void> {
+    await apiClient.post(`/governance/records/disposal-queue/${id}/dispose`, { notes: notes || '' });
+  },
+
+  async placeDisposalOnLegalHold(id: string): Promise<void> {
+    await apiClient.post(`/governance/records/disposal-queue/${id}/legal-hold`);
   },
 };
