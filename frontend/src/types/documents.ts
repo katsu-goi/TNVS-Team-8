@@ -39,6 +39,18 @@ export interface DocumentSummary {
   aiPredictedCategory?: string | null;
   /** 0.00 - 1.00 */
   confidenceScore?: number | null;
+  aiDetectedDocumentType?: string | null;
+  aiMetadataSuggestions?: Record<string, string | string[]>;
+  aiClassificationReason?: string | null;
+  aiProviderName?: string | null;
+  aiModel?: string | null;
+  aiProcessedAt?: string | null;
+  aiExtractionMethod?: 'TXT_UTF8' | 'PDF_EMBEDDED_TEXT' | 'DOCX_XML' | null;
+  aiReviewRequired?: boolean;
+  classificationReviewStatus?: 'PENDING' | 'APPROVED' | 'CORRECTED' | 'REJECTED' | null;
+  finalClassification?: string | null;
+  classificationReviewedBy?: string | null;
+  classificationReviewedAt?: string | null;
 
   tags?: DocumentTag[];
   category?: { id: string; name: string } | null;
@@ -58,7 +70,7 @@ export interface DocumentUploadOptions {
 
 /** File types the backend accepts. */
 export const ALLOWED_UPLOAD_EXTENSIONS = [
-  'pdf', 'png', 'jpg', 'jpeg', 'doc', 'docx', 'xls', 'xlsx', 'txt',
+  'pdf', 'docx', 'txt',
 ] as const;
 
 /** Ready-to-use value for an <input type="file"> accept attribute. */
@@ -66,4 +78,12 @@ export const UPLOAD_ACCEPT_ATTRIBUTE = ALLOWED_UPLOAD_EXTENSIONS
   .map((ext) => `.${ext}`)
   .join(',');
 
-export const MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024;
+export const MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024;
+
+export interface DocumentBusinessCategory {
+  id: string;
+  name: string;
+  description?: string | null;
+}
+
+export type ClassificationReviewDecision = 'APPROVE' | 'CORRECT' | 'REJECT';

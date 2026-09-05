@@ -6,34 +6,71 @@ export function env(name: string, fallback = ""): string {
   }
 }
 
+function requiredEnv(name: string): string {
+  const value = env(name).trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+function positiveIntegerEnv(name: string, fallback: string): number {
+  const raw = env(name, fallback).trim();
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return value;
+}
+
 export function assertEnv(): void {
-  // Environment initialized with safe defaults
+  const url = requiredEnv("SUPABASE_URL");
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    throw new Error("SUPABASE_URL must be a valid absolute URL");
+  }
+  const localHttp = parsedUrl.protocol === "http:"
+    && ["localhost", "127.0.0.1", "host.docker.internal"].includes(parsedUrl.hostname);
+  if (parsedUrl.protocol !== "https:" && !localHttp) {
+    throw new Error("SUPABASE_URL must use HTTPS outside local development");
+  }
+
+  const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
+  const anonKey = env("SUPABASE_ANON_KEY").trim();
+  if (serviceRoleKey === anonKey || serviceRoleKey.startsWith("sb_publishable_")) {
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY must be a service-role secret, not a publishable/anon key");
+  }
+
+  const jwtSecret = requiredEnv("JWT_SECRET");
+  const normalizedSecret = jwtSecret.toLowerCase();
+  if (new TextEncoder().encode(jwtSecret).byteLength < 32
+    || normalizedSecret.includes("change-me")
+    || normalizedSecret.includes("placeholder")) {
+    throw new Error("JWT_SECRET must be a non-placeholder secret of at least 32 bytes");
+  }
+
+  positiveIntegerEnv("JWT_ACCESS_TTL_SECONDS", "900");
+  positiveIntegerEnv("JWT_REFRESH_TTL_SECONDS", "604800");
 }
 
 export const config = {
   get url() {
-    return env("SUPABASE_URL", "https://dunijfrvfozwlykpkfhy.supabase.co").replace(/\/$/, "");
+    return requiredEnv("SUPABASE_URL").replace(/\/$/, "");
   },
   get serviceRoleKey() {
-    return env(
-      "SUPABASE_SERVICE_ROLE_KEY",
-      env(
-        "SUPABASE_ANON_KEY",
-        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR1bmlqZnJ2Zm96d2x5a3BrZmh5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MjAxNTAwMDAwMH0.placeholder",
-      ),
-    );
+    return requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
   },
   get jwtSecret() {
-    return env("JWT_SECRET", "CHANGE-ME-IN-PRODUCTION-PhotonicOmega-2026-jwt-signing-secret-placeholder");
+    return requiredEnv("JWT_SECRET");
   },
   get jwtIssuer() {
     return env("JWT_ISSUER", "photonic-omega-facilities");
   },
   get accessTokenTtlSeconds() {
-    return Number(env("JWT_ACCESS_TTL_SECONDS", "900"));
+    return positiveIntegerEnv("JWT_ACCESS_TTL_SECONDS", "900");
   },
   get refreshTokenTtlSeconds() {
-    return Number(env("JWT_REFRESH_TTL_SECONDS", "604800"));
+    return positiveIntegerEnv("JWT_REFRESH_TTL_SECONDS", "604800");
   },
   get dbConnectionString() {
     return env("SUPABASE_DB_URL", "");

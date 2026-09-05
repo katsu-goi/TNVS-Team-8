@@ -41,7 +41,6 @@ export const useRealtimeSyncStore = create<RealtimeSyncState>((set, get) => ({
   connected: false,
   lastSyncAt: null,
   revision: 0,
-  stompClient: null,
   supabaseChannels: [],
 
   connectSync: () => {

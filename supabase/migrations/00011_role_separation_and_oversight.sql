@@ -17,7 +17,6 @@ on conflict (name) do update set
   is_system_role = true,
   is_deleted = false,
   updated_at = now();
-
 insert into public.permissions (name, display_name, description, module, resource, action, created_at)
 values
   ('USER_OVERSIGHT', 'User Oversight',
@@ -37,7 +36,6 @@ on conflict (name) do update set
   action = excluded.action,
   is_deleted = false,
   updated_at = now();
-
 insert into public.role_permissions (role_id, permission_id)
 select role_row.id, permission_row.id
 from (values
@@ -50,7 +48,6 @@ from (values
 join public.roles role_row on role_row.name = grant_row.role_name
 join public.permissions permission_row on permission_row.name = grant_row.permission_name
 on conflict do nothing;
-
 insert into public.role_conflicts (
   first_role_id, second_role_id, code, description, active, is_deleted, created_at
 )
@@ -76,14 +73,12 @@ on conflict (code) do update set
   active = true,
   is_deleted = false,
   updated_at = now();
-
 delete from public.user_roles user_role
 using public.users app_user, public.roles role_row
 where user_role.user_id = app_user.id
   and user_role.role_id = role_row.id
   and lower(app_user.email) = 'admin@photonicomega.com'
   and role_row.name = 'SUPER_ADMIN';
-
 insert into public.user_roles (user_id, role_id)
 select app_user.id, role_row.id
 from public.users app_user
@@ -91,14 +86,12 @@ join public.roles role_row on role_row.name = 'SYSTEM_ADMIN'
 where lower(app_user.email) = 'admin@photonicomega.com'
   and app_user.is_deleted = false
 on conflict do nothing;
-
 delete from public.user_roles user_role
 using public.users app_user, public.roles role_row
 where user_role.user_id = app_user.id
   and user_role.role_id = role_row.id
   and lower(app_user.email) = 'superadmin@photonicomega.com'
   and role_row.name = 'SYSTEM_ADMIN';
-
 insert into public.user_roles (user_id, role_id)
 select app_user.id, role_row.id
 from public.users app_user
@@ -106,7 +99,6 @@ join public.roles role_row on role_row.name = 'SUPER_ADMIN'
 where lower(app_user.email) = 'superadmin@photonicomega.com'
   and app_user.is_deleted = false
 on conflict do nothing;
-
 create table if not exists public.oversight_sessions (
   id uuid primary key default gen_random_uuid(),
   actor_user_id uuid not null references public.users(id) on delete restrict,
@@ -132,18 +124,14 @@ create table if not exists public.oversight_sessions (
   ),
   constraint chk_oversight_justification check (length(btrim(justification)) >= 10)
 );
-
 create unique index if not exists uq_active_oversight_actor
   on public.oversight_sessions(actor_user_id)
   where status = 'ACTIVE';
-
 create index if not exists idx_oversight_target_started
   on public.oversight_sessions(target_user_id, started_at desc);
-
 create index if not exists idx_oversight_expiry
   on public.oversight_sessions(expires_at)
   where status = 'ACTIVE';
-
 create table if not exists public.admin_audit_logs (
   id uuid primary key default gen_random_uuid(),
   actor_user_id uuid references public.users(id) on delete set null,
@@ -157,13 +145,10 @@ create table if not exists public.admin_audit_logs (
   user_agent varchar(500),
   occurred_at timestamptz not null default now()
 );
-
 create index if not exists idx_admin_audit_actor_time
   on public.admin_audit_logs(actor_user_id, occurred_at desc);
-
 create index if not exists idx_admin_audit_target_time
   on public.admin_audit_logs(target_user_id, occurred_at desc);
-
 create or replace function public.reject_immutable_audit_change()
 returns trigger
 language plpgsql
@@ -174,17 +159,13 @@ begin
   raise exception 'admin audit logs are immutable';
 end;
 $$;
-
 revoke all on function public.reject_immutable_audit_change() from public;
-
 drop trigger if exists protect_admin_audit_logs on public.admin_audit_logs;
 create trigger protect_admin_audit_logs
 before update or delete on public.admin_audit_logs
 for each row execute function public.reject_immutable_audit_change();
-
 alter table public.oversight_sessions enable row level security;
 alter table public.admin_audit_logs enable row level security;
-
 do $$
 declare
   table_name text;
@@ -215,7 +196,6 @@ begin
     end loop;
   end loop;
 end $$;
-
 do $$
 declare
   table_name text;
@@ -232,7 +212,6 @@ begin
     );
   end loop;
 end $$;
-
 delete from public.role_hierarchy hierarchy
 using public.roles senior, public.roles junior
 where hierarchy.senior_role_id = senior.id
@@ -241,7 +220,6 @@ where hierarchy.senior_role_id = senior.id
     ('DATA_PROTECTION_OFFICER', 'COMPLIANCE_OFFICER'),
     ('RECORDS_OFFICER', 'COMPLIANCE_OFFICER')
   );
-
 insert into public.role_hierarchy (senior_role_id, junior_role_id)
 select senior.id, junior.id
 from (values

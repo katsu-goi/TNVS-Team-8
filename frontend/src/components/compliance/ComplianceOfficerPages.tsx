@@ -135,6 +135,10 @@ export const CoDocumentsPage: React.FC = () => {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [disposalDoc, setDisposalDoc] = useState<any | null>(null);
   const [disposalReason, setDisposalReason] = useState('');
+  const [classificationCategories, setClassificationCategories] = useState<any[]>([]);
+  const [reviewDoc, setReviewDoc] = useState<any | null>(null);
+  const [reviewCategoryId, setReviewCategoryId] = useState('');
+  const [reviewNotes, setReviewNotes] = useState('');
   const { show, node: toastNode } = useToast();
 
   const load = useCallback(async () => {
@@ -142,8 +146,12 @@ export const CoDocumentsPage: React.FC = () => {
     setError(null);
     try {
       const qs = statusFilter ? `?status=${statusFilter}` : '';
-      const json = await safeFetchJson(`/api/v1/compliance/documents${qs}`);
+      const [json, categoriesJson] = await Promise.all([
+        safeFetchJson(`/api/v1/compliance/documents${qs}`),
+        safeFetchJson('/api/v1/documents/classification-categories'),
+      ]);
       setDocuments(json?.data ?? []);
+      setClassificationCategories(categoriesJson?.data ?? []);
     } catch (err: any) {
       setError(err?.message || 'Failed to load');
     } finally {
@@ -174,6 +182,26 @@ export const CoDocumentsPage: React.FC = () => {
     setDisposalDoc(null);
     setDisposalReason('');
     await runAction(doc.id, 'disposal', 'Disposal requested', { reason });
+  };
+
+  const reviewClassification = async (doc: any, decision: 'APPROVE' | 'CORRECT' | 'REJECT', categoryId?: string, notes?: string) => {
+    setBusyId(doc.id);
+    try {
+      await mutate(`/api/v1/documents/${doc.id}/classification-review`, 'POST', {
+        decision,
+        ...(categoryId ? { categoryId } : {}),
+        ...(notes?.trim() ? { notes: notes.trim() } : {}),
+      });
+      show(decision === 'APPROVE' ? 'AI classification approved' : decision === 'CORRECT' ? 'Classification corrected and approved' : 'AI suggestion rejected');
+      setReviewDoc(null);
+      setReviewCategoryId('');
+      setReviewNotes('');
+      await load();
+    } catch (err: any) {
+      show(err?.message || 'Classification review failed', 'err');
+    } finally {
+      setBusyId(null);
+    }
   };
 
   const statuses = ['', 'PENDING_REVIEW', 'APPROVED', 'ARCHIVED', 'REJECTED'];
@@ -213,7 +241,7 @@ export const CoDocumentsPage: React.FC = () => {
               <thead>
                 <tr className="border-b border-slate-100 text-left">
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Title</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Classification</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">AI Suggestion</th>
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Version</th>
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Size</th>
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
@@ -230,14 +258,29 @@ export const CoDocumentsPage: React.FC = () => {
                         <p className="font-medium text-slate-900">{d.title}</p>
                         <p className="text-[11px] text-slate-400 font-mono">{d.fileName}</p>
                       </td>
-                      <td className="p-3"><Badge text={d.classificationLevel} className="bg-slate-100 text-slate-600" /></td>
+                      <td className="p-3">
+                        <p className="text-xs font-semibold text-slate-700">{(d.finalClassification || d.aiPredictedCategory || 'UNCLASSIFIED').replace(/_/g, ' ')}</p>
+                        <p className={`text-[10px] mt-0.5 ${d.aiReviewRequired ? 'text-amber-600' : 'text-emerald-600'}`}>
+                          {d.confidenceScore == null ? 'No confidence' : `${Math.round(Number(d.confidenceScore) * 100)}% confidence`}
+                          {d.aiReviewRequired ? ' · manual check required' : ' · high-confidence suggestion'}
+                        </p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">Security: {d.classificationLevel}</p>
+                      </td>
                       <td className="p-3 text-slate-600 font-mono text-xs">v{d.versionNumber ?? 1}</td>
                       <td className="p-3 text-xs text-slate-400">{formatSize(d.fileSize)}</td>
                       <td className="p-3"><Badge text={d.status} className={docStatusBadge(d.status)} /></td>
                       <td className="p-3">
                         <div className="flex items-center justify-end space-x-1.5">
                           {status === 'PENDING_REVIEW' && (
-                            <ActionButton onClick={() => runAction(d.id, 'approve', 'Document approved')} icon={CheckCircle2} variant="primary" disabled={busy}>Approve</ActionButton>
+                            <>
+                              <ActionButton onClick={() => reviewClassification(d, 'APPROVE')} icon={CheckCircle2} variant="primary" disabled={busy}>Approve AI</ActionButton>
+                              <ActionButton onClick={() => {
+                                setReviewDoc(d);
+                                setReviewCategoryId(classificationCategories.find(c => c.name === d.aiPredictedCategory)?.id || classificationCategories[0]?.id || '');
+                                setReviewNotes('');
+                              }} disabled={busy}>Correct</ActionButton>
+                              <ActionButton onClick={() => reviewClassification(d, 'REJECT')} icon={Ban} variant="danger" disabled={busy}>Reject AI</ActionButton>
+                            </>
                           )}
                           {status !== 'ARCHIVED' && status !== 'DELETED' && (
                             <ActionButton onClick={() => runAction(d.id, 'archive', 'Document archived')} icon={Archive} disabled={busy}>Archive</ActionButton>
@@ -279,6 +322,40 @@ export const CoDocumentsPage: React.FC = () => {
             <div className="flex justify-end space-x-2 pt-1">
               <ActionButton onClick={() => setDisposalDoc(null)}>Cancel</ActionButton>
               <ActionButton onClick={submitDisposal} icon={Trash2} variant="danger">Submit Request</ActionButton>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {reviewDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4" onClick={() => setReviewDoc(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4" onClick={event => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Correct AI Classification</h3>
+                <p className="text-xs text-slate-500 mt-1">{reviewDoc.title}</p>
+              </div>
+              <button onClick={() => setReviewDoc(null)} className="p-1 text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
+              <p><span className="font-semibold">AI suggestion:</span> {(reviewDoc.aiPredictedCategory || 'UNCLASSIFIED').replace(/_/g, ' ')}</p>
+              <p><span className="font-semibold">Confidence:</span> {Math.round(Number(reviewDoc.confidenceScore ?? 0) * 100)}%</p>
+              {reviewDoc.aiClassificationReason && <p><span className="font-semibold">Reason:</span> {reviewDoc.aiClassificationReason}</p>}
+              <p><span className="font-semibold">Provenance:</span> {reviewDoc.aiProviderName || 'Unknown'} / {reviewDoc.aiModel || 'Unknown'}</p>
+            </div>
+            <div>
+              <label className="text-[11px] font-semibold text-slate-500 uppercase">Final category</label>
+              <select value={reviewCategoryId} onChange={event => setReviewCategoryId(event.target.value)} className="mt-1 w-full text-sm border border-slate-200 rounded-xl px-3 py-2">
+                {classificationCategories.map(category => <option key={category.id} value={category.id}>{category.name.replace(/_/g, ' ')}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[11px] font-semibold text-slate-500 uppercase">Review notes (optional)</label>
+              <textarea value={reviewNotes} onChange={event => setReviewNotes(event.target.value)} rows={3} maxLength={1000} className="mt-1 w-full text-sm border border-slate-200 rounded-xl px-3 py-2" />
+            </div>
+            <div className="flex justify-end gap-2">
+              <ActionButton onClick={() => setReviewDoc(null)}>Cancel</ActionButton>
+              <ActionButton onClick={() => reviewClassification(reviewDoc, 'CORRECT', reviewCategoryId, reviewNotes)} icon={CheckCircle2} variant="primary" disabled={!reviewCategoryId || busyId === reviewDoc.id}>Save corrected classification</ActionButton>
             </div>
           </div>
         </div>

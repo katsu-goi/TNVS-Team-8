@@ -21,7 +21,6 @@ interface NotificationRealtimeState {
 export const useNotificationRealtimeStore = create<NotificationRealtimeState>((set, get) => ({
   connected: false,
   revision: 0,
-  stompClient: null,
   supabaseChannel: null,
 
   connect: () => {

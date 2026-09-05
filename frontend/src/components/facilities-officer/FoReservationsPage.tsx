@@ -364,7 +364,7 @@ export const FoReservationsPage: React.FC = () => {
         <div className="flex items-center space-x-2 shrink-0">
           <div className="hidden sm:flex items-center px-3 py-1.5 rounded-xl border bg-emerald-50 border-emerald-200">
             <Activity className="w-4 h-4 mr-2 text-emerald-600 animate-pulse" />
-            <span className="text-xs font-mono font-semibold text-emerald-600">STOMP SYNC LIVE</span>
+            <span className="text-xs font-mono font-semibold text-emerald-600">REALTIME SYNC LIVE</span>
           </div>
 
           <button

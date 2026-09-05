@@ -1,5 +1,4 @@
 create extension if not exists pg_cron;
-
 alter table public.facility_data_logs
   add column if not exists retention_status text not null default 'NOT_DUE',
   add column if not exists retention_hold boolean not null default false,
@@ -7,7 +6,6 @@ alter table public.facility_data_logs
   add column if not exists retention_flagged_at timestamptz,
   add column if not exists retention_flagged_by text,
   add column if not exists retention_flag_reason text;
-
 do $$
 begin
   if not exists (
@@ -21,7 +19,6 @@ begin
       check (retention_status in ('NOT_DUE', 'PENDING_DELETION', 'ON_HOLD', 'DISPOSED', 'CANCELLED'));
   end if;
 end $$;
-
 create table if not exists public.retention_disposal_queue (
   id uuid primary key default gen_random_uuid(),
   source_table text not null default 'facility_data_logs',
@@ -41,20 +38,16 @@ create table if not exists public.retention_disposal_queue (
   ),
   constraint uq_retention_queue_source_record unique (source_table, source_record_id)
 );
-
 create index if not exists idx_facility_data_cctv_retention_due
   on public.facility_data_logs (data_category, created_at)
   where status = 'ACTIVE'
     and data_category = 'CCTV_FOOTAGE'
     and retention_status = 'NOT_DUE'
     and retention_hold = false;
-
 create index if not exists idx_retention_disposal_queue_status
   on public.retention_disposal_queue (status, flagged_at);
-
 alter table public.retention_disposal_queue enable row level security;
 revoke all privileges on table public.retention_disposal_queue from anon, authenticated;
-
 create or replace function public.flag_expired_cctv_for_deletion()
 returns integer
 language plpgsql
@@ -127,9 +120,7 @@ begin
   return flagged_count;
 end;
 $$;
-
 revoke all on function public.flag_expired_cctv_for_deletion() from public;
-
 do $$
 declare
   existing_job_id bigint;

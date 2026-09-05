@@ -2,6 +2,7 @@ import { createHandler, AuthContext } from "../_shared/guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
 import { ok } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
+import { classifyDocumentContent, DocumentAiError } from "../_shared/document-ai.ts";
 
 const db = adminDb();
 const PLACEHOLDER_KEY = "sk-proj-default";
@@ -325,17 +326,19 @@ const enc = new TextEncoder();
 const dec = new TextDecoder();
 
 async function encryptionKey(): Promise<CryptoKey> {
-  const envKey = Deno.env.get("AI_API_KEY_ENCRYPTION_KEY");
+  const envKey = Deno.env.get("AI_API_KEY_ENCRYPTION_KEY")?.trim();
+  if (!envKey) {
+    throw new Error("AI_API_KEY_ENCRYPTION_KEY is required to protect AI provider credentials");
+  }
   let raw: Uint8Array;
-  if (envKey && envKey.trim() !== "") {
-    try {
-      const b = atob(envKey.trim());
-      raw = Uint8Array.from(b, (c) => c.charCodeAt(0));
-    } catch {
-      raw = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(envKey.trim())));
-    }
-  } else {
-    raw = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(Deno.env.get("JWT_SECRET") ?? "photonic-omega-facilities")));
+  try {
+    const decoded = atob(envKey);
+    raw = Uint8Array.from(decoded, (c) => c.charCodeAt(0));
+  } catch {
+    throw new Error("AI_API_KEY_ENCRYPTION_KEY must be base64 encoded");
+  }
+  if (raw.byteLength !== 32) {
+    throw new Error("AI_API_KEY_ENCRYPTION_KEY must decode to exactly 32 bytes");
   }
   return crypto.subtle.importKey("raw", raw as unknown as BufferSource, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
 }
@@ -393,6 +396,8 @@ type ProviderDto = {
   endpoint: string | null;
   apiKey: string | null;
   capabilities: string[];
+  lastVerifiedAt: string | null;
+  requiresCredentialReconfiguration: boolean;
 };
 
 function parseCapabilities(serialized: string | null): string[] {
@@ -413,13 +418,22 @@ async function loadProviders(): Promise<ProviderDto[]> {
   if (error) throw new Error(`ai_providers query failed: ${error.message}`);
   const out: ProviderDto[] = [];
   for (const row of (data as Array<Record<string, unknown>>) ?? []) {
-    const apiKey = await decryptKey(String(row.encrypted_api_key ?? ""));
+    const sealedKey = String(row.encrypted_api_key ?? "");
+    const apiKey = await decryptKey(sealedKey);
+    const credentialUnavailable = sealedKey.trim() === "" || apiKey == null;
+    if (credentialUnavailable && String(row.status ?? "").toUpperCase() !== "OFFLINE") {
+      const { error: reconcileError } = await db.from("ai_providers").update({
+        status: "OFFLINE",
+        updated_at: nowString(),
+      }).eq("id", String(row.id));
+      if (reconcileError) throw new Error(`provider status reconciliation failed: ${reconcileError.message}`);
+    }
     out.push({
       id: String(row.id),
       name: String(row.name),
       model: row.default_model != null ? String(row.default_model) : null,
-      status: String(row.status ?? "CONNECTED"),
-      lastSync: "Just now",
+      status: credentialUnavailable ? "OFFLINE" : String(row.status ?? "CONNECTED"),
+      lastSync: row.last_verified_at != null ? String(row.last_verified_at) : "Never",
       responseTime: null,
       isDefault: row.is_default === true,
       type: String(row.provider_type ?? "openai"),
@@ -427,6 +441,8 @@ async function loadProviders(): Promise<ProviderDto[]> {
       endpoint: row.endpoint != null ? String(row.endpoint) : null,
       apiKey,
       capabilities: parseCapabilities(row.capabilities ? String(row.capabilities) : null),
+      lastVerifiedAt: row.last_verified_at != null ? String(row.last_verified_at) : null,
+      requiresCredentialReconfiguration: credentialUnavailable,
     });
   }
   return out;
@@ -661,25 +677,99 @@ async function fetchModels(provider: ProviderDto): Promise<string[]> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Heuristic AI services (mirror DocumentClassificationAiService /
-// ContractAnalyticsAiService)
-// ---------------------------------------------------------------------------
-
-function classifyDocument(content: string | null): string {
-  if (content == null || content.trim() === "") return "GENERAL_CORRESPONDENCE";
-  const lower = content.toLowerCase();
-  if (lower.includes("contract") || lower.includes("agreement") || lower.includes("clause")) return "LEGAL_CONTRACT";
-  if (lower.includes("invoice") || lower.includes("payment") || lower.includes("receipt")) return "FINANCIAL_INVOICE";
-  if (lower.includes("facility") || lower.includes("room") || lower.includes("maintenance")) return "FACILITIES_DOCUMENT";
-  if (lower.includes("visitor") || lower.includes("security") || lower.includes("badge")) return "SECURITY_VISITOR";
-  return "OPERATIONAL_RECORD";
+async function verifyOpenAiCompatibleCredential(provider: ProviderDto): Promise<void> {
+  if (!provider.apiKey || provider.apiKey.trim() === "") throw new Error("API Key is required for remote provider");
+  if (!provider.model || provider.model.trim() === "") throw new Error("Model is required");
+  const base = (provider.baseUrl == null || provider.baseUrl.trim() === "")
+    ? "https://api.openai.com/v1"
+    : provider.baseUrl.replace(/\/+$/, "");
+  const configuredEndpoint = provider.endpoint?.trim() ?? "";
+  let url: string;
+  if (/^https?:\/\//i.test(configuredEndpoint)) {
+    url = configuredEndpoint;
+  } else if (configuredEndpoint !== "") {
+    const normalizedEndpoint = configuredEndpoint.startsWith("/") ? configuredEndpoint : `/${configuredEndpoint}`;
+    url = base.endsWith("/v1") && normalizedEndpoint.startsWith("/v1/")
+      ? base.slice(0, -3) + normalizedEndpoint
+      : base + normalizedEndpoint;
+  } else {
+    url = `${base}${base.endsWith("/v1") ? "" : "/v1"}/chat/completions`;
+  }
+  const response = await httpPostJson(url, {
+    Accept: "application/json",
+    Authorization: `Bearer ${provider.apiKey}`,
+  }, {
+    model: provider.model,
+    messages: [{ role: "user", content: "Reply with OK." }],
+    max_tokens: 1,
+    temperature: 0,
+    stream: false,
+  });
+  if (!Array.isArray(response?.choices)) throw new Error("Provider verification response was invalid");
 }
 
-function summarizeDocument(content: string | null): string {
-  if (content == null || content.trim() === "") return "No content available for AI summarization.";
-  const length = Math.min(content.length, 250);
-  return "AI Summary: " + content.substring(0, length) + "...";
+async function httpPostJson(url: string, headers: Record<string, string>, payload: unknown): Promise<any> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20000);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal,
+      redirect: "follow",
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      const err: any = new Error(`Provider returned HTTP ${res.status}. ${body.slice(0, 300)}`);
+      err.status = res.status;
+      err.body = body;
+      throw err;
+    }
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function providerTypeFromInput(provider: unknown, type: unknown): string {
+  const explicit = type != null ? String(type).trim().toLowerCase() : "";
+  const label = explicit !== "" ? explicit : (provider != null ? String(provider).toLowerCase() : "");
+  if (label.includes("gemini") || label.includes("google")) return "gemini";
+  if (label.includes("claude") || label.includes("anthropic")) return "claude";
+  if (label.includes("azure")) return "azure";
+  if (label.includes("ollama") || label.includes("lm studio") || label.includes("local")) return "local";
+  return "openai";
+}
+
+function providerFromRequest(b: Record<string, any>): ProviderDto {
+  return {
+    id: "connection-test",
+    name: b.provider != null ? String(b.provider) : "AI Provider",
+    model: b.model != null ? String(b.model) : null,
+    status: "OFFLINE",
+    lastSync: "Never",
+    responseTime: null,
+    isDefault: false,
+    type: providerTypeFromInput(b.provider, b.type),
+    baseUrl: b.baseUrl != null ? String(b.baseUrl) : null,
+    endpoint: b.endpoint != null ? String(b.endpoint) : null,
+    apiKey: b.apiKey != null ? String(b.apiKey) : null,
+    capabilities: [],
+    lastVerifiedAt: null,
+    requiresCredentialReconfiguration: false,
+  };
+}
+
+function connectionFailureMessage(e: unknown): string {
+  const err = e as { status?: unknown; body?: unknown; message?: unknown };
+  if (err.status != null) {
+    return describeUpstreamError(Number(err.status), String(err.body ?? ""));
+  }
+  const message = err.message != null ? String(err.message) : "Provider connection failed";
+  if (message.toLowerCase().includes("api key")) return message;
+  if (message.toLowerCase().includes("aborted")) return "Provider connection timed out.";
+  return "Provider connectivity could not be verified. Check the provider type, Base URL, and credential.";
 }
 
 function analyzeContract(): any {
@@ -930,19 +1020,62 @@ function buildFallbackReply(moduleName: string, module: string, message: string)
 // Handlers
 // ---------------------------------------------------------------------------
 
-async function getProviders() {
-  const providers = await loadProviders();
-  return jsonResponse(ok(providers.map((p) => ({ ...p, apiKey: undefined })), "AI Providers retrieved"), 200);
+function publicProvider(p: ProviderDto) {
+  const { apiKey: _credential, ...metadata } = p;
+  return metadata;
 }
 
-async function addProvider(_ctx: unknown, req: Request) {
-  const body = await req.json().catch(() => null);
+function providerValidationErrors(p: ProviderDto): string[] {
+  const errors: string[] = [];
+  if (p.name.trim() === "") errors.push("Provider name is required");
+  if (p.model == null || p.model.trim() === "") errors.push("Model is required");
+  const local = ["local", "ollama", "lm studio"].some((value) => p.type.toLowerCase().includes(value));
+  if (!local && (p.apiKey == null || p.apiKey.trim() === "")) errors.push("API key is required");
+  return errors;
+}
+
+function providerCredentialDiagnostics(body: unknown, providerId?: string) {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const credentialFieldPresent = Object.prototype.hasOwnProperty.call(b, "apiKey");
+  return {
+    bodyReceived: body != null && typeof body === "object",
+    providerIdPresent: providerId != null && providerId.trim() !== "",
+    credentialFieldPresent,
+    credentialNonEmpty: credentialFieldPresent && typeof b.apiKey === "string" && b.apiKey.trim() !== "",
+  };
+}
+
+async function verifyProviderCredential(p: ProviderDto): Promise<string[]> {
+  const catalog = await fetchModels(p);
+  if (catalog.length === 0) throw new Error("Provider returned no models");
+  const type = p.type.toLowerCase();
+  const local = ["local", "ollama", "lm studio"].some((value) => type.includes(value));
+  if (!local && !["gemini", "claude", "anthropic", "azure"].includes(type)) {
+    await verifyOpenAiCompatibleCredential(p);
+  }
+  return catalog;
+}
+
+async function clearOtherDefaults(providerId: string): Promise<void> {
+  const { error } = await db.from("ai_providers").update({
+    is_default: false,
+    updated_at: nowString(),
+  }).neq("id", providerId).eq("is_deleted", false);
+  if (error) throw new Error(`provider default update failed: ${error.message}`);
+}
+
+async function getProviders() {
+  const providers = await loadProviders();
+  return jsonResponse(ok(providers.map(publicProvider), "AI Providers retrieved"), 200);
+}
+
+async function addProvider(_ctx: unknown, _req: Request, body: unknown) {
   const b = (body ?? {}) as Record<string, any>;
   const p: ProviderDto = {
     id: b.id != null && String(b.id).trim() !== "" ? String(b.id) : "p-" + Date.now(),
     name: String(b.name ?? ""),
     model: b.model != null ? String(b.model) : null,
-    status: "CONNECTED",
+    status: "OFFLINE",
     lastSync: "Just now",
     responseTime: null,
     isDefault: b.isDefault === true,
@@ -951,17 +1084,50 @@ async function addProvider(_ctx: unknown, req: Request) {
     endpoint: b.endpoint != null ? String(b.endpoint) : null,
     apiKey: b.apiKey != null ? String(b.apiKey) : null,
     capabilities: Array.isArray(b.capabilities) ? b.capabilities.map(String) : [],
+    lastVerifiedAt: null,
+    requiresCredentialReconfiguration: false,
   };
 
-  const providers = await loadProviders();
-  if (p.isDefault || providers.length === 0) {
-    for (const existing of providers) {
-      await db.from("ai_providers").update({ is_default: false, updated_at: nowString() }).eq("id", existing.id);
-    }
-    p.isDefault = true;
+  const validationErrors = providerValidationErrors(p);
+  if (validationErrors.length > 0) {
+    const credentialRequired = validationErrors.includes("API key is required");
+    return jsonResponse({
+      success: false,
+      message: "Provider configuration is incomplete",
+      errorCode: credentialRequired ? "PROVIDER_CREDENTIAL_REQUIRED" : "VALIDATION_ERROR",
+      errors: validationErrors,
+      data: { status: "OFFLINE", verified: false, stage: "VALIDATION", diagnostics: providerCredentialDiagnostics(body) },
+      timestamp: new Date().toISOString(),
+    }, 400);
   }
 
-  const encrypted = await encryptKey(p.apiKey);
+  try {
+    await verifyProviderCredential(p);
+  } catch (e) {
+    return jsonResponse({
+      success: false,
+      message: connectionFailureMessage(e),
+      errorCode: "PROVIDER_VERIFICATION_FAILED",
+      data: { status: "OFFLINE", verified: false, stage: "SERVER_VERIFICATION", diagnostics: providerCredentialDiagnostics(body) },
+      timestamp: new Date().toISOString(),
+    }, 422);
+  }
+
+  let encrypted: string | null;
+  try {
+    encrypted = await encryptKey(p.apiKey);
+  } catch {
+    return jsonResponse({
+      success: false,
+      message: "Provider credential could not be protected",
+      errorCode: "PROVIDER_ENCRYPTION_FAILED",
+      data: { status: "OFFLINE", verified: false, stage: "ENCRYPTION" },
+      timestamp: new Date().toISOString(),
+    }, 500);
+  }
+  const providers = await loadProviders();
+  const shouldBeDefault = p.isDefault || providers.length === 0;
+  const verifiedAt = nowString();
   const { error } = await db.from("ai_providers").insert({
     id: p.id,
     name: p.name,
@@ -972,15 +1138,147 @@ async function addProvider(_ctx: unknown, req: Request) {
     endpoint: p.endpoint,
     capabilities: JSON.stringify(p.capabilities),
     enabled: true,
-    status: p.status,
-    is_default: p.isDefault,
+    status: "CONNECTED",
+    is_default: shouldBeDefault,
+    last_verified_at: verifiedAt,
     created_at: nowString(),
     updated_at: nowString(),
     is_deleted: false,
   });
-  if (error) throw new Error(`provider insert failed: ${error.message}`);
-  const created = { ...p, apiKey: undefined };
-  return jsonResponse(ok(created, "AI Provider saved successfully"), 200);
+  if (error) {
+    return jsonResponse({
+      success: false,
+      message: "Provider configuration could not be saved",
+      errorCode: "PROVIDER_UPDATE_FAILED",
+      data: { status: "OFFLINE", verified: false, stage: "DATABASE_UPDATE" },
+      timestamp: new Date().toISOString(),
+    }, 500);
+  }
+
+  if (shouldBeDefault) await clearOtherDefaults(p.id);
+
+  const created = publicProvider({
+    ...p,
+    status: "CONNECTED",
+    isDefault: shouldBeDefault,
+    lastSync: verifiedAt,
+    lastVerifiedAt: verifiedAt,
+  });
+  return jsonResponse(ok({ ...created, verified: true }, "AI Provider encrypted, saved, and verified"), 200);
+}
+
+async function updateProvider(_ctx: unknown, _req: Request, body: unknown, params: Record<string, string>) {
+  const id = params.id;
+  const { data: existing, error: existingError } = await db.from("ai_providers")
+    .select("*").eq("id", id).eq("is_deleted", false).maybeSingle();
+  if (existingError) throw new Error(`provider lookup failed: ${existingError.message}`);
+  if (!existing) {
+    return jsonResponse({
+      success: false,
+      message: "AI provider not found",
+      errorCode: "PROVIDER_NOT_FOUND",
+      timestamp: new Date().toISOString(),
+    }, 404);
+  }
+
+  const b = (body ?? {}) as Record<string, any>;
+  const candidate: ProviderDto = {
+    id,
+    name: b.name != null ? String(b.name) : String(existing.name),
+    model: b.model != null ? String(b.model) : (existing.default_model != null ? String(existing.default_model) : null),
+    status: "OFFLINE",
+    lastSync: existing.last_verified_at != null ? String(existing.last_verified_at) : "Never",
+    responseTime: null,
+    isDefault: b.isDefault != null ? b.isDefault === true : existing.is_default === true,
+    type: b.type != null ? String(b.type) : String(existing.provider_type ?? "openai"),
+    baseUrl: b.baseUrl != null ? String(b.baseUrl) : (existing.base_url != null ? String(existing.base_url) : null),
+    endpoint: b.endpoint != null ? String(b.endpoint) : (existing.endpoint != null ? String(existing.endpoint) : null),
+    apiKey: b.apiKey != null ? String(b.apiKey) : null,
+    capabilities: Array.isArray(b.capabilities)
+      ? b.capabilities.map(String)
+      : parseCapabilities(existing.capabilities != null ? String(existing.capabilities) : null),
+    lastVerifiedAt: existing.last_verified_at != null ? String(existing.last_verified_at) : null,
+    requiresCredentialReconfiguration: false,
+  };
+
+  const validationErrors = providerValidationErrors(candidate);
+  if (validationErrors.length > 0) {
+    const credentialRequired = validationErrors.includes("API key is required");
+    return jsonResponse({
+      success: false,
+      message: "Provider reconfiguration is incomplete",
+      errorCode: credentialRequired ? "PROVIDER_CREDENTIAL_REQUIRED" : "VALIDATION_ERROR",
+      errors: validationErrors,
+      data: { status: "OFFLINE", verified: false, stage: "VALIDATION", diagnostics: providerCredentialDiagnostics(body, id) },
+      timestamp: new Date().toISOString(),
+    }, 400);
+  }
+
+  try {
+    await verifyProviderCredential(candidate);
+  } catch (e) {
+    const existingCredential = await decryptKey(String(existing.encrypted_api_key ?? ""));
+    if (existingCredential == null && String(existing.status ?? "").toUpperCase() !== "OFFLINE") {
+      const { error: offlineError } = await db.from("ai_providers").update({
+        status: "OFFLINE",
+        updated_at: nowString(),
+      }).eq("id", id);
+      if (offlineError) throw new Error(`provider status reconciliation failed: ${offlineError.message}`);
+    }
+    return jsonResponse({
+      success: false,
+      message: connectionFailureMessage(e),
+      errorCode: "PROVIDER_VERIFICATION_FAILED",
+      data: { id, status: "OFFLINE", verified: false, stage: "SERVER_VERIFICATION", diagnostics: providerCredentialDiagnostics(body, id) },
+      timestamp: new Date().toISOString(),
+    }, 422);
+  }
+
+  let encrypted: string | null;
+  try {
+    encrypted = await encryptKey(candidate.apiKey);
+  } catch {
+    return jsonResponse({
+      success: false,
+      message: "Provider credential could not be protected",
+      errorCode: "PROVIDER_ENCRYPTION_FAILED",
+      data: { id, status: "OFFLINE", verified: false, stage: "ENCRYPTION" },
+      timestamp: new Date().toISOString(),
+    }, 500);
+  }
+  const verifiedAt = nowString();
+  const { data: updated, error: updateError } = await db.from("ai_providers").update({
+    name: candidate.name,
+    provider_type: candidate.type,
+    default_model: candidate.model,
+    encrypted_api_key: encrypted,
+    base_url: candidate.baseUrl,
+    endpoint: candidate.endpoint,
+    capabilities: JSON.stringify(candidate.capabilities),
+    enabled: true,
+    status: "CONNECTED",
+    is_default: candidate.isDefault,
+    last_verified_at: verifiedAt,
+    updated_at: verifiedAt,
+  }).eq("id", id).eq("is_deleted", false).select("id").maybeSingle();
+  if (updateError || !updated) {
+    return jsonResponse({
+      success: false,
+      message: "Provider configuration could not be saved",
+      errorCode: "PROVIDER_UPDATE_FAILED",
+      data: { id, status: "OFFLINE", verified: false, stage: "DATABASE_UPDATE" },
+      timestamp: new Date().toISOString(),
+    }, 500);
+  }
+  if (candidate.isDefault) await clearOtherDefaults(id);
+
+  const metadata = publicProvider({
+    ...candidate,
+    status: "CONNECTED",
+    lastSync: verifiedAt,
+    lastVerifiedAt: verifiedAt,
+  });
+  return jsonResponse(ok({ ...metadata, verified: true }, "AI Provider credential reconfigured and verified"), 200);
 }
 
 async function setDefaultProvider(_ctx: unknown, _req: Request, _body: unknown, params: Record<string, string>) {
@@ -1243,47 +1541,70 @@ async function getAnalytics() {
   return jsonResponse(ok(getHealthAnalytics(), "AI Health Analytics retrieved"), 200);
 }
 
-async function testConnection(_ctx: unknown, req: Request) {
+async function testConnection(_ctx: unknown, _req: Request, body: unknown) {
   const start = Date.now();
-  const body = await req.json().catch(() => null);
   const b = (body ?? {}) as Record<string, any>;
   const providerName = b.provider != null ? String(b.provider) : "OpenAI";
   const model = b.model != null ? String(b.model) : "gpt-4o";
 
   try {
     const providers = await loadProviders();
-    const target = (b.provider != null && String(b.provider).trim() !== "")
+    const suppliedCredential = b.apiKey != null && String(b.apiKey).trim() !== "";
+    const target = !suppliedCredential && b.provider != null && String(b.provider).trim() !== ""
       ? providers.find((p) => p.name === String(b.provider) || p.id === String(b.provider)) ?? null
       : null;
-    let catalog: string[];
-    if (target != null) {
-      catalog = await fetchModels(target);
-    } else {
-      catalog = await fetchOpenAiCompatible(
-        b.apiKey != null ? String(b.apiKey) : null,
-        b.baseUrl != null ? String(b.baseUrl) : null,
-      );
-    }
+    const candidate = target ?? providerFromRequest(b);
+    const catalog = await verifyProviderCredential(candidate);
     const latency = Date.now() - start;
     const modelFound = catalog.includes(model);
+    if (target != null) {
+      const verifiedAt = nowString();
+      const { error: statusError } = await db.from("ai_providers").update({
+        status: "CONNECTED",
+        last_verified_at: verifiedAt,
+        updated_at: verifiedAt,
+      }).eq("id", target.id);
+      if (statusError) throw new Error(`provider status update failed: ${statusError.message}`);
+    }
     addLog("System Gateway", providerName, "Health Ping / Test Connection", "SUCCESS", latency, 15, "System Administrator");
 
     return jsonResponse(ok({
       provider: providerName,
       status: "ONLINE",
+      verified: true,
       responseTimeMs: latency,
       message: `Live connection verified with ${providerName} engine (${model}).` + (modelFound ? "" : " The configured model was not in the provider's model catalog."),
       modelUsed: model,
     }, "AI Provider connection verified"), 200);
   } catch (e) {
     const latency = Date.now() - start;
-    return jsonResponse(ok({
+    const providers = await loadProviders();
+    const suppliedCredential = b.apiKey != null && String(b.apiKey).trim() !== "";
+    const target = !suppliedCredential && b.provider != null && String(b.provider).trim() !== ""
+      ? providers.find((p) => p.name === String(b.provider) || p.id === String(b.provider)) ?? null
+      : null;
+    if (target != null) {
+      const { error: statusError } = await db.from("ai_providers").update({
+        status: "OFFLINE",
+        updated_at: nowString(),
+      }).eq("id", target.id);
+      if (statusError) throw new Error(`provider status reconciliation failed: ${statusError.message}`);
+    }
+    return jsonResponse({
+      success: false,
+      message: connectionFailureMessage(e),
+      errorCode: "PROVIDER_VERIFICATION_FAILED",
+      data: {
       provider: b.provider != null ? String(b.provider) : null,
-      status: "ERROR",
+      status: "OFFLINE",
+      verified: false,
+      stage: "SERVER_VERIFICATION",
+      diagnostics: providerCredentialDiagnostics(body),
       responseTimeMs: latency,
-      message: "Connection failed: " + (e as Error).message,
       modelUsed: b.model != null ? String(b.model) : null,
-    }, "AI Provider connection tested with warnings"), 200);
+      },
+      timestamp: new Date().toISOString(),
+    }, 422);
   }
 }
 
@@ -1300,15 +1621,11 @@ function describeUpstreamError(status: number, raw: string): string {
   return `Provider returned HTTP ${status}. Check the Base URL and API Key, or type a model name manually.`;
 }
 
-async function fetchModelsHandler(_ctx: unknown, req: Request) {
-  const body = await req.json().catch(() => null);
+async function fetchModelsHandler(_ctx: unknown, _req: Request, body: unknown) {
   const b = (body ?? {}) as Record<string, any>;
   const providerName = b.provider != null ? String(b.provider) : "OpenAI";
   try {
-    const models = await fetchOpenAiCompatible(
-      b.apiKey != null ? String(b.apiKey) : null,
-      b.baseUrl != null ? String(b.baseUrl) : null,
-    );
+    const models = await fetchModels(providerFromRequest(b));
     return jsonResponse(ok({
       provider: providerName,
       models,
@@ -1327,41 +1644,45 @@ async function fetchModelsHandler(_ctx: unknown, req: Request) {
   }
 }
 
-async function classifyDocumentHandler(_ctx: unknown, req: Request) {
+async function classifyDocumentHandler(_ctx: unknown, _req: Request, body: unknown) {
   const start = Date.now();
-  const body = await req.json().catch(() => null);
   const b = (body ?? {}) as Record<string, any>;
-  const content = b.content != null ? String(b.content) : null;
-
-  const providers = await loadProviders();
-  const configs = await loadModuleConfigs();
-  const target = await resolveExecution("mod-1", providers, configs);
-  if (target == null || target.disabled) {
-    return jsonResponse(ok({
-      moduleExecuted: "Document Classification & OCR",
-      status: "DISABLED",
-      message: "This AI module is disabled. Enable it in AI Services to execute.",
-    }, "Module disabled"), 200);
+  const content = b.content != null ? String(b.content).trim() : "";
+  if (content.length < 20) {
+    return jsonResponse({
+      success: false,
+      message: "At least 20 characters of extracted document content are required.",
+      errorCode: "DOCUMENT_CONTENT_REQUIRED",
+      timestamp: new Date().toISOString(),
+    }, 400);
   }
-
-  const category = classifyDocument(content);
-  const summary = summarizeDocument(content);
-  const latency = Math.max(35, Date.now() - start);
-  const tokens = (content != null ? Math.floor(content.length / 4) : 50) + 120;
-
-  addLog("Document Classification & OCR", target.providerName, "classify_and_summarize", "SUCCESS", latency, tokens, "System Administrator");
-
-  return jsonResponse(ok({
-    category, summary,
-    timestamp: new Date().toISOString(),
-    engine: target.providerName != null ? target.providerName : "AI Local Engine",
-    modelUsed: target.model,
-    provider: target.providerName,
-    fallbackUsed: target.fallbackUsed,
-    confidence: 0.96,
-    tokensUsed: tokens,
-    latencyMs: latency,
-  }, "Document classified successfully"), 200);
+  try {
+    const { result } = await classifyDocumentContent(db, content, "SUPPLIED_TEXT");
+    const latency = Math.max(1, Date.now() - start);
+    addLog("Document Classification & OCR", result.providerName, "content_classification", "SUCCESS", latency, result.tokensUsed ?? 0, "System Administrator");
+    return jsonResponse(ok({
+      category: result.predictedCategoryName,
+      categoryId: result.predictedCategoryId,
+      categoryScores: result.categoryScores,
+      summary: result.summary,
+      detectedDocumentType: result.detectedDocumentType,
+      metadataSuggestions: result.metadataSuggestions,
+      reason: result.reason,
+      confidence: result.confidence,
+      confidenceMethod: result.confidenceMethod,
+      reviewRequired: result.reviewRequired,
+      timestamp: result.processedAt,
+      modelUsed: result.model,
+      provider: result.providerName,
+      tokensUsed: result.tokensUsed,
+      latencyMs: latency,
+    }, "Document content classified successfully"), 200);
+  } catch (error) {
+    if (error instanceof DocumentAiError) {
+      return jsonResponse({ success: false, message: error.message, errorCode: error.code, timestamp: new Date().toISOString() }, 422);
+    }
+    throw error;
+  }
 }
 
 async function analyzeContractHandler(_ctx: unknown, req: Request) {
@@ -1399,9 +1720,8 @@ async function analyzeContractHandler(_ctx: unknown, req: Request) {
   }, "Contract analyzed successfully"), 200);
 }
 
-async function executeLiveAi(_ctx: unknown, req: Request) {
+async function executeLiveAi(_ctx: unknown, _req: Request, body: unknown) {
   const start = Date.now();
-  const body = await req.json().catch(() => null);
   const b = (body ?? {}) as Record<string, any>;
   const moduleType = b.moduleType != null ? String(b.moduleType) : "CLASSIFICATION";
   const payload = b.payload != null ? String(b.payload) : "";
@@ -1455,17 +1775,32 @@ async function executeLiveAi(_ctx: unknown, req: Request) {
     responseData.durationMs = duration;
     responseData.tokensUsed = tokensUsed;
   } else {
-    const category = classifyDocument(payload);
-    const summary = summarizeDocument(payload);
-    responseData.category = category;
-    responseData.summary = summary;
-    responseData.confidence = 0.97;
-    responseData.autoTags = ["TNVS-Administrative", "Priority-High", category];
-    responseData.moduleExecuted = moduleName;
-    const duration = Date.now() - start + 45;
-    addLog(moduleName, provider, "document_auto_tagging", "SUCCESS", duration, tokensUsed, "System Administrator");
-    responseData.durationMs = duration;
-    responseData.tokensUsed = tokensUsed;
+    if (payload.trim().length < 20) {
+      return jsonResponse({ success: false, message: "Extracted document content is required.", errorCode: "DOCUMENT_CONTENT_REQUIRED", timestamp: new Date().toISOString() }, 400);
+    }
+    try {
+      const { result } = await classifyDocumentContent(db, payload, "SUPPLIED_TEXT");
+      responseData.category = result.predictedCategoryName;
+      responseData.categoryId = result.predictedCategoryId;
+      responseData.summary = result.summary;
+      responseData.confidence = result.confidence;
+      responseData.confidenceMethod = result.confidenceMethod;
+      responseData.reviewRequired = result.reviewRequired;
+      responseData.metadataSuggestions = result.metadataSuggestions;
+      responseData.detectedDocumentType = result.detectedDocumentType;
+      responseData.moduleExecuted = moduleName;
+      responseData.provider = result.providerName;
+      responseData.modelUsed = result.model;
+      const duration = Math.max(1, Date.now() - start);
+      addLog(moduleName, result.providerName, "document_content_classification", "SUCCESS", duration, result.tokensUsed ?? 0, "System Administrator");
+      responseData.durationMs = duration;
+      responseData.tokensUsed = result.tokensUsed;
+    } catch (error) {
+      if (error instanceof DocumentAiError) {
+        return jsonResponse({ success: false, message: error.message, errorCode: error.code, timestamp: new Date().toISOString() }, 422);
+      }
+      throw error;
+    }
   }
 
   return jsonResponse(ok(responseData, "Live AI execution completed successfully"), 200);
@@ -1606,6 +1941,7 @@ const AI_ADMIN_GUARD = { kind: "roles", roles: ["SYSTEM_ADMIN"] } as const;
 const routes = [
   { method: "GET", path: "/ai/providers", guard: AI_ADMIN_GUARD, handler: getProviders },
   { method: "POST", path: "/ai/providers", guard: AI_ADMIN_GUARD, handler: addProvider },
+  { method: "PUT", path: "/ai/providers/:id", guard: AI_ADMIN_GUARD, handler: updateProvider },
   { method: "PUT", path: "/ai/providers/:id/default", guard: AI_ADMIN_GUARD, handler: setDefaultProvider },
   { method: "DELETE", path: "/ai/providers/:id", guard: AI_ADMIN_GUARD, handler: deleteProvider },
   { method: "GET", path: "/ai/modules", guard: AI_ADMIN_GUARD, handler: getModules },

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { apiClient } from '../../api/client';
 import {
   X, Eye, EyeOff, RefreshCw, AlertCircle, Sparkles, CheckCircle2,
@@ -30,10 +30,22 @@ export interface ProviderFormData {
   isDefault: boolean;
 }
 
+export interface ProviderInitialData {
+  id: string;
+  name: string;
+  type: string;
+  model: string;
+  baseUrl?: string;
+  endpoint?: string;
+  isDefault: boolean;
+  capabilities?: string[];
+}
+
 interface AddAiProviderModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (data: ProviderFormData) => void;
+  onSave: (data: ProviderFormData) => Promise<boolean>;
+  initialProvider?: ProviderInitialData | null;
 }
 
 const PROVIDER_PRESETS: Record<string, { baseUrl: string; endpoint: string }> = {
@@ -67,7 +79,29 @@ const PROVIDER_PRESETS: Record<string, { baseUrl: string; endpoint: string }> = 
   },
 };
 
-export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, onClose, onSave }) => {
+const defaultCapabilities = {
+  documentClassification: true,
+  ocrExtraction: true,
+  contractAnalysis: true,
+  legalReview: true,
+  visitorVerification: true,
+  recordsCompliance: true,
+  aiSummarization: true,
+  smartSearch: true,
+};
+
+const providerTypeLabel = (type: string) => {
+  const normalized = type.toLowerCase();
+  if (normalized.includes('gemini')) return 'Google Gemini';
+  if (normalized.includes('claude') || normalized.includes('anthropic')) return 'Anthropic Claude';
+  if (normalized.includes('azure')) return 'Azure OpenAI';
+  if (normalized.includes('ollama')) return 'Ollama (Local)';
+  if (normalized.includes('lm studio')) return 'LM Studio';
+  if (normalized.includes('local')) return 'Ollama (Local)';
+  return 'OpenAI';
+};
+
+export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, onClose, onSave, initialProvider = null }) => {
   const [providerName, setProviderName] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [providerType, setProviderType] = useState('OpenAI');
@@ -76,6 +110,7 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
   const [model, setModel] = useState('');
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [apiKey, setApiKey] = useState('');
+  const verifiedCredentialRef = useRef<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
 
   // Advanced Settings
@@ -85,41 +120,71 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
   const [retryAttempts, setRetryAttempts] = useState(3);
 
   // Capabilities
-  const [capabilities, setCapabilities] = useState({
-    documentClassification: true,
-    ocrExtraction: true,
-    contractAnalysis: true,
-    legalReview: true,
-    visitorVerification: true,
-    recordsCompliance: true,
-    aiSummarization: true,
-    smartSearch: true,
-  });
+  const [capabilities, setCapabilities] = useState(defaultCapabilities);
 
   // Default
   const [isDefault, setIsDefault] = useState(false);
 
   // Validation & Test Status
-  const [errors, setErrors] = useState<{ providerName?: string; displayName?: string; apiKey?: string; model?: string }>({});
+  const [errors, setErrors] = useState<{ providerName?: string; displayName?: string; apiKey?: string; model?: string; connection?: string }>({});
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [fetchingModels, setFetchingModels] = useState(false);
   const [modelFetchError, setModelFetchError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Handle Provider Type Change
   useEffect(() => {
-    const preset = PROVIDER_PRESETS[providerType] || PROVIDER_PRESETS['OpenAI'];
-    setBaseUrl(preset.baseUrl);
-    setEndpoint(preset.endpoint);
+    if (!isOpen) return;
+    const typeLabel = initialProvider ? providerTypeLabel(initialProvider.type) : 'OpenAI';
+    const preset = PROVIDER_PRESETS[typeLabel] || PROVIDER_PRESETS['OpenAI'];
+    setProviderName(initialProvider?.name ?? '');
+    setDisplayName(initialProvider?.name ?? '');
+    setProviderType(typeLabel);
+    setBaseUrl(initialProvider?.baseUrl ?? preset.baseUrl);
+    setEndpoint(initialProvider?.endpoint ?? preset.endpoint);
+    setModel(initialProvider?.model ?? '');
+    setApiKey('');
+    verifiedCredentialRef.current = null;
+    setShowApiKey(false);
     setAvailableModels([]);
-    setModel('');
+    setCapabilities(initialProvider?.capabilities
+      ? Object.fromEntries(Object.keys(defaultCapabilities).map((key) => [key, initialProvider.capabilities!.includes(key)])) as typeof defaultCapabilities
+      : defaultCapabilities);
+    setIsDefault(initialProvider?.isDefault ?? false);
+    setErrors({});
     setTestStatus('idle');
     setModelFetchError(null);
-  }, [providerType]);
+    setIsSubmitting(false);
+  }, [isOpen, initialProvider]);
 
   if (!isOpen) return null;
 
   const handleCapabilityToggle = (key: keyof typeof capabilities) => {
     setCapabilities(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const invalidateConnectionTest = () => {
+    verifiedCredentialRef.current = null;
+    setTestStatus('idle');
+    setErrors(prev => ({ ...prev, connection: undefined }));
+  };
+
+  const handleProviderTypeChange = (value: string) => {
+    const preset = PROVIDER_PRESETS[value] || PROVIDER_PRESETS['OpenAI'];
+    setProviderType(value);
+    setBaseUrl(preset.baseUrl);
+    setEndpoint(preset.endpoint);
+    setAvailableModels([]);
+    setModel('');
+    setModelFetchError(null);
+    invalidateConnectionTest();
+  };
+
+  const handleClose = () => {
+    setApiKey('');
+    verifiedCredentialRef.current = null;
+    setShowApiKey(false);
+    setTestStatus('idle');
+    onClose();
   };
 
   const handleFetchModels = async () => {
@@ -140,6 +205,7 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
         : [];
 
       if (fetchedModels.length > 0) {
+        invalidateConnectionTest();
         setAvailableModels(fetchedModels);
         setModel(fetchedModels[0]);
       } else if (res.data?.success === false && res.data?.message) {
@@ -162,29 +228,33 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
       return;
     }
     setErrors(prev => ({ ...prev, apiKey: undefined }));
+    setErrors(prev => ({ ...prev, connection: undefined }));
     setTestStatus('testing');
 
     try {
-      await apiClient.post('/ai/test-connection', {
+      const res = await apiClient.post('/ai/test-connection', {
         provider: providerType,
+        type: providerType,
         model: model || 'default-model',
         baseUrl,
         endpoint,
         apiKey,
       });
+      if (res.data?.success !== true || res.data?.data?.verified !== true || res.data?.data?.status !== 'ONLINE') {
+        throw new Error(res.data?.message || 'Provider connectivity could not be verified.');
+      }
+      verifiedCredentialRef.current = apiKey;
       setTestStatus('success');
     } catch (err) {
-      console.warn('API test connection request handled locally:', err);
-      // Ensure positive connection verification status if API key/local host is specified
-      setTimeout(() => {
-        setTestStatus('success');
-      }, 400);
+      console.warn('AI provider connection verification failed.');
+      setTestStatus('error');
+      setErrors(prev => ({ ...prev, connection: 'A successful server-side connection test is required before saving.' }));
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newErrors: { providerName?: string; displayName?: string; apiKey?: string; model?: string } = {};
+    const newErrors: { providerName?: string; displayName?: string; apiKey?: string; model?: string; connection?: string } = {};
 
     if (!providerName.trim()) {
       newErrors.providerName = 'Provider Name is required.';
@@ -198,6 +268,13 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
     if (!apiKey.trim() && !providerType.includes('Local') && !providerType.includes('LM Studio')) {
       newErrors.apiKey = 'API Key is required for cloud providers.';
     }
+    if (testStatus !== 'success') {
+      newErrors.connection = 'Verify the provider connection before saving.';
+    }
+    const credentialForSave = verifiedCredentialRef.current;
+    if (!credentialForSave && !providerType.includes('Local') && !providerType.includes('LM Studio')) {
+      newErrors.connection = 'The verified credential is no longer available. Test the connection again before saving.';
+    }
 
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);
@@ -205,21 +282,32 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
     }
 
     setErrors({});
-    onSave({
-      providerName,
-      displayName,
-      providerType,
-      baseUrl,
-      endpoint,
-      model,
-      apiKey,
-      temperature,
-      maxTokens,
-      timeout,
-      retryAttempts,
-      capabilities,
-      isDefault,
-    });
+    setIsSubmitting(true);
+    try {
+      const saved = await onSave({
+        providerName,
+        displayName,
+        providerType,
+        baseUrl,
+        endpoint,
+        model,
+        apiKey: credentialForSave ?? apiKey,
+        temperature,
+        maxTokens,
+        timeout,
+        retryAttempts,
+        capabilities,
+        isDefault,
+      });
+      if (saved) {
+        setApiKey('');
+        verifiedCredentialRef.current = null;
+        setShowApiKey(false);
+        setTestStatus('idle');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -232,14 +320,18 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
               <Cpu className="w-6 h-6" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-slate-900 tracking-tight">Add AI Provider</h2>
+              <h2 className="text-xl font-bold text-slate-900 tracking-tight">
+                {initialProvider ? 'Reconfigure AI Provider' : 'Add AI Provider'}
+              </h2>
               <p className="text-xs text-slate-500 mt-0.5 leading-relaxed max-w-lg">
-                Connect an AI provider to enable intelligent document processing, legal analysis, contract review, records compliance, and visitor verification.
+                {initialProvider
+                  ? 'Enter a fresh credential, verify it server-side, and save it to replace the existing encrypted credential.'
+                  : 'Connect an AI provider. A successful server-side connection test is required before the encrypted credential can be saved.'}
               </p>
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 transition-colors"
           >
             <X className="w-5 h-5" />
@@ -295,7 +387,7 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
               </label>
               <select
                 value={providerType}
-                onChange={e => setProviderType(e.target.value)}
+                onChange={e => handleProviderTypeChange(e.target.value)}
                 className="w-full border border-slate-300 rounded-xl p-2.5 text-xs text-slate-800 focus:border-emerald-500 focus:outline-none bg-white font-medium"
               >
                 <option value="OpenAI">OpenAI</option>
@@ -323,7 +415,7 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
                   type="text"
                   placeholder="https://api.openai.com/v1"
                   value={baseUrl}
-                  onChange={e => setBaseUrl(e.target.value)}
+                  onChange={e => { setBaseUrl(e.target.value); invalidateConnectionTest(); }}
                   className="w-full border border-slate-300 rounded-xl p-2.5 text-xs font-mono text-slate-800 focus:border-emerald-500 focus:outline-none"
                 />
               </div>
@@ -334,7 +426,7 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
                   type="text"
                   placeholder="/chat/completions"
                   value={endpoint}
-                  onChange={e => setEndpoint(e.target.value)}
+                  onChange={e => { setEndpoint(e.target.value); invalidateConnectionTest(); }}
                   className="w-full border border-slate-300 rounded-xl p-2.5 text-xs font-mono text-slate-800 focus:border-emerald-500 focus:outline-none"
                 />
               </div>
@@ -360,7 +452,7 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
                 type="text"
                 placeholder="Type a model name or click Fetch Models below (e.g. gpt-4o)"
                 value={model}
-                onChange={e => setModel(e.target.value)}
+                onChange={e => { setModel(e.target.value); invalidateConnectionTest(); }}
                 className={`w-full border rounded-xl p-2.5 text-xs font-mono text-slate-800 focus:outline-none transition-colors ${
                   errors.model ? 'border-rose-400 bg-rose-50/20' : 'border-slate-300 focus:border-emerald-500'
                 }`}
@@ -379,7 +471,7 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
                       <button
                         key={m}
                         type="button"
-                        onClick={() => setModel(m)}
+                        onClick={() => { setModel(m); invalidateConnectionTest(); }}
                         title={m}
                         className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-mono text-left truncate transition-colors ${
                           model === m
@@ -425,7 +517,7 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
                   type={showApiKey ? 'text' : 'password'}
                   placeholder="sk-proj-..."
                   value={apiKey}
-                  onChange={e => setApiKey(e.target.value)}
+                  onChange={e => { setApiKey(e.target.value); invalidateConnectionTest(); }}
                   className={`w-full border rounded-xl p-2.5 pr-10 text-xs font-mono text-slate-800 focus:outline-none transition-colors ${
                     errors.apiKey ? 'border-rose-400 bg-rose-50/20' : 'border-slate-300 focus:border-emerald-500'
                   }`}
@@ -615,22 +707,23 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
                 {testStatus === 'success' && (
                   <div className="flex items-center space-x-1.5 text-emerald-700 font-semibold text-xs animate-in fade-in">
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                    <span>🟢 Connected Successfully</span>
+                    <span>Verified — Save Required</span>
                   </div>
                 )}
 
                 {testStatus === 'error' && (
                   <div className="flex items-center space-x-1.5 text-rose-600 font-semibold text-xs animate-in fade-in">
                     <AlertCircle className="w-4 h-4 text-rose-500" />
-                    <span>🔴 Unable to connect. Check API Key or Base URL.</span>
+                    <span>Unable to connect. Check API Key or Base URL.</span>
                   </div>
                 )}
               </div>
 
               <span className="text-[11px] text-slate-400 font-mono">
-                {testStatus === 'success' ? 'Connection verified' : 'Status: Ready'}
+                {testStatus === 'success' ? 'Verified — not yet saved' : 'Status: Ready'}
               </span>
             </div>
+            {errors.connection && <p className="text-[11px] text-rose-500 mt-2 font-medium">{errors.connection}</p>}
           </div>
         </form>
 
@@ -638,7 +731,7 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end space-x-3 shrink-0">
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             className="px-5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition-colors"
           >
             Cancel
@@ -646,9 +739,10 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
           <button
             type="button"
             onClick={handleSubmit}
-            className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm transition-all flex items-center space-x-2"
+            disabled={testStatus !== 'success' || isSubmitting}
+            className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm transition-all flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <span>Save Provider</span>
+            <span>{isSubmitting ? 'Saving...' : initialProvider ? 'Update Provider' : 'Save Provider'}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>

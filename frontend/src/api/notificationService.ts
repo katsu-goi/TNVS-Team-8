@@ -1,10 +1,9 @@
 import { apiClient } from './client';
 
 /**
- * Role-agnostic notification API. Backed by the shared backend controller at
- * `/v1/notifications`, which every authenticated role can reach (the path falls
- * through Spring Security to `authenticated()`). Read/unread state is real and
- * scoped to the current user on the server.
+ * Role-agnostic notification API. Backed by the Supabase notifications Edge
+ * Function. Read/unread state is real and scoped to the current user by the
+ * server-side authentication guard.
  */
 export interface AppNotification {
   id: string;

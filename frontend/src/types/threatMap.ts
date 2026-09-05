@@ -106,7 +106,7 @@ export interface ThreatMapResponse {
   recentLogs: GatewayLogEntry[];
 }
 
-// STOMP envelope broadcast on /topic/security/threats
+// Supabase Realtime marker invalidates the authenticated threat snapshot.
 export interface SecurityThreatEvent {
   type: 'EVENT' | 'SYNC';
   window: ThreatWindow;

@@ -41,7 +41,7 @@ interface DocumentUploadPanelProps {
 
 /**
  * Real file upload against POST /v1/documents/upload, with the AI pipeline
- * result (OCR, predicted category, confidence, summary, auto-tags) rendered
+ * result (extracted content, predicted category, confidence, summary, auto-tags) rendered
  * inline as soon as the response comes back.
  *
  * Purely additive: drop it into a page, it owns all of its own state.
@@ -49,7 +49,7 @@ interface DocumentUploadPanelProps {
 export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
   onUploaded,
   title = 'Upload a Document',
-  subtitle = 'Files are stored on the file server, then OCR-scanned and classified by AI before review.',
+  subtitle = 'PDF embedded text, DOCX content, or UTF-8 text is extracted and classified from the document contents before human review.',
   documentCategoryOptions,
   documentCategory = '',
   onDocumentCategoryChange,
@@ -124,7 +124,7 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
           <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
         </div>
         <span className="text-[10px] font-mono text-slate-400 shrink-0">
-          max 100MB
+          max 20MB
         </span>
       </div>
 
@@ -221,7 +221,7 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
         <div className="border-t border-slate-100 pt-4 space-y-3">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            <p className="text-sm font-bold text-slate-900">AI Processing Complete</p>
+            <p className="text-sm font-bold text-slate-900">AI Suggestion Ready for Review</p>
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-50 text-amber-600">
               {(result.status || '').replace(/_/g, ' ')}
             </span>
@@ -265,6 +265,35 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
               {result.aiSummary || 'No summary generated.'}
             </p>
           </div>
+
+          <div className={`rounded-xl border px-3 py-2 text-xs ${
+            result.aiReviewRequired
+              ? 'bg-amber-50 border-amber-200 text-amber-800'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          }`}>
+            <p className="font-semibold">
+              {result.aiReviewRequired
+                ? 'Manual verification required — confidence is below the automatic suggestion threshold.'
+                : 'High-confidence suggestion — human approval is still required before classification becomes final.'}
+            </p>
+            <p className="mt-1 opacity-80">
+              Final classification: {result.finalClassification?.replace(/_/g, ' ') || 'Not approved'}
+            </p>
+          </div>
+
+          <div className="grid gap-2 text-[10px] text-slate-500 sm:grid-cols-2">
+            <p><span className="font-semibold">Detected type:</span> {result.aiDetectedDocumentType || 'Not supplied'}</p>
+            <p><span className="font-semibold">Extraction:</span> {(result.aiExtractionMethod || 'Unknown').replace(/_/g, ' ')}</p>
+            <p><span className="font-semibold">Provider:</span> {result.aiProviderName || 'Unavailable'}</p>
+            <p><span className="font-semibold">Model:</span> {result.aiModel || 'Unavailable'}</p>
+          </div>
+
+          {result.aiClassificationReason && (
+            <div>
+              <p className={labelCls}>Classification Reason</p>
+              <p className="text-xs text-slate-600 mt-1 leading-relaxed">{result.aiClassificationReason}</p>
+            </div>
+          )}
 
           {!!result.tags?.length && (
             <div>

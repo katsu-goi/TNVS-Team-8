@@ -9,8 +9,8 @@ import { Wifi, WifiOff, Bug, FlaskConical } from 'lucide-react';
 
 /**
  * Real-time Geographic IP Threat Vector Map section for the Security Center.
- * REST provides the initial snapshot; STOMP pushes EVENT (~5s) and SYNC
- * (~30s) updates from the backend. Connect on mount, disconnect on unmount
+ * REST provides the authenticated snapshot; Supabase Realtime markers
+ * invalidate it when backend changes occur. Connect on mount, disconnect on unmount
  * (no duplicate connections).
  */
 export const SecurityThreatSection: React.FC = () => {
@@ -112,7 +112,7 @@ export const SecurityThreatSection: React.FC = () => {
             <span className="text-slate-400">SUPER_ADMIN only</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-1.5">
-            <DebugRow label="STOMP connected" value={connected ? 'YES' : 'NO'} ok={connected} />
+            <DebugRow label="Realtime connected" value={connected ? 'YES' : 'NO'} ok={connected} />
             <DebugRow label="Last frame" value={lastEventType ?? '—'} ok={!!lastEventType} />
             <DebugRow label="Last log action" value={lastEventLog?.action ?? '—'} ok={!!lastEventLog} />
             <DebugRow label="Last log IP" value={lastEventLog?.ip ?? '—'} ok={!!lastEventLog} />

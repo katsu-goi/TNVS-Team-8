@@ -5,7 +5,7 @@ import { requestReviewService, ReviewableRequest } from '../../api/requestReview
 /**
  * Shared review page for employee contract/legal requests, used by Contract
  * Officers, Legal Officers and SUPER_ADMINs. Approving/rejecting/completing a
- * request notifies the requester (per-user, delivered via REST + STOMP).
+ * request notifies the requester (persisted REST snapshot + Realtime marker).
  */
 export const RequestReviewPage: React.FC = () => {
   const [requests, setRequests] = useState<ReviewableRequest[]>([]);

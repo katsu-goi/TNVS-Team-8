@@ -6,8 +6,7 @@ import { logout as apiLogout } from '../../api/authService';
 import { useAuthStore } from '../../stores/authStore';
 
 const ROLE_LABELS: Record<string, string> = {
-  SUPER_ADMIN: 'Super Admin',
-  SYSTEM_ADMIN: 'System Administrator',
+  SUPER_ADMIN: 'System Administrator',
   FACILITIES_MANAGER: 'Facilities Manager',
   FACILITIES_OFFICER: 'Facilities Officer',
   COMPLIANCE_OFFICER: 'Compliance Officer',

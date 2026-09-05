@@ -5,34 +5,35 @@ import { adminDb } from "../_shared/db.ts";
 import { naiveIso } from "../_shared/auth-users.ts";
 import { writeAudit } from "../_shared/lockout.ts";
 import { resolveClientIp } from "../_shared/ip.ts";
+import {
+  DocumentExtractionError,
+  extractDocumentContent,
+  MAX_EXTRACTABLE_FILE_BYTES,
+  SUPPORTED_DOCUMENT_EXTENSIONS,
+} from "../_shared/document-content.ts";
+import {
+  classifyDocumentContent,
+  DocumentAiError,
+  getDocumentBusinessCategories,
+} from "../_shared/document-ai.ts";
 
 const db = adminDb();
 
 const MODULE = "DOCUMENTS";
 const BUCKET = "documents";
-const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
-const OCR_SAMPLE_BYTES = 256 * 1024;
+const MAX_FILE_SIZE_BYTES = MAX_EXTRACTABLE_FILE_BYTES;
 const MAX_AUTO_TAGS = 3;
 
 const DOCUMENT_STATUSES = ["DRAFT", "PENDING_REVIEW", "APPROVED", "ARCHIVED", "DELETED"];
 const CLASSIFICATION_LEVELS = ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED", "SECRET"];
-const ALLOWED_EXTENSIONS = ["pdf", "png", "jpg", "jpeg", "doc", "docx", "xls", "xlsx", "txt"];
+const ALLOWED_EXTENSIONS = [...SUPPORTED_DOCUMENT_EXTENSIONS];
 
 const CONTRACT_KEYWORDS = [
   "contract", "procurement", "vendor", "supplier", "sla",
   "lease", "purchase", "agreement", "obligation", "dpa",
 ];
 
-const CATEGORY_TAGS: Record<string, string[]> = {
-  LEGAL_CONTRACT: ["legal", "contract", "ai-classified"],
-  FINANCIAL_INVOICE: ["finance", "invoice", "ai-classified"],
-  FACILITIES_DOCUMENT: ["facilities", "maintenance", "ai-classified"],
-  SECURITY_VISITOR: ["security", "visitor", "ai-classified"],
-  OPERATIONAL_RECORD: ["operations", "record", "ai-classified"],
-  GENERAL_CORRESPONDENCE: ["general", "correspondence", "ai-classified"],
-};
-
-const LOW_SIGNAL_CATEGORIES = new Set(["GENERAL_CORRESPONDENCE", "OPERATIONAL_RECORD"]);
+const REVIEW_ROLES = ["SUPER_ADMIN", "COMPLIANCE_OFFICER", "LEGAL_OFFICER"];
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -74,44 +75,6 @@ function generic500() {
     fail("An unexpected error occurred. Please contact system administrator.", "INTERNAL_SERVER_ERROR"),
     500,
   );
-}
-
-// ---------------------------------------------------------------------------
-// AI helpers (mirror OcrService / DocumentClassificationAiService)
-// ---------------------------------------------------------------------------
-
-function ocrText(fileName: string | null): string {
-  return `Simulated OCR Extracted Text from ${fileName} using Tesseract/Apache Tika engine.`;
-}
-
-function classify(content: string | null): string {
-  if (content == null || content.trim() === "") return "GENERAL_CORRESPONDENCE";
-  const lower = content.toLowerCase();
-  if (lower.includes("contract") || lower.includes("agreement") || lower.includes("clause")) return "LEGAL_CONTRACT";
-  if (lower.includes("invoice") || lower.includes("payment") || lower.includes("receipt")) return "FINANCIAL_INVOICE";
-  if (lower.includes("facility") || lower.includes("room") || lower.includes("maintenance")) return "FACILITIES_DOCUMENT";
-  if (lower.includes("visitor") || lower.includes("security") || lower.includes("badge")) return "SECURITY_VISITOR";
-  return "OPERATIONAL_RECORD";
-}
-
-function summarize(content: string | null): string {
-  if (content == null || content.trim() === "") return "No content available for AI summarization.";
-  const length = Math.min(content.length, 250);
-  return `AI Summary: ${content.substring(0, length)}...`;
-}
-
-function estimateConfidence(predictedCategory: string | null, text: string | null): number {
-  let score = 0.55;
-  if (predictedCategory != null && !LOW_SIGNAL_CATEGORIES.has(predictedCategory)) score += 0.25;
-  if (text != null && text.length >= 120) score += 0.10;
-  if (text != null && text.trim() !== "") {
-    const categoryTags = predictedCategory != null ? (CATEGORY_TAGS[predictedCategory] ?? []) : [];
-    const hits = categoryTags
-      .filter((tag: string) => text.toLowerCase().includes(tag)).length;
-    score += Math.min(hits, 2) * 0.04;
-  }
-  score = Math.max(0.05, Math.min(0.99, score));
-  return Math.round(score * 100) / 100;
 }
 
 function extensionOf(fileName: string | null): string {
@@ -232,6 +195,23 @@ async function ensureBucket() {
   return error == null || Number((error as { statusCode?: unknown }).statusCode) === 404 ? true : false;
 }
 
+function isValidStorageObjectPath(filePath: string): boolean {
+  const path = filePath.trim();
+  if (path === "" || path.startsWith("/") || path.startsWith("\\") || /^[A-Za-z]:[\\/]/.test(path)) {
+    return false;
+  }
+  if (path.includes("\\")) return false;
+  return path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
+
+function isMissingStorageObjectError(error: unknown): boolean {
+  if (error == null || typeof error !== "object") return false;
+  const value = error as { status?: unknown; statusCode?: unknown; message?: unknown; error?: unknown };
+  const status = Number(value.statusCode ?? value.status);
+  const message = String(value.message ?? value.error ?? "").toLowerCase();
+  return status === 404 || message.includes("object not found") || message.includes("not found");
+}
+
 // ---------------------------------------------------------------------------
 // DTO
 // ---------------------------------------------------------------------------
@@ -269,6 +249,21 @@ function toDocumentDto(d: Record<string, unknown>): Record<string, unknown> {
     aiSummary: str(d.ai_summary),
     aiPredictedCategory: str(d.ai_predicted_category),
     confidenceScore: num(d.confidence_score),
+    aiDetectedDocumentType: str(d.ai_detected_document_type),
+    aiMetadataSuggestions: d.ai_metadata_suggestions != null && typeof d.ai_metadata_suggestions === "object"
+      ? d.ai_metadata_suggestions
+      : {},
+    aiClassificationReason: str(d.ai_classification_reason),
+    aiProviderName: str(d.ai_provider_name),
+    aiModel: str(d.ai_model),
+    aiProcessedAt: str(d.ai_processed_at),
+    aiExtractionMethod: str(d.ai_extraction_method),
+    aiReviewRequired: d.ai_review_required === true,
+    classificationReviewStatus: str(d.classification_review_status),
+    finalClassification: str(d.final_classification),
+    classificationReviewedBy: str(d.classification_reviewed_by),
+    classificationReviewedAt: str(d.classification_reviewed_at),
+    classificationReviewNotes: str(d.classification_review_notes),
     tags: ((d.tags ?? []) as unknown[]).map((t: unknown) => {
       const tag = t as Record<string, unknown>;
       return { id: str(tag.id), name: str(tag.name) };
@@ -379,7 +374,7 @@ async function handleCreateDocument(ctx: AuthContext | null, _req: Request, body
       400,
     );
   }
-  const status = str(b.status) ?? "APPROVED";
+  const status = str(b.status) ?? "DRAFT";
   if (!DOCUMENT_STATUSES.includes(status)) {
     return jsonResponse(
       fail(`Status must be one of ${DOCUMENT_STATUSES.join(", ")}`, "VALIDATION_ERROR"),
@@ -390,9 +385,6 @@ async function handleCreateDocument(ctx: AuthContext | null, _req: Request, body
   const userEmail = ctx ? ctx.email : null;
   const userDept = ctx ? str(ctx.user.row.department) : null;
   const fileName = str(b.fileName);
-
-  const extractedText = ocrText(fileName);
-  const predictedCategory = classify(extractedText);
 
   const categoryId = (b.category as Record<string, unknown> | null | undefined)?.id;
   const folderId = (b.folder as Record<string, unknown> | null | undefined)?.id;
@@ -421,9 +413,11 @@ async function handleCreateDocument(ctx: AuthContext | null, _req: Request, body
     folder_id: resolvedFolderId,
     classification_level: classificationLevel,
     status,
-    ocr_extracted_text: extractedText,
-    ai_summary: summarize(extractedText),
-    ai_predicted_category: predictedCategory,
+    ocr_extracted_text: null,
+    ai_summary: null,
+    ai_predicted_category: null,
+    confidence_score: null,
+    classification_review_status: "PENDING",
     version_number: num(b.versionNumber),
     created_by: userEmail,
     updated_by: userEmail,
@@ -450,7 +444,7 @@ async function handleCreateDocument(ctx: AuthContext | null, _req: Request, body
 
   const tags = await loadTags(docId);
   const docDto = toDocumentDto({ ...row, tags });
-  return jsonResponse(ok(docDto, "Document uploaded & processed by AI"), 200);
+  return jsonResponse(ok(docDto, "Document metadata created; upload file contents to run AI classification"), 200);
 }
 
 async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
@@ -468,7 +462,7 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
   } else if (file.size <= 0) {
     errors.push("The uploaded file is empty (0 bytes).");
   } else if (file.size > MAX_FILE_SIZE_BYTES) {
-    errors.push(`File exceeds the 100MB limit (received ${Math.floor(file.size / (1024 * 1024))}MB).`);
+    errors.push(`File exceeds the 20MB synchronous processing limit (received ${Math.floor(file.size / (1024 * 1024))}MB).`);
   }
 
   if (errors.length === 0 && file instanceof File) {
@@ -501,84 +495,217 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
 
   const userEmail = ctx ? ctx.email : null;
   const userDept = ctx ? str(ctx.user.row.department) : null;
-
-  let resolvedCategoryId: string | null = null;
-  if (categoryIdParam && isUuid(categoryIdParam)) {
-    const { data: cat } = await db.from("categories").select("id").eq("id", categoryIdParam).maybeSingle();
-    if (cat) resolvedCategoryId = String(cat.id);
-  }
-  let resolvedFolderId: string | null = null;
-  if (folderIdParam && isUuid(folderIdParam)) {
-    const { data: fol } = await db.from("folders").select("id").eq("id", folderIdParam).maybeSingle();
-    if (fol) resolvedFolderId = String(fol.id);
-  }
-
-  const extractedText = ocrText(uploadFile.name);
-  const predictedCategory = classify(extractedText);
-  const confidence = estimateConfidence(predictedCategory, extractedText);
-
-  const now = naiveIso();
-  const { data: saved, error: insError } = await db.from("documents").insert({
-    title: resolveTitle(titleParam, uploadFile.name),
-    file_name: uploadFile.name,
-    file_type: uploadFile.type,
-    file_size: uploadFile.size,
-    file_path: storedName,
-    owner_email: userEmail,
-    department: userDept,
-    category_id: resolvedCategoryId,
-    folder_id: resolvedFolderId,
-    classification_level: classificationLevel,
-    status: "PENDING_REVIEW",
-    ocr_extracted_text: extractedText,
-    ai_summary: summarize(extractedText),
-    ai_predicted_category: predictedCategory,
-    confidence_score: confidence,
-    version_number: 1,
-    created_by: userEmail,
-    updated_by: userEmail,
-    updated_at: now,
-    is_deleted: false,
-  }).select("*").single();
-  if (insError) throw new Error(`document upload insert failed: ${insError.message}`);
-
-  const row = (saved as unknown as Record<string, unknown>) ?? {};
-  const docId = String(row.id);
-
-  const tagNames = CATEGORY_TAGS[predictedCategory] ?? ["ai-classified"];
-  const tagIds: string[] = [];
-  for (const name of tagNames.slice(0, MAX_AUTO_TAGS)) {
-    let existing = (
-      await db.from("tags").select("id").eq("name", name).eq("is_deleted", false).maybeSingle()
-    ).data as { id: any } | null;
-    if (!existing) {
-      const { data: inserted, error: tagError } = await db.from("tags").insert({ name, is_deleted: false }).select("id").single();
-      if (inserted) {
-        existing = inserted as { id: any };
-      } else if (String(tagError?.message ?? "").toLowerCase().includes("unique")) {
-        const { data: retry } = await db.from("tags").select("id").eq("name", name).eq("is_deleted", false).maybeSingle();
-        existing = retry as { id: any } | null;
-      } else {
-        throw new Error(`tag insert failed: ${tagError?.message}`);
-      }
+  let docId: string | null = null;
+  try {
+    let resolvedCategoryId: string | null = null;
+    if (categoryIdParam && isUuid(categoryIdParam)) {
+      const { data: cat } = await db.from("categories").select("id").eq("id", categoryIdParam).eq("is_deleted", false).maybeSingle();
+      if (cat) resolvedCategoryId = String(cat.id);
     }
-    if (existing && existing.id) tagIds.push(String(existing.id));
+    let resolvedFolderId: string | null = null;
+    if (folderIdParam && isUuid(folderIdParam)) {
+      const { data: fol } = await db.from("folders").select("id").eq("id", folderIdParam).maybeSingle();
+      if (fol) resolvedFolderId = String(fol.id);
+    }
+
+    const extraction = await extractDocumentContent(extension, bytes);
+    const { result: analysis } = await classifyDocumentContent(db, extraction.text, extraction.method);
+    const now = naiveIso();
+    const { data: saved, error: insError } = await db.from("documents").insert({
+      title: resolveTitle(titleParam, uploadFile.name),
+      file_name: uploadFile.name,
+      file_type: uploadFile.type || `application/${extension}`,
+      file_size: uploadFile.size,
+      file_path: storedName,
+      owner_email: userEmail,
+      department: userDept,
+      category_id: resolvedCategoryId,
+      folder_id: resolvedFolderId,
+      classification_level: classificationLevel,
+      status: "PENDING_REVIEW",
+      ocr_extracted_text: extraction.text,
+      ai_summary: analysis.summary,
+      ai_predicted_category: analysis.predictedCategoryName,
+      confidence_score: analysis.confidence,
+      extracted_keywords: analysis.metadataSuggestions.keywords ?? [],
+      ai_detected_document_type: analysis.detectedDocumentType,
+      ai_metadata_suggestions: analysis.metadataSuggestions,
+      ai_classification_reason: analysis.reason,
+      ai_provider_name: analysis.providerName,
+      ai_model: analysis.model,
+      ai_processed_at: analysis.processedAt,
+      ai_extraction_method: extraction.method,
+      ai_review_required: analysis.reviewRequired,
+      classification_review_status: "PENDING",
+      final_classification: null,
+      version_number: 1,
+      created_by: userEmail,
+      updated_by: userEmail,
+      updated_at: now,
+      is_deleted: false,
+    }).select("*").single();
+    if (insError) throw new Error(`document upload insert failed: ${insError.message}`);
+
+    const row = (saved as unknown as Record<string, unknown>) ?? {};
+    docId = String(row.id);
+    const { error: provenanceError } = await db.from("document_ai_classifications").insert({
+      document_id: docId,
+      content_sha256: extraction.contentSha256,
+      extraction_method: extraction.method,
+      extracted_character_count: extraction.text.length,
+      provider_id: analysis.providerId,
+      provider_name: analysis.providerName,
+      model: analysis.model,
+      processed_at: analysis.processedAt,
+      predicted_category_id: analysis.predictedCategoryId,
+      predicted_category_name: analysis.predictedCategoryName,
+      category_scores: analysis.categoryScores,
+      confidence: analysis.confidence,
+      confidence_method: analysis.confidenceMethod,
+      detected_document_type: analysis.detectedDocumentType,
+      summary: analysis.summary,
+      metadata_suggestions: analysis.metadataSuggestions,
+      classification_reason: analysis.reason,
+      grounded_evidence: analysis.groundedEvidence,
+      review_required: analysis.reviewRequired,
+      review_status: "PENDING",
+    });
+    if (provenanceError) throw new Error(`document AI provenance insert failed: ${provenanceError.message}`);
+
+    const tagNames = [analysis.predictedCategoryName.toLowerCase().replace(/_/g, "-"), "ai-classified"]
+      .map((name) => String(name).trim().toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").slice(0, 80))
+      .filter((name, index, all) => name.length >= 2 && all.indexOf(name) === index)
+      .slice(0, MAX_AUTO_TAGS);
+    const tagIds: string[] = [];
+    for (const name of tagNames) {
+      let existing = (
+        await db.from("tags").select("id").eq("name", name).eq("is_deleted", false).maybeSingle()
+      ).data as { id: any } | null;
+      if (!existing) {
+        const { data: inserted, error: tagError } = await db.from("tags").insert({ name, is_deleted: false }).select("id").single();
+        if (inserted) existing = inserted as { id: any };
+        else if (String(tagError?.message ?? "").toLowerCase().includes("unique")) {
+          const { data: retry } = await db.from("tags").select("id").eq("name", name).eq("is_deleted", false).maybeSingle();
+          existing = retry as { id: any } | null;
+        } else throw new Error("document tag could not be saved");
+      }
+      if (existing?.id) tagIds.push(String(existing.id));
+    }
+    if (tagIds.length > 0) {
+      const { error: linkError } = await db.from("document_tags").insert(
+        tagIds.map((tagId) => ({ document_id: docId, tag_id: tagId })),
+      );
+      if (linkError) throw new Error(`document tags link failed: ${linkError.message}`);
+    }
+
+    await writeAudit(ctx?.user ?? null, "UPLOAD_AND_CLASSIFY_DOCUMENT", MODULE, "Document", docId,
+      `Uploaded and content-classified document '${str(row.title)}' as ${analysis.predictedCategoryName}`
+        + ` (confidence=${analysis.confidence}, reviewRequired=${analysis.reviewRequired}, provider=${analysis.providerName}, model=${analysis.model})`,
+      ctx ? resolveClientIp(req).ip : null, "INFO");
+
+    const tags = await loadTags(docId);
+    return jsonResponse(ok(toDocumentDto({ ...row, tags }), "Document securely stored, content-extracted, AI-classified, and queued for human review"), 200);
+  } catch (error) {
+    if (docId) {
+      await db.from("document_tags").delete().eq("document_id", docId);
+      await db.from("document_ai_classifications").delete().eq("document_id", docId);
+      await db.from("documents").delete().eq("id", docId);
+    }
+    await db.storage.from(BUCKET).remove([storedName]);
+    if (error instanceof DocumentExtractionError) {
+      return jsonResponse(fail(error.message, error.code), 422);
+    }
+    if (error instanceof DocumentAiError) {
+      const unavailable = ["AI_PROVIDER_UNAVAILABLE", "AI_PROVIDER_OFFLINE", "AI_CREDENTIAL_UNAVAILABLE", "DOCUMENT_AI_DISABLED"]
+        .includes(error.code);
+      return jsonResponse(fail(error.message, error.code), unavailable ? 503 : 422);
+    }
+    throw error;
   }
-  if (tagIds.length > 0) {
-    const { error: linkError } = await db.from("document_tags").insert(
-      tagIds.map((tid) => ({ document_id: docId, tag_id: tid })),
-    );
-    if (linkError) throw new Error(`document tags link failed: ${linkError.message}`);
+}
+
+async function handleClassificationCategories() {
+  try {
+    const categories = await getDocumentBusinessCategories(db);
+    return jsonResponse(ok(categories, "Document classification categories retrieved"), 200);
+  } catch (error) {
+    if (error instanceof DocumentAiError) return jsonResponse(fail(error.message, error.code), 422);
+    throw error;
+  }
+}
+
+async function handleClassificationReview(
+  ctx: AuthContext | null,
+  req: Request,
+  body: unknown,
+  p: RouteParams,
+) {
+  if (!isUuid(p.id)) return jsonResponse(fail("Invalid document identifier.", "VALIDATION_ERROR"), 400);
+  const b = (body ?? {}) as Record<string, unknown>;
+  const decision = String(b.decision ?? "").trim().toUpperCase();
+  if (!["APPROVE", "CORRECT", "REJECT"].includes(decision)) {
+    return jsonResponse(fail("Decision must be APPROVE, CORRECT, or REJECT.", "VALIDATION_ERROR"), 400);
+  }
+  const notes = String(b.notes ?? "").trim().slice(0, 1_000);
+  const row = await loadDocumentRow(p.id);
+  if (!row || row.is_deleted === true) {
+    return jsonResponse(fail("Document not found.", "RESOURCE_NOT_FOUND"), 404);
+  }
+  if (String(row.status ?? "") !== "PENDING_REVIEW") {
+    return jsonResponse(fail("Only documents pending review can receive a classification decision.", "BUSINESS_RULE_VIOLATION"), 409);
   }
 
-  await writeAudit(ctx?.user ?? null, "UPLOAD_DOCUMENT", MODULE, "Document", docId,
-    `Uploaded document: ${str(row.title)} (${str(row.file_name)}, ${row.file_size} bytes)`
-      + ` - AI category: ${predictedCategory}, confidence: ${confidence}`,
+  const { data: provenance, error: provenanceLookupError } = await db.from("document_ai_classifications")
+    .select("*")
+    .eq("document_id", p.id)
+    .order("processed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (provenanceLookupError) throw new Error(`classification provenance lookup failed: ${provenanceLookupError.message}`);
+  if (!provenance) {
+    return jsonResponse(fail("This document has no AI classification to review.", "AI_CLASSIFICATION_NOT_FOUND"), 409);
+  }
+
+  let requestedCategoryId: string | null = null;
+  if (decision === "APPROVE") {
+    if (!provenance.predicted_category_id || !provenance.predicted_category_name) {
+      return jsonResponse(fail("The AI prediction does not reference an active category.", "CATEGORY_NOT_FOUND"), 409);
+    }
+  } else if (decision === "CORRECT") {
+    requestedCategoryId = String(b.categoryId ?? "").trim();
+    if (!isUuid(requestedCategoryId)) {
+      return jsonResponse(fail("A valid categoryId is required when correcting a classification.", "VALIDATION_ERROR"), 400);
+    }
+    const { data: category, error: categoryError } = await db.from("categories")
+      .select("id,name")
+      .eq("id", requestedCategoryId)
+      .eq("is_deleted", false)
+      .maybeSingle();
+    if (categoryError) throw new Error(`classification category lookup failed: ${categoryError.message}`);
+    if (!category) return jsonResponse(fail("The selected category is not active.", "CATEGORY_NOT_FOUND"), 404);
+  }
+
+  const reviewer = ctx?.email ?? "SYSTEM";
+  const { data: reviewResult, error: reviewError } = await db.rpc("review_document_ai_classification", {
+    p_document_id: p.id,
+    p_decision: decision,
+    p_category_id: requestedCategoryId,
+    p_reviewer_email: reviewer,
+    p_notes: notes || null,
+  });
+  if (reviewError) throw new Error(`document classification review failed: ${reviewError.message}`);
+  const reviewMetadata = (reviewResult ?? {}) as Record<string, unknown>;
+  const reviewStatus = str(reviewMetadata.reviewStatus) ?? "PENDING";
+  const finalCategoryName = str(reviewMetadata.finalCategoryName);
+
+  await writeAudit(ctx?.user ?? null, `${reviewStatus}_AI_CLASSIFICATION`, MODULE, "Document", p.id,
+    `${reviewStatus} AI classification for '${str(row.title)}'`
+      + (finalCategoryName ? `; final category=${finalCategoryName}` : "; no final category assigned"),
     ctx ? resolveClientIp(req).ip : null, "INFO");
-
-  const tags = await loadTags(docId);
-  const docDto = toDocumentDto({ ...row, tags });
-  return jsonResponse(ok(docDto, "Document uploaded, stored and processed by AI"), 200);
+  const updated = await loadDocumentRow(p.id);
+  if (!updated) throw new Error("document disappeared after classification review");
+  const tags = await loadTags(p.id);
+  return jsonResponse(ok(toDocumentDto({ ...updated, tags }), "Document classification review recorded"), 200);
 }
 
 async function handleDownloadDocument(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
@@ -603,6 +730,12 @@ async function handleDownloadDocument(ctx: AuthContext | null, req: Request, _bo
         `Document '${str(row.title)}' has no stored file. It was created as metadata only - use POST /v1/documents/upload to attach a file.`,
         "FILE_NOT_STORED",
       ),
+      404,
+    );
+  }
+  if (!isValidStorageObjectPath(filePath)) {
+    return jsonResponse(
+      fail("The document references a legacy file path that is not available in Supabase Storage.", "INVALID_STORAGE_PATH"),
       404,
     );
   }
@@ -654,11 +787,23 @@ async function handleGetSignedUrl(ctx: AuthContext | null, _req: Request, _body:
       404,
     );
   }
+  if (!isValidStorageObjectPath(filePath)) {
+    return jsonResponse(
+      fail("The document references a legacy file path that is not available in Supabase Storage.", "INVALID_STORAGE_PATH"),
+      404,
+    );
+  }
 
   await ensureBucket();
   const { data, error } = await db.storage.from(BUCKET).createSignedUrl(filePath, 300);
   if (error || !data) {
-    return jsonResponse(fail("Failed to generate signed download URL.", "SIGNED_URL_FAILED"), 500);
+    if (isMissingStorageObjectError(error)) {
+      return jsonResponse(
+        fail("The stored file for this document is no longer available.", "FILE_NOT_FOUND"),
+        404,
+      );
+    }
+    return jsonResponse(fail("The document storage service is temporarily unavailable.", "STORAGE_UNAVAILABLE"), 503);
   }
 
   return jsonResponse(
@@ -674,8 +819,10 @@ async function handleGetSignedUrl(ctx: AuthContext | null, _req: Request, _body:
 const routes = [
   { method: "GET", path: "/documents", guard: { kind: "auth" }, handler: handleListDocuments },
   { method: "GET", path: "/documents/search", guard: { kind: "auth" }, handler: handleSearchDocuments },
+  { method: "GET", path: "/documents/classification-categories", guard: { kind: "auth" }, handler: handleClassificationCategories },
   { method: "POST", path: "/documents", guard: { kind: "auth" }, handler: handleCreateDocument },
   { method: "POST", path: "/documents/upload", guard: { kind: "auth" }, handler: handleUploadDocument },
+  { method: "POST", path: "/documents/:id/classification-review", guard: { kind: "roles", roles: REVIEW_ROLES }, handler: handleClassificationReview },
   { method: "GET", path: "/documents/:id/download", guard: { kind: "auth" }, handler: handleDownloadDocument },
   { method: "GET", path: "/documents/:id/signed-url", guard: { kind: "auth" }, handler: handleGetSignedUrl },
 ] as const;

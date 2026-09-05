@@ -54,7 +54,7 @@ const byDateDesc = (a: AppNotification, b: AppNotification) =>
  * "mark read" / "dismiss" and a "mark all read" action. Backed by
  * {@link notificationService} → the shared `/v1/notifications` endpoint.
  *
- * Realtime: subscribes to the authenticated user's private STOMP queue via
+ * Realtime: subscribes to sanitized Supabase change markers and then
  * {@link useNotificationRealtimeStore}, so new notifications appear instantly
  * without a page refresh. SUPER_ADMINs also see their per-admin notifications
  * from `/v1/admin/notifications` merged into the same list.

@@ -2,6 +2,8 @@ import { apiClient, extractErrorMessage } from './client';
 import type {
   DocumentSummary,
   DocumentUploadOptions,
+  DocumentBusinessCategory,
+  ClassificationReviewDecision,
 } from '../types/documents';
 import {
   ALLOWED_UPLOAD_EXTENSIONS,
@@ -13,7 +15,7 @@ export function validateUploadFile(file: File | null | undefined): string | null
   if (!file) return 'Please choose a file to upload.';
   if (file.size <= 0) return 'The selected file is empty (0 bytes).';
   if (file.size > MAX_UPLOAD_SIZE_BYTES) {
-    return `File exceeds the 100MB limit (${(file.size / (1024 * 1024)).toFixed(1)}MB).`;
+    return `File exceeds the 20MB synchronous processing limit (${(file.size / (1024 * 1024)).toFixed(1)}MB).`;
   }
   const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
   if (!extension || !ALLOWED_UPLOAD_EXTENSIONS.includes(extension as never)) {
@@ -39,9 +41,27 @@ export const documentService = {
     return data?.data ?? [];
   },
 
+  async getClassificationCategories(): Promise<DocumentBusinessCategory[]> {
+    const { data } = await apiClient.get('/documents/classification-categories');
+    return data?.data ?? [];
+  },
+
+  async reviewClassification(
+    documentId: string,
+    decision: ClassificationReviewDecision,
+    options: { categoryId?: string; notes?: string } = {},
+  ): Promise<DocumentSummary> {
+    const { data } = await apiClient.post(`/documents/${documentId}/classification-review`, {
+      decision,
+      categoryId: options.categoryId,
+      notes: options.notes,
+    });
+    return data?.data as DocumentSummary;
+  },
+
   /**
    * Uploads a real file and returns the persisted document, already enriched
-   * with OCR text, AI category, summary, confidence score and auto-tags.
+   * with extracted content, AI category, summary, calibrated confidence and auto-tags.
    */
   async uploadDocument(
     file: File,

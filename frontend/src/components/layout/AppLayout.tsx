@@ -6,7 +6,6 @@ import {
   Settings, Bell, FileText, Cpu, KeyRound, LockKeyhole,
 } from 'lucide-react';
 import { getAssignedRoles, isActorSuperAdmin, isActorSystemAdmin, useAuthStore } from '../../stores/authStore';
-import { useDashboardStore } from '../../stores/dashboardStore';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { logout as apiLogout } from '../../api/authService';
 import { useUserHeartbeat } from '../../hooks/useUserHeartbeat';
@@ -31,17 +30,14 @@ export const AppLayout: React.FC = () => {
  }
  }, [location.pathname]);
 
- const connectRealtime = useDashboardStore(s => s.connectWebSocket);
- const disconnectRealtime = useDashboardStore(s => s.disconnectWebSocket);
  const connectSync = useRealtimeSyncStore(s => s.connectSync);
  const disconnectSync = useRealtimeSyncStore(s => s.disconnectSync);
 
  useEffect(() => {
  const id = setInterval(() => setClock(new Date()), 30000);
- connectRealtime();
  connectSync();
- return () => { clearInterval(id); disconnectRealtime(); disconnectSync(); };
- }, [connectRealtime, disconnectRealtime, connectSync, disconnectSync]);
+ return () => { clearInterval(id); disconnectSync(); };
+ }, [connectSync, disconnectSync]);
 
  const toggleMenu = (id: string) => {
  setExpandedMenus(prev => {
@@ -185,7 +181,7 @@ export const AppLayout: React.FC = () => {
     {[
     { label: 'Database', status: 'operational' as const },
     { label: 'API', status: 'operational' as const },
-    { label: 'WebSocket', status: 'operational' as const },
+    { label: 'Realtime', status: 'operational' as const },
     { label: 'Storage', status: 'operational' as const },
     ].map(s => (
     <div key={s.label} className="flex items-center space-x-1.5">

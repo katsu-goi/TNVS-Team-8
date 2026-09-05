@@ -16,12 +16,14 @@ interface Provider {
   model: string;
   status: 'CONNECTED' | 'OFFLINE';
   lastSync: string;
-  responseTime: string;
+  responseTime: string | null;
   isDefault: boolean;
-  type: 'openai' | 'gemini' | 'claude' | 'local';
+  type: string;
   baseUrl?: string;
   endpoint?: string;
-  apiKey?: string;
+  capabilities?: string[];
+  lastVerifiedAt?: string | null;
+  requiresCredentialReconfiguration?: boolean;
 }
 
 interface AIModule {
@@ -169,6 +171,7 @@ export const AiServicesPage: React.FC = () => {
 
   // Modals & Feedback
   const [showAddProviderModal, setShowAddProviderModal] = useState(false);
+  const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [showConfigModuleModal, setShowConfigModuleModal] = useState<AIModule | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
@@ -236,7 +239,7 @@ export const AiServicesPage: React.FC = () => {
     fetchAllData();
   }, []);
 
-  // Realtime refresh: providers/modules change from another session or STOMP.
+  // Realtime refresh: providers/modules changed in another session.
   const aiConfigRevision = useRealtimeSyncStore(s => s.aiConfigRevision);
   useEffect(() => {
     if (aiConfigRevision > 0) {
@@ -397,17 +400,19 @@ export const AiServicesPage: React.FC = () => {
     }
   };
 
-  const handleTestConnection = async () => {
+  const handleTestConnection = async (provider?: Provider) => {
     setTestingConnection(true);
-    const defaultProvider = providers.find(p => p.isDefault) || providers[0];
+    const selectedProvider = provider || providers.find(p => p.isDefault) || providers[0];
     try {
       const res = await apiClient.post('/ai/test-connection', {
-        provider: defaultProvider?.name || 'OpenAI Gateway',
-        model: defaultProvider?.model || 'gpt-4o',
+        provider: selectedProvider?.id,
       });
       const data = res.data?.data;
-      showToast(`Live AI Connection verified! Latency: ${data?.responseTimeMs || 50}ms · Engine: ${data?.modelUsed || 'gpt-4o'}`);
-      fetchAllData();
+      if (res.data?.success !== true || data?.verified !== true || data?.status !== 'ONLINE') {
+        throw new Error(res.data?.message || 'Provider connectivity could not be verified.');
+      }
+      showToast(`Live AI connection verified. Latency: ${data?.responseTimeMs ?? 0}ms · Engine: ${data?.modelUsed || selectedProvider?.model || 'configured model'}`);
+      await fetchAllData();
     } catch {
       showToast('AI Connection test failed. Check backend connectivity.');
     } finally {
@@ -435,25 +440,12 @@ export const AiServicesPage: React.FC = () => {
     }
   };
 
-  const handleSaveProviderFromModal = async (data: ProviderFormData) => {
-    let pType: 'openai' | 'gemini' | 'claude' | 'local' = 'openai';
+  const handleSaveProviderFromModal = async (data: ProviderFormData): Promise<boolean> => {
+    let pType = 'openai';
     if (data.providerType.includes('Gemini')) pType = 'gemini';
     else if (data.providerType.includes('Claude')) pType = 'claude';
+    else if (data.providerType.includes('Azure')) pType = 'azure';
     else if (data.providerType.includes('Ollama') || data.providerType.includes('LM Studio') || data.providerType.includes('Local')) pType = 'local';
-
-    const newProviderObj: Provider = {
-      id: 'prov-' + Date.now(),
-      name: data.displayName || data.providerName,
-      model: data.model || 'gpt-4o',
-      status: 'CONNECTED',
-      lastSync: 'Just now',
-      responseTime: '45 ms',
-      isDefault: data.isDefault,
-      type: pType,
-      baseUrl: data.baseUrl,
-      endpoint: data.endpoint,
-      apiKey: data.apiKey,
-    };
 
     const capabilityList = data.capabilities
       ? Object.entries(data.capabilities)
@@ -462,7 +454,7 @@ export const AiServicesPage: React.FC = () => {
       : [];
 
     try {
-      const res = await apiClient.post('/ai/providers', {
+      const payload = {
         name: data.displayName,
         model: data.model,
         type: pType,
@@ -471,25 +463,27 @@ export const AiServicesPage: React.FC = () => {
         endpoint: data.endpoint,
         apiKey: data.apiKey,
         capabilities: capabilityList,
-      });
+      };
+      const res = editingProvider
+        ? await apiClient.put(`/ai/providers/${editingProvider.id}`, payload)
+        : await apiClient.post('/ai/providers', payload);
 
-      if (res.data?.data) {
-        showToast(`AI Provider "${data.displayName}" added successfully!`);
+      if (res.data?.success === true && res.data?.data?.verified === true && res.data?.data?.status === 'CONNECTED') {
+        showToast(`AI Provider "${data.displayName}" ${editingProvider ? 'reconfigured' : 'added'} successfully.`);
         setShowAddProviderModal(false);
-        fetchAllData();
-        return;
+        setEditingProvider(null);
+        await fetchAllData();
+        return true;
       }
+      showToast('Verification succeeded, but configuration could not be saved.');
     } catch (err) {
-      console.warn('Backend provider save request failed, updating provider state locally:', err);
+      console.warn('AI provider was not saved because server-side verification failed.');
+      const response = (err as { response?: { data?: { errorCode?: string; data?: { stage?: string } } } }).response?.data;
+      const failureCode = response?.errorCode ? ` [${response.errorCode}]` : '';
+      const failureStage = response?.data?.stage ? ` at ${response.data.stage}` : '';
+      showToast(`Verification succeeded, but configuration could not be saved${failureStage}.${failureCode} ${extractErrorMessage(err)}`);
     }
-
-    setProviders(prev => {
-      const list = data.isDefault ? prev.map(p => ({ ...p, isDefault: false })) : [...prev];
-      return [...list, newProviderObj];
-    });
-
-    showToast(`AI Provider "${data.displayName}" saved successfully!`);
-    setShowAddProviderModal(false);
+    return false;
   };
 
   const handleSavePrompt = async () => {
@@ -560,7 +554,7 @@ export const AiServicesPage: React.FC = () => {
 
         <div className="flex items-center space-x-3 self-end md:self-auto">
           <button
-            onClick={handleTestConnection}
+            onClick={() => handleTestConnection()}
             disabled={testingConnection}
             className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold text-xs hover:bg-emerald-100 transition-colors disabled:opacity-50"
           >
@@ -694,7 +688,7 @@ export const AiServicesPage: React.FC = () => {
           </div>
 
           <button
-            onClick={() => setShowAddProviderModal(true)}
+            onClick={() => { setEditingProvider(null); setShowAddProviderModal(true); }}
             className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm transition-all"
           >
             <Plus className="w-4 h-4" />
@@ -714,7 +708,7 @@ export const AiServicesPage: React.FC = () => {
             </p>
             <div className="flex items-center space-x-4">
               <button
-                onClick={() => setShowAddProviderModal(true)}
+                onClick={() => { setEditingProvider(null); setShowAddProviderModal(true); }}
                 className="flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm transition-all"
               >
                 <Plus className="w-4 h-4" />
@@ -761,7 +755,7 @@ export const AiServicesPage: React.FC = () => {
                         }`}
                       >
                         <span className={`w-1.5 h-1.5 rounded-full ${p.status === 'CONNECTED' ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
-                        <span>{p.status}</span>
+                        <span>{p.status === 'CONNECTED' ? 'ONLINE' : 'OFFLINE'}</span>
                       </span>
                     </div>
 
@@ -775,6 +769,11 @@ export const AiServicesPage: React.FC = () => {
                       <span className="font-mono text-emerald-700 font-semibold">{p.responseTime}</span>
                     </div>
                   </div>
+                  {p.requiresCredentialReconfiguration && (
+                    <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-2.5 text-[11px] font-medium text-amber-800">
+                      Provider requires credential reconfiguration.
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
@@ -790,7 +789,13 @@ export const AiServicesPage: React.FC = () => {
                   )}
                   <div className="flex items-center space-x-2">
                     <button
-                      onClick={handleTestConnection}
+                      onClick={() => { setEditingProvider(p); setShowAddProviderModal(true); }}
+                      className="text-xs font-medium text-emerald-700 hover:text-emerald-900"
+                    >
+                      Reconfigure
+                    </button>
+                    <button
+                      onClick={() => handleTestConnection(p)}
                       className="text-xs font-medium text-slate-500 hover:text-slate-800"
                     >
                       Test
@@ -1561,8 +1566,9 @@ export const AiServicesPage: React.FC = () => {
       {showAddProviderModal && (
         <AddAiProviderModal
           isOpen={showAddProviderModal}
-          onClose={() => setShowAddProviderModal(false)}
+          onClose={() => { setShowAddProviderModal(false); setEditingProvider(null); }}
           onSave={handleSaveProviderFromModal}
+          initialProvider={editingProvider}
         />
       )}
     </div>

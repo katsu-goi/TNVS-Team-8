@@ -20,12 +20,6 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
-      '/ws-endpoint': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-        ws: true,
-        rewrite: (path) => '/api' + path,
-      },
       '/v1': {
         target: 'http://localhost:8080',
         changeOrigin: true,
@@ -40,11 +34,9 @@ export default defineConfig({
           'data-vendor': ['axios', 'zustand', '@supabase/supabase-js'],
           'charts-vendor': ['recharts'],
           'maps-vendor': ['leaflet', 'leaflet.markercluster', 'react-leaflet'],
-          'realtime-vendor': ['@stomp/stompjs', 'sockjs-client'],
           'ui-vendor': ['lucide-react'],
         },
       },
     },
   },
 });
-

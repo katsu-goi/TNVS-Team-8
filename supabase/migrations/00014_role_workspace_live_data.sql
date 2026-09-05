@@ -3,19 +3,15 @@
 alter table public.hub_inventory_assets
   add column if not exists unit_price numeric(14, 2) not null default 0,
   add column if not exists supplier_name text;
-
 alter table public.facility_compliance_documents
   add column if not exists document_category text,
   add column if not exists routed_to_role text;
-
 alter table public.facility_compliance_documents
   drop constraint if exists chk_facility_document_status;
-
 alter table public.facility_compliance_documents
   add constraint chk_facility_document_status check (
     review_status in ('DRAFT', 'PENDING_REVIEW', 'APPROVED', 'REJECTED', 'EXPIRED', 'CRITICAL_RENEWAL')
   );
-
 create table if not exists public.facility_permits (
   id uuid primary key default gen_random_uuid(),
   facility_id uuid references public.facilities(id) on delete set null,
@@ -30,10 +26,8 @@ create table if not exists public.facility_permits (
   constraint uq_facility_permit unique (hub_name, permit_type),
   constraint chk_facility_permit_status check (status in ('ACTIVE', 'WATCH', 'CRITICAL', 'EXPIRED', 'RENEWED'))
 );
-
 create index if not exists idx_facility_permits_expiration
   on public.facility_permits(expiration_date, status);
-
 create table if not exists public.vendor_risk_assessments (
   id uuid primary key default gen_random_uuid(),
   vendor_name text not null,
@@ -54,10 +48,8 @@ create table if not exists public.vendor_risk_assessments (
     status <> 'FLAGGED_HOLD' or length(btrim(coalesce(justification, ''))) >= 10
   )
 );
-
 create index if not exists idx_vendor_risk_status
   on public.vendor_risk_assessments(status, risk_level);
-
 create table if not exists public.compliance_incidents (
   id uuid primary key default gen_random_uuid(),
   incident_reference text not null unique,
@@ -73,10 +65,8 @@ create table if not exists public.compliance_incidents (
   constraint chk_compliance_incident_severity check (severity in ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
   constraint chk_compliance_incident_status check (status in ('OPEN', 'UNDER_INVESTIGATION', 'RESOLVED'))
 );
-
 create index if not exists idx_compliance_incidents_status
   on public.compliance_incidents(status, severity, statutory_deadline);
-
 create table if not exists public.management_signoffs (
   id uuid primary key default gen_random_uuid(),
   signoff_reference text not null unique,
@@ -92,10 +82,8 @@ create table if not exists public.management_signoffs (
     status in ('AWAITING_MANAGER_SIGNOFF', 'MANAGER_APPROVED', 'REJECTED_REVISION')
   )
 );
-
 create index if not exists idx_management_signoffs_status
   on public.management_signoffs(status, submitted_at desc);
-
 create table if not exists public.facility_data_logs (
   id uuid primary key default gen_random_uuid(),
   external_reference text not null unique,
@@ -106,10 +94,8 @@ create table if not exists public.facility_data_logs (
   anonymized_at timestamptz,
   constraint chk_facility_data_status check (status in ('ACTIVE', 'ANONYMIZED', 'PURGED'))
 );
-
 create index if not exists idx_facility_data_retention
   on public.facility_data_logs(data_category, created_at, status);
-
 create table if not exists public.privacy_breach_incidents (
   id uuid primary key default gen_random_uuid(),
   incident_reference text not null unique,
@@ -125,10 +111,8 @@ create table if not exists public.privacy_breach_incidents (
   constraint chk_privacy_breach_severity check (severity in ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
   constraint chk_privacy_breach_status check (status in ('ASSESSING', 'NOTIFICATION_DRAFTED', 'REPORTED', 'CLOSED'))
 );
-
 create index if not exists idx_privacy_breach_due
   on public.privacy_breach_incidents(status, notification_due_at);
-
 create table if not exists public.security_role_incidents (
   id uuid primary key default gen_random_uuid(),
   incident_reference text not null unique,
@@ -145,10 +129,8 @@ create table if not exists public.security_role_incidents (
   constraint chk_security_role_severity check (severity in ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
   constraint chk_security_role_status check (status in ('OPEN', 'CONTAINED', 'MITIGATING', 'RESOLVED'))
 );
-
 create index if not exists idx_security_role_incidents
   on public.security_role_incidents(security_domain, status, severity);
-
 create table if not exists public.department_approvals (
   id uuid primary key default gen_random_uuid(),
   approval_reference text not null unique,
@@ -165,10 +147,8 @@ create table if not exists public.department_approvals (
     status in ('PENDING_DEPARTMENT_HEAD', 'APPROVED', 'RETURNED', 'REJECTED')
   )
 );
-
 create index if not exists idx_department_approvals_status
   on public.department_approvals(department_name, status, submitted_at desc);
-
 create table if not exists public.governance_settings (
   id uuid primary key default gen_random_uuid(),
   setting_key text not null unique,
@@ -177,7 +157,6 @@ create table if not exists public.governance_settings (
   updated_by uuid references public.users(id) on delete set null,
   updated_at timestamptz not null default now()
 );
-
 create table if not exists public.facility_reorder_requests (
   id uuid primary key default gen_random_uuid(),
   inventory_asset_id uuid not null references public.hub_inventory_assets(id) on delete cascade,
@@ -190,11 +169,9 @@ create table if not exists public.facility_reorder_requests (
   constraint chk_reorder_quantity check (requested_quantity > 0),
   constraint chk_reorder_status check (status in ('PENDING_PROCUREMENT', 'ORDERED', 'RECEIVED', 'CANCELLED'))
 );
-
 create unique index if not exists uq_active_inventory_reorder
   on public.facility_reorder_requests(inventory_asset_id)
   where status in ('PENDING_PROCUREMENT', 'ORDERED');
-
 create or replace function public.refresh_facility_permit_statuses()
 returns integer
 language plpgsql
@@ -217,9 +194,7 @@ begin
   return affected;
 end;
 $$;
-
 revoke all on function public.refresh_facility_permit_statuses() from public;
-
 insert into public.retention_policies (
   name, description, retention_period_days, action_on_expiry, active, is_deleted, created_at
 )
@@ -235,7 +210,6 @@ on conflict (name) do update set
   active = true,
   is_deleted = false,
   updated_at = now();
-
 insert into public.hub_inventory_assets (
   facility_id, sku, asset_name, category, current_stock, low_stock_threshold,
   unit, unit_price, supplier_name, created_at
@@ -257,7 +231,6 @@ on conflict (facility_id, sku) do update set
   unit_price = excluded.unit_price,
   supplier_name = excluded.supplier_name,
   updated_at = now();
-
 insert into public.facility_permits (
   facility_id, hub_name, permit_type, permit_number, expiration_date, tracking_officer_id
 )
@@ -276,9 +249,7 @@ on conflict (hub_name, permit_type) do update set
   expiration_date = excluded.expiration_date,
   tracking_officer_id = excluded.tracking_officer_id,
   updated_at = now();
-
 select public.refresh_facility_permit_statuses();
-
 insert into public.vendor_risk_assessments (
   vendor_name, contract_title, sec_dti_registered, bir_clearance_submitted,
   aml_watchlist_cleared, justification, risk_level, status, assessed_by
@@ -300,7 +271,6 @@ on conflict (vendor_name, contract_title) do update set
   status = excluded.status,
   assessed_by = excluded.assessed_by,
   updated_at = now();
-
 insert into public.compliance_incidents (
   incident_reference, hub_name, violation_category, severity, status,
   assigned_to, statutory_deadline, remediation_directives
@@ -321,7 +291,6 @@ on conflict (incident_reference) do update set
   statutory_deadline = excluded.statutory_deadline,
   remediation_directives = excluded.remediation_directives,
   updated_at = now();
-
 insert into public.management_signoffs (
   signoff_reference, item_type, item_title, submitted_by, status, submitted_at
 )
@@ -333,7 +302,6 @@ from (values
 ) as seed(reference, item_type, item_title, age)
 left join public.users officer on lower(officer.email) = 'co@photonicomega.com'
 on conflict (signoff_reference) do nothing;
-
 insert into public.legal_contract_workflows (
   contract_id, state, submitted_by, submitted_at, created_at
 )
@@ -348,7 +316,6 @@ from public.contracts contract_row
 left join public.users legal_officer on lower(legal_officer.email) = 'legal.officer@photonicomega.com'
 where coalesce(contract_row.is_deleted, false) = false
 on conflict (contract_id) do nothing;
-
 insert into public.records_archives (
   document_id, retention_policy_id, archive_status, metadata, checksum,
   custodian_user_id, vaulted_at, retention_expires_at, created_at
@@ -375,7 +342,6 @@ where coalesce(document_row.is_deleted, false) = false
 order by document_row.created_at, document_row.id
 limit 4
 on conflict (document_id) do nothing;
-
 insert into public.data_subject_requests (
   request_reference, request_type, requester_name, requester_email,
   status, assigned_to, due_at, created_at
@@ -392,7 +358,6 @@ on conflict (request_reference) do update set
   assigned_to = excluded.assigned_to,
   due_at = excluded.due_at,
   updated_at = now();
-
 insert into public.facility_data_logs (
   external_reference, data_category, raw_pii_json, status, created_at
 )
@@ -411,7 +376,6 @@ on conflict (external_reference) do update set
   raw_pii_json = excluded.raw_pii_json,
   status = excluded.status,
   created_at = excluded.created_at;
-
 insert into public.cctv_export_requests (
   facility_id, requested_by, purpose, footage_start_at, footage_end_at,
   status, expires_at, created_at
@@ -425,7 +389,6 @@ where not exists (
   select 1 from public.cctv_export_requests request_row
   where request_row.purpose = 'Investigate reported theft at the driver onboarding front desk.'
 );
-
 insert into public.privacy_breach_incidents (
   incident_reference, title, facility_name, discovered_at, notification_due_at,
   severity, status, description
@@ -445,7 +408,6 @@ on conflict (incident_reference) do update set
   status = excluded.status,
   description = excluded.description,
   updated_at = now();
-
 insert into public.security_role_incidents (
   incident_reference, security_domain, title, facility_name, severity, status,
   owner_user_id, description
@@ -466,7 +428,6 @@ on conflict (incident_reference) do update set
   owner_user_id = excluded.owner_user_id,
   description = excluded.description,
   updated_at = now();
-
 insert into public.department_approvals (
   approval_reference, department_name, request_type, request_title,
   submitted_by, status, submitted_at
@@ -479,7 +440,6 @@ from (values
 ) as seed(reference, department_name, request_type, title, submitter_email, age)
 left join public.users submitter on lower(submitter.email) = seed.submitter_email
 on conflict (approval_reference) do nothing;
-
 insert into public.department_scope_assignments (
   department_head_user_id, department_name, can_approve, can_shadow, created_at
 )
@@ -488,7 +448,6 @@ from public.users department_head
 cross join (values ('Compliance'), ('Facilities'), ('Legal'), ('Security')) as seed(department_name)
 where lower(department_head.email) = 'dept.head@photonicomega.com'
 on conflict (department_head_user_id, department_name) do update set can_approve = true;
-
 insert into public.governance_settings (setting_key, setting_value, category, updated_by)
 select seed.setting_key, seed.setting_value, seed.category, manager.id
 from (values
@@ -503,7 +462,6 @@ on conflict (setting_key) do update set
   category = excluded.category,
   updated_by = excluded.updated_by,
   updated_at = now();
-
 do $$
 declare
   table_name text;
@@ -518,7 +476,6 @@ begin
     execute format('revoke all privileges on table public.%I from anon, authenticated', table_name);
   end loop;
 end $$;
-
 do $$
 declare
   table_name text;

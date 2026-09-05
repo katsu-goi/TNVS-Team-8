@@ -18,7 +18,6 @@ on conflict (name) do update set
   is_system_role = true,
   is_deleted = false,
   updated_at = now();
-
 do $$
 declare
   legacy_admin_id uuid;
@@ -62,7 +61,6 @@ begin
     on conflict do nothing;
   end if;
 end $$;
-
 insert into public.users (
   employee_id, first_name, last_name, email, password_hash,
   department, position, status, is_email_verified, is_deleted, created_at
@@ -88,7 +86,6 @@ on conflict (email) do update set
   failed_login_attempts = 0,
   locked_until = null,
   updated_at = now();
-
 delete from public.user_roles user_role
 using public.users app_user
 where user_role.user_id = app_user.id
@@ -97,7 +94,6 @@ where user_role.user_id = app_user.id
     'compliance.manager@photonicomega.com',
     'legal.officer@photonicomega.com'
   );
-
 insert into public.user_roles (user_id, role_id)
 select app_user.id, role_row.id
 from (values
@@ -109,7 +105,6 @@ join public.users app_user on lower(app_user.email) = assignment.email
 join public.roles role_row on role_row.name = assignment.role_name
 where app_user.is_deleted = false
 on conflict do nothing;
-
 insert into public.role_hierarchy (senior_role_id, junior_role_id)
 select senior.id, junior.id
 from public.roles senior
@@ -117,7 +112,6 @@ cross join public.roles junior
 where senior.name = 'DEPARTMENT_HEAD'
   and junior.name = 'COMPLIANCE_MANAGER'
 on conflict do nothing;
-
 delete from public.refresh_tokens refresh_token
 using public.users app_user
 where refresh_token.user_id = app_user.id
