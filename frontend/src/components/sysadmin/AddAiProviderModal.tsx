@@ -561,7 +561,12 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
                   type={showApiKey ? 'text' : 'password'}
                   placeholder="sk-proj-..."
                   value={apiKey}
-                  onChange={e => { setApiKey(e.target.value); invalidateConnectionTest(); }}
+                  onChange={e => {
+                    setApiKey(e.target.value);
+                    setModelFetchError(null);
+                    setErrors(prev => ({ ...prev, apiKey: undefined }));
+                    invalidateConnectionTest();
+                  }}
                   className={`w-full border rounded-xl p-2.5 pr-10 text-xs font-mono text-slate-800 focus:outline-none transition-colors ${
                     errors.apiKey ? 'border-rose-400 bg-rose-50/20' : 'border-slate-300 focus:border-emerald-500'
                   }`}

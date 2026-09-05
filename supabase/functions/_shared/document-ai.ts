@@ -136,6 +136,16 @@ function endpointFor(provider: { baseUrl: string | null; endpoint: string | null
   return `${base}${base.endsWith("/v1") ? "" : "/v1"}/chat/completions`;
 }
 
+function isAgentRouterBase(baseUrl: string | null): boolean {
+  if (baseUrl == null || baseUrl.trim() === "") return false;
+  try {
+    const hostname = new URL(baseUrl).hostname.toLowerCase();
+    return hostname === "agentrouter.org" || hostname.endsWith(".agentrouter.org");
+  } catch {
+    return false;
+  }
+}
+
 function extractJsonObject(value: string): Record<string, unknown> {
   const withoutFence = value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
   const start = withoutFence.indexOf("{");
@@ -271,24 +281,28 @@ export async function classifyDocumentContent(
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 45_000);
+    const credential = provider.credential.trim();
+    const requestHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      Authorization: `Bearer ${credential}`,
+      "User-Agent": "Photonic-Omega-Document-AI/2.0",
+    };
+    const requestBody: Record<string, unknown> = {
+      model: provider.model,
+      max_tokens: 1_200,
+      stream: false,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    };
+    if (isAgentRouterBase(provider.baseUrl)) requestHeaders["x-api-key"] = credential;
+    else requestBody.temperature = 0;
     response = await fetch(endpointFor(provider), {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        Authorization: `Bearer ${provider.credential}`,
-        "User-Agent": "Photonic-Omega-Document-AI/2.0",
-      },
-      body: JSON.stringify({
-        model: provider.model,
-        temperature: 0,
-        max_tokens: 1_200,
-        stream: false,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-      }),
+      headers: requestHeaders,
+      body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
     clearTimeout(timeout);

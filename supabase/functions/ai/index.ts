@@ -651,6 +651,26 @@ function isOfficialOpenAiBase(baseUrl: string | null): boolean {
   }
 }
 
+function isAgentRouterBase(baseUrl: string | null): boolean {
+  if (baseUrl == null || baseUrl.trim() === "") return false;
+  try {
+    const hostname = new URL(baseUrl).hostname.toLowerCase();
+    return hostname === "agentrouter.org" || hostname.endsWith(".agentrouter.org");
+  } catch {
+    return false;
+  }
+}
+
+function openAiCompatibleAuthHeaders(apiKey: string | null, baseUrl: string | null): Record<string, string> {
+  const headers: Record<string, string> = { Accept: "application/json" };
+  const credential = apiKey?.trim() ?? "";
+  if (credential !== "") {
+    headers.Authorization = `Bearer ${credential}`;
+    if (isAgentRouterBase(baseUrl)) headers["x-api-key"] = credential;
+  }
+  return headers;
+}
+
 function rankOpenAiDocumentModels(models: string[]): string[] {
   const suitable = models.filter((model) => {
     const normalized = model.toLowerCase();
@@ -675,8 +695,7 @@ async function fetchOpenAiCompatible(apiKey: string | null, baseUrl: string | nu
   const modelsUrl = cleanBase.includes("/v1")
     ? cleanBase.replace(/\/v1.*/, "") + "/v1/models"
     : cleanBase + "/v1/models";
-  const headers: Record<string, string> = { Accept: "application/json" };
-  if (apiKey != null && apiKey !== "") headers.Authorization = `Bearer ${apiKey}`;
+  const headers = openAiCompatibleAuthHeaders(apiKey, baseUrl);
   const body = await httpGetJson(modelsUrl, headers);
   const list = body && Array.isArray(body.data) ? body.data : [];
   const models = list.map((m: any) => String(m.id ?? "")).filter((s: string) => s !== "");
@@ -752,15 +771,18 @@ async function verifyOpenAiCompatibleCredential(provider: ProviderDto): Promise<
   } else {
     url = `${base}${base.endsWith("/v1") ? "" : "/v1"}/chat/completions`;
   }
-  const response = await httpPostJson(url, {
-    Accept: "application/json",
-    Authorization: `Bearer ${provider.apiKey}`,
-  }, {
+  const verificationPayload: Record<string, unknown> = {
     model: provider.model,
     messages: [{ role: "user", content: "Reply with OK." }],
-    max_completion_tokens: 16,
     stream: false,
-  });
+  };
+  if (isAgentRouterBase(provider.baseUrl)) verificationPayload.max_tokens = 16;
+  else verificationPayload.max_completion_tokens = 16;
+  const response = await httpPostJson(
+    url,
+    openAiCompatibleAuthHeaders(provider.apiKey, provider.baseUrl),
+    verificationPayload,
+  );
   if (!Array.isArray(response?.choices)) throw new Error("Provider verification response was invalid");
 }
 
@@ -810,7 +832,7 @@ function providerFromRequest(b: Record<string, any>): ProviderDto {
     type: providerTypeFromInput(b.provider, b.type),
     baseUrl: b.baseUrl != null ? String(b.baseUrl) : null,
     endpoint: b.endpoint != null ? String(b.endpoint) : null,
-    apiKey: b.apiKey != null ? String(b.apiKey) : null,
+    apiKey: b.apiKey != null ? String(b.apiKey).trim() : null,
     capabilities: [],
     lastVerifiedAt: null,
     requiresCredentialReconfiguration: false,
@@ -1019,8 +1041,8 @@ async function chatCompose(ctx: AuthContext | null, message: string, module: str
       const res = await fetch(endpoint, {
         method: "POST",
         headers: {
+          ...openAiCompatibleAuthHeaders(usableKey, baseUrl),
           "Content-Type": "application/json",
-          Authorization: `Bearer ${usableKey}`,
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         },
         body: JSON.stringify(body),
@@ -1138,7 +1160,7 @@ async function addProvider(_ctx: unknown, _req: Request, body: unknown) {
     type: String(b.type ?? "openai"),
     baseUrl: b.baseUrl != null ? String(b.baseUrl) : null,
     endpoint: b.endpoint != null ? String(b.endpoint) : null,
-    apiKey: b.apiKey != null ? String(b.apiKey) : null,
+    apiKey: b.apiKey != null ? String(b.apiKey).trim() : null,
     capabilities: Array.isArray(b.capabilities) ? b.capabilities.map(String) : [],
     lastVerifiedAt: null,
     requiresCredentialReconfiguration: false,
@@ -1249,7 +1271,7 @@ async function updateProvider(_ctx: unknown, _req: Request, body: unknown, param
     type: b.type != null ? String(b.type) : String(existing.provider_type ?? "openai"),
     baseUrl: b.baseUrl != null ? String(b.baseUrl) : (existing.base_url != null ? String(existing.base_url) : null),
     endpoint: b.endpoint != null ? String(b.endpoint) : (existing.endpoint != null ? String(existing.endpoint) : null),
-    apiKey: b.apiKey != null ? String(b.apiKey) : null,
+    apiKey: b.apiKey != null ? String(b.apiKey).trim() : null,
     capabilities: Array.isArray(b.capabilities)
       ? b.capabilities.map(String)
       : parseCapabilities(existing.capabilities != null ? String(existing.capabilities) : null),
@@ -1666,8 +1688,14 @@ async function testConnection(_ctx: unknown, _req: Request, body: unknown) {
 
 function describeUpstreamError(status: number, raw: string): string {
   if (status === 401 || status === 403) {
-    if (raw != null && raw.toLowerCase().includes("unauthorized_client")) {
+    const normalized = raw == null ? "" : raw.toLowerCase();
+    if (normalized.includes("unauthorized_client")) {
       return "Provider gateway rejected the request as an unauthorized client. This usually means the Base URL points to a proxy that blocks server-side calls, or the API key is not valid for that gateway. Verify the Base URL and API Key.";
+    }
+    if (normalized.includes("expired")) return "Provider authentication failed because the API token is expired. Create and submit a new active token.";
+    if (normalized.includes("disabled")) return "Provider authentication failed because the API token is disabled. Enable it or create a new token.";
+    if (normalized.includes("invalid") || normalized.includes("incorrect")) {
+      return "Provider rejected the API token as invalid. Create a new token in the same provider environment as the configured Base URL.";
     }
     return `Authentication failed (HTTP ${status}). Check that the API Key is correct and authorized for this provider.`;
   }
