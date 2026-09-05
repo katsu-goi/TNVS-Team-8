@@ -277,7 +277,7 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
     } catch (err) {
       console.warn('AI provider connection verification failed.');
       setTestStatus('error');
-      setErrors(prev => ({ ...prev, connection: 'A successful server-side connection test is required before saving.' }));
+      setErrors(prev => ({ ...prev, connection: extractErrorMessage(err) }));
     }
   };
 
@@ -758,7 +758,7 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
                 {testStatus === 'error' && (
                   <div className="flex items-center space-x-1.5 text-rose-600 font-semibold text-xs animate-in fade-in">
                     <AlertCircle className="w-4 h-4 text-rose-500" />
-                    <span>Unable to connect. Check API Key or Base URL.</span>
+                    <span>Connection test failed.</span>
                   </div>
                 )}
               </div>

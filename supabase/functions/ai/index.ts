@@ -616,6 +616,60 @@ async function httpGetJson(url: string, headers: Record<string, string>): Promis
   }
 }
 
+const OPENAI_DOCUMENT_MODEL_PREFERENCE = [
+  "gpt-4o-mini",
+  "gpt-4.1-mini",
+  "gpt-4.1",
+  "gpt-4o",
+  "gpt-5-mini",
+  "gpt-5",
+];
+
+const OPENAI_NON_DOCUMENT_MODEL_MARKERS = [
+  "audio",
+  "realtime",
+  "transcribe",
+  "tts",
+  "image",
+  "sora",
+  "dall-e",
+  "embedding",
+  "moderation",
+  "whisper",
+  "search",
+  "deep-research",
+  "codex",
+  "instruct",
+];
+
+function isOfficialOpenAiBase(baseUrl: string | null): boolean {
+  if (baseUrl == null || baseUrl.trim() === "") return true;
+  try {
+    return new URL(baseUrl).hostname.toLowerCase() === "api.openai.com";
+  } catch {
+    return false;
+  }
+}
+
+function rankOpenAiDocumentModels(models: string[]): string[] {
+  const suitable = models.filter((model) => {
+    const normalized = model.toLowerCase();
+    const generalPurposeFamily = normalized.startsWith("gpt-") || /^o\d/.test(normalized);
+    return generalPurposeFamily
+      && !OPENAI_NON_DOCUMENT_MODEL_MARKERS.some((marker) => normalized.includes(marker));
+  });
+  return suitable.sort((a, b) => {
+    const aRank = OPENAI_DOCUMENT_MODEL_PREFERENCE.indexOf(a.toLowerCase());
+    const bRank = OPENAI_DOCUMENT_MODEL_PREFERENCE.indexOf(b.toLowerCase());
+    if (aRank >= 0 || bRank >= 0) {
+      if (aRank < 0) return 1;
+      if (bRank < 0) return -1;
+      return aRank - bRank;
+    }
+    return a.localeCompare(b);
+  });
+}
+
 async function fetchOpenAiCompatible(apiKey: string | null, baseUrl: string | null): Promise<string[]> {
   const cleanBase = (baseUrl == null || baseUrl === "") ? "https://api.openai.com" : baseUrl.replace(/\/+$/, "");
   const modelsUrl = cleanBase.includes("/v1")
@@ -625,7 +679,10 @@ async function fetchOpenAiCompatible(apiKey: string | null, baseUrl: string | nu
   if (apiKey != null && apiKey !== "") headers.Authorization = `Bearer ${apiKey}`;
   const body = await httpGetJson(modelsUrl, headers);
   const list = body && Array.isArray(body.data) ? body.data : [];
-  return list.map((m: any) => String(m.id ?? "")).filter((s: string) => s !== "").sort((a: string, b: string) => a.localeCompare(b));
+  const models = list.map((m: any) => String(m.id ?? "")).filter((s: string) => s !== "");
+  return isOfficialOpenAiBase(baseUrl)
+    ? rankOpenAiDocumentModels(models)
+    : models.sort((a: string, b: string) => a.localeCompare(b));
 }
 
 async function fetchGeminiModels(apiKey: string | null): Promise<string[]> {
@@ -701,8 +758,7 @@ async function verifyOpenAiCompatibleCredential(provider: ProviderDto): Promise<
   }, {
     model: provider.model,
     messages: [{ role: "user", content: "Reply with OK." }],
-    max_tokens: 1,
-    temperature: 0,
+    max_completion_tokens: 16,
     stream: false,
   });
   if (!Array.isArray(response?.choices)) throw new Error("Provider verification response was invalid");
