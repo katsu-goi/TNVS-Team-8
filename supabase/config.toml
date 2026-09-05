@@ -16,6 +16,9 @@ verify_jwt = false
 [functions.legal]
 verify_jwt = false
 
+[functions.ai]
+verify_jwt = false
+
 [functions.facilities]
 verify_jwt = false
 

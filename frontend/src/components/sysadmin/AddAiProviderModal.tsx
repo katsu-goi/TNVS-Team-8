@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { apiClient } from '../../api/client';
+import { apiClient, extractErrorMessage } from '../../api/client';
 import {
   X, Eye, EyeOff, RefreshCw, AlertCircle, Sparkles, CheckCircle2,
   Sliders, ShieldCheck, Cpu, Key, Globe, ArrowRight
@@ -101,6 +101,9 @@ const providerTypeLabel = (type: string) => {
   return 'OpenAI';
 };
 
+const looksLikeApiCredential = (value: string) =>
+  /^(?:sk-|xai-|nvapi-|hf_|AIza|Bearer\s+)/i.test(value.trim());
+
 export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, onClose, onSave, initialProvider = null }) => {
   const [providerName, setProviderName] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -188,8 +191,25 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
   };
 
   const handleFetchModels = async () => {
+    const requiresCredential = !providerType.includes('Local') && !providerType.includes('LM Studio');
+    if (requiresCredential && !apiKey.trim()) {
+      setErrors(prev => ({ ...prev, apiKey: 'Enter the API Key before fetching models.' }));
+      setModelFetchError('Enter the API Key before fetching models.');
+      return;
+    }
+    if (looksLikeApiCredential(model)) {
+      setModel('');
+      setErrors(prev => ({
+        ...prev,
+        model: 'A credential cannot be used as a model ID. Rotate any credential exposed outside the API Key field.',
+      }));
+      setModelFetchError('Enter a valid model ID or leave Model empty before fetching models.');
+      return;
+    }
+
     setFetchingModels(true);
     setModelFetchError(null);
+    setErrors(prev => ({ ...prev, apiKey: undefined, model: undefined }));
 
     try {
       const res = await apiClient.post('/ai/models', {
@@ -214,8 +234,8 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
         setModelFetchError('Provider returned no models. Check the Base URL and API Key, or type a model name manually.');
       }
     } catch (err) {
-      console.warn('Failed to fetch live models from backend:', err);
-      setModelFetchError('Could not reach the backend. Ensure the AI Services server is running, then try again.');
+      console.warn('Failed to fetch live models from the server.');
+      setModelFetchError(extractErrorMessage(err));
     } finally {
       setFetchingModels(false);
     }
@@ -224,6 +244,15 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
   const handleTestConnection = async () => {
     if (!apiKey && !providerType.includes('Local') && !providerType.includes('LM Studio')) {
       setErrors(prev => ({ ...prev, apiKey: 'API Key is required to test remote provider connection.' }));
+      setTestStatus('error');
+      return;
+    }
+    if (looksLikeApiCredential(model)) {
+      setModel('');
+      setErrors(prev => ({
+        ...prev,
+        model: 'A credential cannot be used as a model ID. Rotate any credential exposed outside the API Key field.',
+      }));
       setTestStatus('error');
       return;
     }
@@ -264,6 +293,8 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
     }
     if (!model.trim()) {
       newErrors.model = 'Model selection or model name is required.';
+    } else if (looksLikeApiCredential(model)) {
+      newErrors.model = 'A credential cannot be used as a model ID. Rotate any credential exposed outside the API Key field.';
     }
     if (!apiKey.trim() && !providerType.includes('Local') && !providerType.includes('LM Studio')) {
       newErrors.apiKey = 'API Key is required for cloud providers.';
@@ -452,7 +483,20 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
                 type="text"
                 placeholder="Type a model name or click Fetch Models below (e.g. gpt-4o)"
                 value={model}
-                onChange={e => { setModel(e.target.value); invalidateConnectionTest(); }}
+                onChange={e => {
+                  const nextModel = e.target.value;
+                  invalidateConnectionTest();
+                  if (looksLikeApiCredential(nextModel)) {
+                    setModel('');
+                    setErrors(prev => ({
+                      ...prev,
+                      model: 'A credential cannot be used as a model ID. Rotate any credential exposed outside the API Key field.',
+                    }));
+                    return;
+                  }
+                  setModel(nextModel);
+                  setErrors(prev => ({ ...prev, model: undefined }));
+                }}
                 className={`w-full border rounded-xl p-2.5 text-xs font-mono text-slate-800 focus:outline-none transition-colors ${
                   errors.model ? 'border-rose-400 bg-rose-50/20' : 'border-slate-300 focus:border-emerald-500'
                 }`}
