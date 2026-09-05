@@ -181,15 +181,23 @@ app:
   security:
     bcrypt-strength: 12
     password-reset-expiry-minutes: 30
-    # Temporary-only progressive login restrictions. Attempts 1-2 do not lock;
-    # attempts 3+ use these durations and cap at the final value.
+    # Progressive login lockout. Attempt counters and lock windows are stored
+    # server-side (users table) and enforced before password verification, so
+    # the lock cannot be bypassed from the client. lock-duration-seconds is
+    # indexed by failed-attempt number (1st -> 10s, 2nd -> 30s); the final
+    # attempt triggers the permanent lock below.
     login:
-      lock-duration-seconds: ${LOGIN_LOCK_DURATIONS:30,60,300,900,1800,3600}
+      max-attempts: ${LOGIN_MAX_ATTEMPTS:3}
+      lock-duration-seconds: ${LOGIN_LOCK_DURATIONS:10,30}
+      permanent-lock-duration-days: ${LOGIN_PERMANENT_LOCK_DAYS:365}
       # Optionally notify this mailbox on HR assistance submissions.
   rbac:
     bootstrap:
       enabled: ${RBAC_BOOTSTRAP_ENABLED:false}
       passwords:
+        system-admin: ${RBAC_SYSTEM_ADMIN_PASSWORD:}
+        compliance-manager: ${RBAC_COMPLIANCE_MANAGER_PASSWORD:}
+        legal-officer: ${RBAC_LEGAL_OFFICER_PASSWORD:}
         super-admin: ${RBAC_SUPER_ADMIN_PASSWORD:}
         dpo: ${RBAC_DPO_PASSWORD:}
         legal-counsel: ${RBAC_LEGAL_COUNSEL_PASSWORD:}

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { User } from '../types';
 import { setSupabaseRealtimeAuth } from '../lib/supabase';
+import { clearOversightSession, getOversightTargetUser } from '../utils/oversightSession';
 
 interface AuthState {
   user: User | null;
@@ -11,23 +12,18 @@ interface AuthState {
 }
 
 export function getDashboardPath(user: User | null): string {
-  if (!user?.roles) return '/';
-  if (isSuperAdmin(user)) return '/';
-  if (user.permissions?.some((permission) => permission.toUpperCase() === 'RBAC_ADMINISTER')) {
-    return '/admin/rbac';
-  }
-  if (['privacy', 'counsel', 'records', 'department', 'security', 'infosec'].includes(user.dashboardKey || '')) {
-    return '/governance';
-  }
-  const roles = user.roles.map(r => r.toUpperCase());
-  if (roles.some((role) => [
-    'DATA_PROTECTION_OFFICER',
-    'LEGAL_COUNSEL',
-    'RECORDS_OFFICER',
-    'DEPARTMENT_HEAD',
-    'SECURITY_OFFICER',
-    'INFOSEC_OFFICER',
-  ].includes(role.replace(/^ROLE_/, '')))) return '/governance';
+  const routeUser = getOversightTargetUser() || user;
+  if (!routeUser?.roles) return '/';
+  if (!getOversightTargetUser() && isActorSuperAdmin(user)) return '/super-admin';
+  if (!getOversightTargetUser() && isActorSystemAdmin(user)) return '/system-admin';
+  const roles = getAssignedRoles(routeUser);
+  if (roles.includes('COMPLIANCE_MANAGER')) return '/compliance-management';
+  if (roles.includes('DATA_PROTECTION_OFFICER')) return '/privacy';
+  if (roles.includes('LEGAL_COUNSEL')) return '/legal-counsel';
+  if (roles.includes('RECORDS_OFFICER')) return '/records';
+  if (roles.includes('DEPARTMENT_HEAD')) return '/department';
+  if (roles.includes('SECURITY_OFFICER')) return '/security-operations';
+  if (roles.includes('INFOSEC_OFFICER')) return '/information-security';
   if (roles.includes('FACILITIES_MANAGER') || roles.includes('ROLE_FACILITIES_MANAGER')) return '/facilities';
   if (roles.includes('FACILITIES_OFFICER') || roles.includes('ROLE_FACILITIES_OFFICER')) return '/facilities-officer';
   if (roles.includes('COMPLIANCE_OFFICER') || roles.includes('ROLE_COMPLIANCE_OFFICER')) return '/compliance';
@@ -38,20 +34,42 @@ export function getDashboardPath(user: User | null): string {
 }
 
 export function isSuperAdmin(user: User | null): boolean {
-  if (!user?.roles) return false;
-  const roles = user.roles.map(r => r.toUpperCase());
-  return roles.includes('SUPER_ADMIN') || roles.includes('ROLE_SUPER_ADMIN');
+  return hasRole(user, 'SUPER_ADMIN');
+}
+
+export function isSystemAdmin(user: User | null): boolean {
+  return hasRole(user, 'SYSTEM_ADMIN');
+}
+
+export function isActorSuperAdmin(user: User | null): boolean {
+  return getAssignedRoles(user).includes('SUPER_ADMIN');
+}
+
+export function isActorSystemAdmin(user: User | null): boolean {
+  return getAssignedRoles(user).includes('SYSTEM_ADMIN');
+}
+
+export function getAssignedRoles(user: User | null): string[] {
+  const roles = user?.assignedRoles?.length ? user.assignedRoles : user?.roles;
+  return (roles || []).map((role) => role.toUpperCase().replace(/^ROLE_/, ''));
+}
+
+export function hasAssignedRole(user: User | null, role: string): boolean {
+  const effectiveUser = getOversightTargetUser() || user;
+  return getAssignedRoles(effectiveUser).includes(role.toUpperCase().replace(/^ROLE_/, ''));
 }
 
 export function hasRole(user: User | null, role: string): boolean {
+  const effectiveUser = getOversightTargetUser() || user;
   const normalizedRole = role.toUpperCase().replace(/^ROLE_/, '');
-  return user?.roles?.some((candidate) =>
+  return effectiveUser?.roles?.some((candidate) =>
     candidate.toUpperCase().replace(/^ROLE_/, '') === normalizedRole
   ) ?? false;
 }
 
 export function hasPermission(user: User | null, permission: string): boolean {
-  return user?.permissions?.some((candidate) => candidate.toUpperCase() === permission.toUpperCase()) ?? false;
+  const effectiveUser = getOversightTargetUser() || user;
+  return effectiveUser?.permissions?.some((candidate) => candidate.toUpperCase() === permission.toUpperCase()) ?? false;
 }
 
 /**
@@ -133,6 +151,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
     localStorage.removeItem('user');
+    clearOversightSession();
     setSupabaseRealtimeAuth(null);
     set({ user: null, accessToken: null, refreshToken: null });
   },
@@ -154,6 +173,7 @@ window.addEventListener('auth:session-refreshed', (event) => {
 });
 
 window.addEventListener('auth:session-expired', () => {
+  clearOversightSession();
   setSupabaseRealtimeAuth(null);
   useAuthStore.setState({ user: null, accessToken: null, refreshToken: null });
 });

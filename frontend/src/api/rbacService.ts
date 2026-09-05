@@ -61,6 +61,9 @@ export const rbacService = {
   async listUsers(): Promise<RbacUser[]> {
     return dataOf<RbacUser[]>(await apiClient.get('/admin/rbac/users')) || [];
   },
+  async listLockedUsers(): Promise<RbacUser[]> {
+    return dataOf<RbacUser[]>(await apiClient.get('/admin/account-lockouts')) || [];
+  },
   async listRoles(): Promise<RbacRole[]> {
     return dataOf<RbacRole[]>(await apiClient.get('/admin/rbac/roles')) || [];
   },

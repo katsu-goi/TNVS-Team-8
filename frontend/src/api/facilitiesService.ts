@@ -33,6 +33,14 @@ export const facilitiesService = {
     const { data } = await apiClient.get('/facilities-manager/assets/list');
     return data?.data ?? [];
   },
+  async getInventoryAlerts() {
+    const { data } = await apiClient.get('/facilities-manager/inventory-alerts');
+    return data?.data ?? [];
+  },
+  async initiateInventoryReorder(payload: { inventoryAssetId: string; requestedQuantity: number; supplierName?: string }) {
+    const { data } = await apiClient.post('/facilities-manager/inventory-alerts/reorder', payload);
+    return data?.data;
+  },
   async getCalendar(year?: number, month?: number) {
     const { data } = await apiClient.get('/facilities-manager/calendar', { params: { year, month } });
     return data?.data ?? [];
@@ -100,6 +108,10 @@ export const facilitiesService = {
   async aiValidateReservation(payload: Record<string, any>) {
     const { data } = await apiClient.post('/facilities-officer/ai/validate', payload);
     return data?.data ?? { valid: true, warnings: [], alternatives: [] };
+  },
+  async routeFacilityDocument(payload: { documentId: string; documentCategory: string; permitNumber?: string; expiresOn?: string }) {
+    const { data } = await apiClient.post('/facilities-officer/facility-documents/route', payload);
+    return data?.data;
   },
   async aiSuggestApproval(id: string) {
     const { data } = await apiClient.post(`/facilities-manager/reservations/${id}/ai/approval-suggest`);

@@ -33,7 +33,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 @Slf4j
 @CrossOrigin(origins = "*")
-@PreAuthorize("hasRole('SUPER_ADMIN')")
+@PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'SUPER_ADMIN')")
 public class AiController {
 
     private final DocumentClassificationAiService classificationAiService;

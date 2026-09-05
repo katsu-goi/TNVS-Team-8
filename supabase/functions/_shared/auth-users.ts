@@ -52,6 +52,27 @@ export async function findUserByEmail(email: string): Promise<AuthUser | null> {
   };
 }
 
+export async function findUserById(userId: string): Promise<AuthUser | null> {
+  const db = adminDb();
+  const { data, error } = await db
+    .from("users")
+    .select("*")
+    .eq("id", userId)
+    .eq("is_deleted", false)
+    .maybeSingle();
+  if (error) throw new Error(`users lookup failed: ${error.message}`);
+  if (!data) return null;
+
+  const { assignedNames, effectiveNames, permissions, dashboardKey } = await loadRolesFor(data.id as string);
+  return {
+    row: data as AuthUserRow,
+    assignedRoles: assignedNames,
+    roles: effectiveNames,
+    permissions,
+    dashboardKey,
+  };
+}
+
 type RoleLoad = {
   assignedNames: string[];
   effectiveNames: string[];
@@ -63,6 +84,8 @@ type RoleRow = { id: string; name: string; dashboard_key: string | null };
 
 const DASHBOARD_PRIORITY = [
   "SUPER_ADMIN",
+  "SYSTEM_ADMIN",
+  "COMPLIANCE_MANAGER",
   "DATA_PROTECTION_OFFICER",
   "LEGAL_COUNSEL",
   "RECORDS_OFFICER",

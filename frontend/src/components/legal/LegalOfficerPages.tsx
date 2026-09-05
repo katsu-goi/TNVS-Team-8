@@ -2,10 +2,10 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   AlertCircle, RefreshCw, FileText, FileSignature, Archive,
   ScrollText, User, Settings, Filter, CheckCircle2, Trash2, Plus,
-  X, BellRing, Bell, ShieldAlert, Ban, Gavel, Send, PlayCircle,
-  RotateCcw, Pencil, ChevronRight,
+  X, BellRing, Bell, ShieldAlert, Gavel, Send, Pencil, ChevronRight,
 } from 'lucide-react';
 import { safeFetchJson } from '../../api/client';
+import { governanceService } from '../../api/governanceService';
 
 // POST/PUT helper that surfaces failure (safeFetchJson returns null on error).
 const mutate = async (url: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown) => {
@@ -98,6 +98,9 @@ const docStatusBadge = (status?: string) => {
 
 const contractStatusBadge = (status?: string) => {
   switch ((status || '').toUpperCase()) {
+    case 'COUNSEL_APPROVED': return 'bg-emerald-50 text-emerald-600';
+    case 'PENDING_COUNSEL_REVIEW': return 'bg-orange-50 text-orange-600 animate-pulse';
+    case 'REJECTED_REVISION': return 'bg-rose-50 text-rose-600';
     case 'ACTIVE': return 'bg-emerald-50 text-emerald-600';
     case 'APPROVED': return 'bg-teal-50 text-teal-600';
     case 'UNDER_REVIEW': return 'bg-amber-50 text-amber-600';
@@ -185,9 +188,27 @@ export const LoContractsPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const qs = statusFilter ? `?status=${statusFilter}` : '';
-      const json = await safeFetchJson(`/api/v1/legal/contracts${qs}`);
-      setContracts(json?.data ?? []);
+      const legacyStatus = statusFilter === 'DRAFT' ? statusFilter : '';
+      const qs = legacyStatus ? `?status=${legacyStatus}` : '';
+      const [json, workflowPayload] = await Promise.all([
+        safeFetchJson(`/api/v1/legal/contracts${qs}`),
+        governanceService.getWorkspace('legal-officer', 'contracts'),
+      ]);
+      const workflowByContract = new Map(
+        workflowPayload.rows.map((workflow: any) => [workflow.contract?.id, workflow]),
+      );
+      const merged = (json?.data ?? []).map((contract: any) => {
+        const workflow = workflowByContract.get(contract.id);
+        return {
+          ...contract,
+          workflowId: workflow?.id ?? null,
+          workflowState: workflow?.state ?? 'DRAFT',
+          workflowLocked: Boolean(workflow?.locked),
+          counselComments: workflow?.counsel_comments ?? null,
+          status: workflow?.state ?? contract.status,
+        };
+      });
+      setContracts(statusFilter ? merged.filter((contract: any) => contract.workflowState === statusFilter) : merged);
     } catch (err: any) {
       setError(err?.message || 'Failed to load');
     } finally {
@@ -197,14 +218,18 @@ export const LoContractsPage: React.FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
-  const runAction = async (id: string, path: string, label: string, body?: unknown) => {
-    setBusyId(id);
+  const submitToCounsel = async (contract: any) => {
+    if (!contract.workflowId) {
+      show('This contract has no legal approval workflow.', 'err');
+      return;
+    }
+    setBusyId(contract.id);
     try {
-      await mutate(`/api/v1/legal/contracts/${id}/${path}`, 'POST', body);
-      show(label);
+      await governanceService.submitLegalContract(contract.workflowId);
+      show('Submitted to Legal Counsel');
       await load();
     } catch (err: any) {
-      show(err?.message || 'Action failed', 'err');
+      show(err?.message || 'Submission failed', 'err');
     } finally {
       setBusyId(null);
     }
@@ -215,6 +240,10 @@ export const LoContractsPage: React.FC = () => {
     setEditing({});
   };
   const openEdit = (c: any) => {
+    if (c.workflowLocked) {
+      show('This contract is locked while Legal Counsel reviews it.', 'err');
+      return;
+    }
     setForm({
       title: c.title ?? '', type: c.type ?? 'VENDOR_SERVICE', counterParty: c.counterParty ?? '',
       contractValue: c.contractValue ?? '', startDate: c.startDate ?? '', endDate: c.endDate ?? '',
@@ -249,7 +278,7 @@ export const LoContractsPage: React.FC = () => {
     }
   };
 
-  const statuses = ['', 'DRAFT', 'UNDER_REVIEW', 'APPROVED', 'ACTIVE', 'EXPIRED', 'RENEWED', 'TERMINATED'];
+  const statuses = ['', 'DRAFT', 'PENDING_COUNSEL_REVIEW', 'COUNSEL_APPROVED', 'REJECTED_REVISION'];
 
   if (loading && contracts.length === 0) return <LoadingSkeleton />;
   if (error && contracts.length === 0) return <ErrorState message={error} onRetry={() => setRetry(r => r + 1)} />;
@@ -315,12 +344,9 @@ export const LoContractsPage: React.FC = () => {
                       <td className="p-3">
                         <div className="flex items-center justify-end space-x-1.5 flex-wrap gap-y-1">
                           <ActionButton onClick={() => setDetail(c)} icon={ChevronRight} disabled={busy}>Details</ActionButton>
-                          <ActionButton onClick={() => openEdit(c)} icon={Pencil} disabled={busy}>Edit</ActionButton>
-                          {status === 'DRAFT' && <ActionButton onClick={() => runAction(c.id, 'submit-review', 'Submitted for review')} icon={Send} variant="primary" disabled={busy}>Submit</ActionButton>}
-                          {status === 'UNDER_REVIEW' && <ActionButton onClick={() => runAction(c.id, 'approve', 'Contract approved')} icon={CheckCircle2} variant="primary" disabled={busy}>Approve</ActionButton>}
-                          {status === 'APPROVED' && <ActionButton onClick={() => runAction(c.id, 'activate', 'Contract activated')} icon={PlayCircle} variant="primary" disabled={busy}>Activate</ActionButton>}
-                          {(status === 'ACTIVE' || status === 'EXPIRED') && <ActionButton onClick={() => runAction(c.id, 'renew', 'Contract renewed')} icon={RotateCcw} disabled={busy}>Renew</ActionButton>}
-                          {status !== 'TERMINATED' && <ActionButton onClick={() => runAction(c.id, 'terminate', 'Contract terminated')} icon={Ban} variant="danger" disabled={busy}>Terminate</ActionButton>}
+                          {!c.workflowLocked && <ActionButton onClick={() => openEdit(c)} icon={Pencil} disabled={busy}>Edit</ActionButton>}
+                          {(status === 'DRAFT' || status === 'REJECTED_REVISION') && <ActionButton onClick={() => submitToCounsel(c)} icon={Send} variant="primary" disabled={busy}>Submit to Counsel</ActionButton>}
+                          {status === 'REJECTED_REVISION' && <ActionButton onClick={() => setDetail(c)} icon={ShieldAlert} disabled={busy}>View Counsel Comments</ActionButton>}
                         </div>
                       </td>
                     </tr>
@@ -462,6 +488,7 @@ const ContractDetailDrawer: React.FC<{ contract: any; onClose: () => void; onCha
           <div><p className={labelCls}>End</p><p className="text-slate-700 font-mono text-xs">{contract.endDate || '-'}</p></div>
         </div>
         {contract.aiRiskSummary && <p className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-xl p-3">{contract.aiRiskSummary}</p>}
+        {contract.counselComments && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3"><p className="text-[10px] font-bold uppercase text-rose-700">Counsel Comments</p><p className="mt-1 text-xs text-rose-800">{contract.counselComments}</p></div>}
 
         <div className="border-t border-slate-100 pt-4">
           <div className="flex items-center justify-between mb-3">

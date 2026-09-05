@@ -15,6 +15,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -43,6 +44,10 @@ public class RbacProvisioningRunner implements CommandLineRunner {
     private String securityPassword;
     @Value("${app.rbac.bootstrap.passwords.infosec:}")
     private String infosecPassword;
+    @Value("${app.rbac.bootstrap.passwords.compliance-manager:}")
+    private String complianceManagerPassword;
+    @Value("${app.rbac.bootstrap.passwords.legal-officer:}")
+    private String legalOfficerPassword;
 
     @Override
     @Transactional
@@ -61,15 +66,33 @@ public class RbacProvisioningRunner implements CommandLineRunner {
                 new BootstrapAccount("security@photonicomega.com", securityPassword,
                         "Security", "Officer", "RBAC-SO-001", "Security", "Security Officer", "SECURITY_OFFICER"),
                 new BootstrapAccount("infosec@photonicomega.com", infosecPassword,
-                        "Information Security", "Officer", "RBAC-ISO-001", "Information Security", "Information Security Officer", "INFOSEC_OFFICER")
+                        "Information Security", "Officer", "RBAC-ISO-001", "Information Security", "Information Security Officer", "INFOSEC_OFFICER"),
+                new BootstrapAccount("compliance.manager@photonicomega.com", complianceManagerPassword,
+                        "Compliance", "Manager", "RBAC-CM-001", "Compliance", "Compliance Manager", "COMPLIANCE_MANAGER"),
+                new BootstrapAccount("legal.officer@photonicomega.com", legalOfficerPassword,
+                        "Legal", "Officer", "RBAC-LO-001", "Legal", "Legal Officer", "LEGAL_OFFICER")
         );
 
         accounts.forEach(this::createIfMissing);
     }
 
     private void createIfMissing(BootstrapAccount account) {
-        if (userRepository.findByEmailAndDeletedFalse(account.email()).isPresent()) {
-            log.info("RBAC bootstrap account already exists: {}", account.email());
+        Role role = roleRepository.findByName(account.roleName())
+                .orElseThrow(() -> new IllegalStateException("Missing RBAC role: " + account.roleName()));
+        var existing = userRepository.findByEmailAndDeletedFalse(account.email());
+        if (existing.isPresent()) {
+            User user = existing.get();
+            user.setRoles(new HashSet<>(Set.of(role)));
+            user.setFirstName(account.firstName());
+            user.setLastName(account.lastName());
+            user.setEmployeeId(account.employeeId());
+            user.setDepartment(account.department());
+            user.setPosition(account.position());
+            if (account.password() != null && !account.password().isBlank()) {
+                user.setPasswordHash(passwordEncoder.encode(account.password()));
+            }
+            userRepository.save(user);
+            log.info("RBAC bootstrap account reconciled: {} -> {}", account.email(), account.roleName());
             return;
         }
         if (account.password() == null || account.password().isBlank()) {
@@ -77,8 +100,6 @@ public class RbacProvisioningRunner implements CommandLineRunner {
                     "RBAC bootstrap is enabled but a required password is missing for " + account.email());
         }
 
-        Role role = roleRepository.findByName(account.roleName())
-                .orElseThrow(() -> new IllegalStateException("Missing RBAC role: " + account.roleName()));
         userRepository.save(User.builder()
                 .email(account.email())
                 .passwordHash(passwordEncoder.encode(account.password()))
@@ -89,7 +110,7 @@ public class RbacProvisioningRunner implements CommandLineRunner {
                 .position(account.position())
                 .status(UserStatus.ACTIVE)
                 .emailVerified(true)
-                .roles(Set.of(role))
+                .roles(new HashSet<>(Set.of(role)))
                 .build());
         log.info("Created RBAC bootstrap account {} with role {}", account.email(), account.roleName());
     }

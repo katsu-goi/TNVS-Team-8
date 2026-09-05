@@ -40,7 +40,14 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   connectWebSocket: () => {
     if (get().stompClient?.active) return;
 
-    const wsBase = import.meta.env.VITE_WS_BASE_URL || '';
+    const wsBase = import.meta.env.VITE_WS_BASE_URL?.trim() || '';
+    const apiBase = import.meta.env.VITE_API_BASE_URL?.trim() || '';
+    const usesSupabaseFunctions = !apiBase || apiBase.includes('/functions/v1');
+    if (usesSupabaseFunctions && !wsBase) {
+      set({ connected: false, error: null, stompClient: null });
+      return;
+    }
+
     const socketUrl = `${wsBase}/ws-endpoint`;
 
     const token = useAuthStore.getState().accessToken;

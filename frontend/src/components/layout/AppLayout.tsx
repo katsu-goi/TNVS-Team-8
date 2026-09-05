@@ -1,27 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  LayoutDashboard, Search, ShieldCheck, ChevronRight, ChevronDown,
-  BarChart3, Activity, Monitor, Layers, Download,
-  Settings, Bell, FileText, Cpu, KeyRound,
+  LayoutDashboard, LogOut, Search, ShieldCheck, ChevronRight, ChevronDown,
+  AlertTriangle, BarChart3, Activity, Monitor, Layers, Download,
+  Settings, Bell, FileText, Cpu, KeyRound, LockKeyhole,
 } from 'lucide-react';
-import { hasPermission, hasRole, isSuperAdmin, useAuthStore } from '../../stores/authStore';
+import { getAssignedRoles, isActorSuperAdmin, isActorSystemAdmin, useAuthStore } from '../../stores/authStore';
 import { useDashboardStore } from '../../stores/dashboardStore';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
+import { logout as apiLogout } from '../../api/authService';
 import { useUserHeartbeat } from '../../hooks/useUserHeartbeat';
 import { NotificationBell } from '../ui/NotificationBell';
-import { UserProfileMenu } from '../ui/UserProfileMenu';
-import { HirnaSidebarDecoration } from '../ui/HirnaSidebarDecoration';
 // Breadcrumbs available for future use
 
 const parentIds = ['security'];
 
 export const AppLayout: React.FC = () => {
- const { user } = useAuthStore();
+ const { user, logout } = useAuthStore();
  const location = useLocation();
  const navigate = useNavigate();
  useUserHeartbeat();
  const [searchQuery, setSearchQuery] = useState('');
+ const [showLogoutModal, setShowLogoutModal] = useState(false);
  const [expandedMenus, setExpandedMenus] = useState<Set<string>>(new Set());
  const [clock, setClock] = useState(new Date());
  useEffect(() => {
@@ -53,47 +53,55 @@ export const AppLayout: React.FC = () => {
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/';
-    return location.pathname === path;
+    return location.pathname === path || location.pathname.startsWith(`${path}/`);
   };
 
   const isExactActive = (path: string) => location.pathname === path;
 
-  const systemAdministrator = isSuperAdmin(user) || hasRole(user, 'SYSTEM_ADMIN');
+  const superAdministrator = isActorSuperAdmin(user);
+  const systemAdministrator = isActorSystemAdmin(user);
+  const actorRole = getAssignedRoles(user)[0] || user?.roles?.[0] || 'ADMINISTRATOR';
+  const dashboardPath = superAdministrator ? '/super-admin' : '/system-admin';
+  const portalLabel = superAdministrator ? 'Super Administration' : 'System Administration';
+  const searchPlaceholder = superAdministrator
+    ? 'Search analytics, RBAC, or security oversight...'
+    : 'Search infrastructure, integrations, or settings...';
   const navItems = [
-  { id: 'dashboard', label: 'Dashboard', path: '/', icon: LayoutDashboard, exact: true, visible: systemAdministrator },
+  { id: 'dashboard', label: superAdministrator ? 'Executive Dashboard' : 'System Dashboard', path: dashboardPath, icon: LayoutDashboard, exact: true, visible: true },
+  { id: 'analytics', label: 'Business Analytics', path: '/admin/analytics', icon: BarChart3, exact: true, visible: superAdministrator },
+  { id: 'rbac', label: 'RBAC Administration', path: '/admin/rbac', icon: KeyRound, exact: true, visible: superAdministrator },
+  {
+  id: 'security', label: 'Security Oversight', path: '/security', icon: ShieldCheck,
+  visible: superAdministrator,
+  children: [
+  { id: 'security-audit', label: 'Audit Logs', path: '/security/audit-logs', icon: FileText, exact: true },
+  ],
+  },
   { id: 'integrations', label: 'Integrations', path: '/admin/integrations', icon: Layers, exact: true, visible: systemAdministrator },
   { id: 'ai-services', label: 'AI Services', path: '/admin/ai-services', icon: Cpu, exact: true, visible: systemAdministrator },
   { id: 'backup', label: 'Backup & DR', path: '/admin/backup', icon: Download, exact: true, visible: systemAdministrator },
   { id: 'settings', label: 'System Config', path: '/admin/settings', icon: Settings, exact: true, visible: systemAdministrator },
   { id: 'notifications', label: 'Notifications', path: '/admin/notifications', icon: Bell, exact: true, visible: systemAdministrator },
-  { id: 'analytics', label: 'Analytics', path: '/admin/analytics', icon: BarChart3, exact: true, visible: systemAdministrator },
-  { id: 'rbac', label: 'RBAC Administration', path: '/admin/rbac', icon: KeyRound, exact: true, visible: hasPermission(user, 'RBAC_ADMINISTER') },
-  {
-  id: 'security', label: 'Security Center', path: '/security', icon: ShieldCheck,
-  visible: systemAdministrator,
-  children: [
-  { id: 'security-audit', label: 'Audit Logs', path: '/security/audit-logs', icon: FileText, exact: true },
-  { id: 'security-sessions', label: 'Sessions', path: '/admin/sessions', icon: Activity, exact: true },
-  { id: 'security-health', label: 'System Health', path: '/admin/system-health', icon: Monitor, exact: true },
-  ],
-  },
+  { id: 'system-health', label: 'System Health', path: '/admin/system-health', icon: Monitor, exact: true, visible: systemAdministrator },
+  { id: 'sessions', label: 'Sessions', path: '/admin/sessions', icon: Activity, exact: true, visible: systemAdministrator },
+  { id: 'account-lockouts', label: 'Account Lockouts', path: '/admin/account-lockouts', icon: LockKeyhole, exact: true, visible: systemAdministrator },
   ].filter((item) => item.visible);
 
   return (
    <div className="min-h-screen bg-[#F8FAFC]">
-    <aside className="hirna-sidebar fixed top-0 left-0 w-72 h-screen z-30 flex flex-col overflow-hidden shadow-2xl">
-    <div className="hirna-sidebar-header p-5 flex items-center space-x-3 shrink-0">
-     <div className="hirna-sidebar-logo flex items-center justify-center shrink-0 overflow-hidden">
+    <aside className="fixed top-0 left-0 w-72 h-screen z-30 bg-[#D02F34] flex flex-col overflow-hidden shadow-2xl">
+    <div className="p-5 pb-4 flex items-center space-x-3 shrink-0 bg-[#A9252A] border-b border-white/10">
+     <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center shrink-0 overflow-hidden">
      <img src="/hirna-logo.png" alt="Hirna Logo" className="w-full h-full object-contain" draggable={false} />
      </div>
     <div className="min-w-0">
      <h1 className="font-heading font-bold text-sm text-white leading-tight truncate">Hirna Portal</h1>
-     <p className="text-[10px] text-[#FFC629] font-medium truncate">System Administration</p>
+     <p className="text-[10px] text-[#FFC629] font-medium truncate">{portalLabel}</p>
     </div>
     </div>
  
   <nav className="flex-1 flex flex-col min-h-0">
-  <div className="hirna-sidebar-nav flex-1 overflow-y-auto scrollbar-none px-3 py-3 flex flex-col">
+  <div className="flex-1 overflow-y-auto scrollbar-none px-3 py-3 space-y-0.5">
   {navItems.map((item) => {
   const Icon = item.icon;
  
@@ -104,14 +112,14 @@ export const AppLayout: React.FC = () => {
   <div key={item.id}>
   <button
   onClick={() => { toggleMenu(item.id); navigate(item.path); }}
-    className={`hirna-nav-item w-full flex items-center justify-between px-3 py-2.5 font-medium text-sm ${
+    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-full font-medium text-sm transition-all duration-200 ${
     isParentActive
-    ? 'hirna-nav-item-active font-semibold'
-    : ''
+    ? 'bg-[#A9252A] text-white font-semibold shadow-[0_0_16px_rgba(169,37,42,0.35)]'
+    : 'text-white hover:bg-white/10'
     }`}
     >
     <div className="flex items-center space-x-2.5 min-w-0">
-    <Icon className="hirna-nav-icon w-[18px] h-[18px] shrink-0" />
+    <Icon className={`w-[18px] h-[18px] shrink-0 ${isParentActive ? 'text-white' : 'text-white/60'}`} />
    <span className="truncate">{item.label}</span>
    </div>
    <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} />
@@ -125,15 +133,15 @@ export const AppLayout: React.FC = () => {
   <button
   key={child.id}
   onClick={() => navigate(child.path)}
-    className={`hirna-nav-item w-full flex items-center space-x-2 px-3 py-2 text-xs font-medium ${
+    className={`w-full flex items-center space-x-2 px-3 py-2 rounded-full text-xs font-medium transition-all duration-200 ${
     isChildActive
-    ? 'hirna-nav-item-active font-semibold'
-    : ''
+    ? 'bg-[#A9252A] text-white font-semibold shadow-[0_0_14px_rgba(169,37,42,0.3)]'
+    : 'text-white/70 hover:bg-white/10'
     }`}
     >
-    <ChildIcon className="hirna-nav-icon w-3.5 h-3.5 shrink-0" />
+    <ChildIcon className={`w-3.5 h-3.5 shrink-0 ${isChildActive ? 'text-white' : 'text-white/50'}`} />
     <span className="truncate">{child.label}</span>
-    {isChildActive && <ChevronRight className="hirna-nav-chevron w-3 h-3 ml-auto shrink-0" />}
+    {isChildActive && <ChevronRight className="w-3 h-3 ml-auto shrink-0 text-white" />}
   </button>
   );
   })}
@@ -148,26 +156,24 @@ export const AppLayout: React.FC = () => {
   <button
   key={item.id}
   onClick={() => navigate(item.path)}
-    className={`hirna-nav-item w-full flex items-center justify-between px-3 py-2.5 font-medium text-sm ${
+    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-full font-medium text-sm transition-all duration-200 ${
     navIsActive
-    ? 'hirna-nav-item-active font-semibold'
-    : ''
+    ? 'bg-[#A9252A] text-white font-semibold shadow-[0_0_16px_rgba(169,37,42,0.35)]'
+    : 'text-white hover:bg-white/10'
     }`}
     >
     <div className="flex items-center space-x-2.5 min-w-0">
-    <Icon className="hirna-nav-icon w-[18px] h-[18px] shrink-0" />
+    <Icon className={`w-[18px] h-[18px] shrink-0 ${navIsActive ? 'text-white' : 'text-white/60'}`} />
     <span className="truncate">{item.label}</span>
     </div>
-    {navIsActive && <ChevronRight className="hirna-nav-chevron w-3.5 h-3.5 shrink-0" />}
+    {navIsActive && <ChevronRight className="w-3.5 h-3.5 shrink-0 text-white" />}
   </button>
   );
   })}
   </div>
-
-    <HirnaSidebarDecoration />
-
+ 
     <div className="shrink-0 px-3 py-2">
-    <div className="hirna-status-card p-3">
+    <div className="bg-[#A9252A]/80 rounded-xl border border-white/5 p-3 backdrop-blur-sm">
     <div className="flex items-center justify-between mb-2">
     <span className="text-[10px] font-semibold text-white/80 uppercase tracking-widest">System Status</span>
     <span className="text-[10px] text-white font-mono flex items-center space-x-1">
@@ -196,6 +202,25 @@ export const AppLayout: React.FC = () => {
     </div>
   </nav>
  
+    <div className="shrink-0 px-3 py-2">
+    <div className="bg-[#A9252A]/80 rounded-xl border border-white/5 p-2.5 backdrop-blur-sm">
+    <div className="flex items-center justify-between px-3 py-2 rounded-lg">
+    <div className="flex items-center space-x-2.5 min-w-0">
+    <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center font-bold text-white text-xs shrink-0">
+    {user?.fullName?.charAt(0) || 'A'}
+    </div>
+    <div className="min-w-0">
+    <p className="text-xs font-semibold text-white truncate leading-tight">{user?.fullName || 'Administrator'}</p>
+      <p className="text-[10px] text-white/70 font-mono truncate leading-tight">{actorRole}</p>
+    </div>
+    </div>
+    <button onClick={() => setShowLogoutModal(true)} title="Logout"
+    className="p-1.5 text-white/40 hover:text-red-300 hover:bg-red-500/20 rounded-lg transition-colors shrink-0">
+    <LogOut className="w-3.5 h-3.5" />
+    </button>
+    </div>
+    </div>
+    </div>
   </aside>
  
    <main className="pl-72 min-h-screen relative bg-[#F8FAFC]">
@@ -203,15 +228,15 @@ export const AppLayout: React.FC = () => {
    <div className="flex items-center space-x-4 flex-1 max-w-md">
    <div className="relative w-full">
    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-    <input type="text" placeholder="Search logs, settings, or admin pages..."
+     <input type="text" placeholder={searchPlaceholder}
    value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
    className="w-full bg-white border border-slate-300 text-sm rounded-xl pl-9 pr-4 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-[#D02F34] focus:ring-1 focus:ring-[#D02F34]/30 transition-all" />
    </div>
    </div>
- <div className="flex shrink-0 items-center space-x-2 sm:space-x-3 relative">
-    <NotificationBell />
-    <UserProfileMenu roleLabelOverride="System Admin" />
-    </div>
+ <div className="flex items-center space-x-3 relative">
+     <NotificationBell />
+     <span className="text-xs text-slate-400 font-mono">{portalLabel}</span>
+     </div>
     </header>
 
  <div className="p-8">
@@ -219,6 +244,24 @@ export const AppLayout: React.FC = () => {
  </div>
  </main>
 
+  {showLogoutModal && (
+  <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
+  <div className="bg-white border border-slate-200 rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-5">
+  <div className="flex items-center space-x-3 text-red-600">
+  <div className="p-2.5 rounded-xl bg-red-50 border border-red-100"><AlertTriangle className="w-6 h-6" /></div>
+  <div>
+  <h3 className="font-heading font-bold text-lg text-slate-900">Confirm Logout</h3>
+  <p className="text-xs text-slate-500">Terminate administrator session?</p>
+  </div>
+  </div>
+  <p className="text-xs text-slate-600 leading-relaxed">Are you sure you want to end your session? Any unsaved changes in progress will be saved to audit logs.</p>
+  <div className="flex justify-end space-x-3 pt-2">
+  <button onClick={() => setShowLogoutModal(false)} className="px-4 py-2 rounded-xl text-slate-500 hover:text-slate-900 text-xs font-semibold">Cancel</button>
+  <button onClick={() => { setShowLogoutModal(false); apiLogout().finally(() => logout()); }} className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold text-xs">Confirm Logout</button>
+  </div>
+  </div>
+  </div>
+  )}
  </div>
  );
 };

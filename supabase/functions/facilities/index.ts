@@ -592,6 +592,119 @@ async function handleAssetList(_ctx: AuthContext | null, _req: Request) {
   return jsonResponse(ok(assets), 200);
 }
 
+async function handleInventoryAlerts(_ctx: AuthContext | null, _req: Request) {
+  const { data, error } = await db
+    .from("hub_inventory_assets")
+    .select("id, facility_id, sku, asset_name, category, current_stock, low_stock_threshold, unit, unit_price, supplier_name, status, facilities(name)")
+    .eq("status", "CRITICAL_REORDER")
+    .order("current_stock");
+  if (error) throw new Error(`inventory alerts load failed: ${error.message}`);
+  const alerts = ((data ?? []) as Array<Record<string, unknown>>).map((asset) => {
+    const facility = Array.isArray(asset.facilities) ? asset.facilities[0] : asset.facilities;
+    return {
+      ...asset,
+      hubName: (facility as Record<string, unknown> | null)?.name ?? "Unassigned hub",
+      priority: "CRITICAL_REORDER",
+    };
+  });
+  return jsonResponse(ok(alerts), 200);
+}
+
+async function handleInitiateReorder(ctx: AuthContext | null, _req: Request, body: unknown) {
+  const input = (body ?? {}) as Record<string, unknown>;
+  const inventoryAssetId = typeof input.inventoryAssetId === "string" ? input.inventoryAssetId.trim() : "";
+  const requestedQuantity = Number(input.requestedQuantity);
+  const supplierName = typeof input.supplierName === "string" ? input.supplierName.trim() : "";
+  if (!inventoryAssetId || !Number.isInteger(requestedQuantity) || requestedQuantity < 1) {
+    return badRequest("inventoryAssetId and a positive whole requestedQuantity are required.", "VALIDATION_ERROR");
+  }
+  const { data: asset, error: assetError } = await db
+    .from("hub_inventory_assets")
+    .select("id, supplier_name")
+    .eq("id", inventoryAssetId)
+    .maybeSingle();
+  if (assetError) throw new Error(`inventory asset lookup failed: ${assetError.message}`);
+  if (!asset) return notFoundEnvelope("Inventory asset not found.");
+
+  const { data: saved, error } = await db.from("facility_reorder_requests").insert({
+    inventory_asset_id: inventoryAssetId,
+    requested_by: ctx?.userId,
+    supplier_name: supplierName || asset.supplier_name || null,
+    requested_quantity: requestedQuantity,
+    status: "PENDING_PROCUREMENT",
+  }).select("*").single();
+  if (error) {
+    if (error.code === "23505") return badRequest("An active reorder request already exists for this asset.", "REORDER_ALREADY_PENDING");
+    throw new Error(`reorder request creation failed: ${error.message}`);
+  }
+  return jsonResponse(ok(saved, "Procurement reorder request initiated."), 201);
+}
+
+async function handleRouteFacilityDocument(ctx: AuthContext | null, _req: Request, body: unknown) {
+  const input = (body ?? {}) as Record<string, unknown>;
+  const documentId = typeof input.documentId === "string" ? input.documentId.trim() : "";
+  const documentCategory = typeof input.documentCategory === "string" ? input.documentCategory.trim() : "";
+  const permitNumber = typeof input.permitNumber === "string" ? input.permitNumber.trim() : null;
+  const expiresOn = typeof input.expiresOn === "string" && input.expiresOn.trim() ? input.expiresOn.trim() : null;
+  if (!documentId || !documentCategory) return badRequest("documentId and documentCategory are required.", "VALIDATION_ERROR");
+
+  const { data: facility, error: facilityError } = await db
+    .from("facilities")
+    .select("id, name")
+    .eq("is_deleted", false)
+    .order("created_at")
+    .limit(1)
+    .maybeSingle();
+  if (facilityError) throw new Error(`facility lookup failed: ${facilityError.message}`);
+  if (!facility) return notFoundEnvelope("No active TNVS hub is configured.");
+
+  const isRegulatoryPermit = /permit|clearance|certificate|license|cpc|ltfrb/i.test(documentCategory);
+  const reviewStatus = isRegulatoryPermit ? "PENDING_REVIEW" : "DRAFT";
+  const record = {
+    facility_id: facility.id,
+    document_id: documentId,
+    document_type: documentCategory,
+    document_category: documentCategory,
+    permit_number: permitNumber,
+    expires_on: expiresOn,
+    review_status: reviewStatus,
+    submitted_by: ctx?.userId,
+    submitted_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    routed_to_role: isRegulatoryPermit ? "COMPLIANCE_OFFICER" : null,
+  };
+  const existing = await db.from("facility_compliance_documents").select("id").eq("document_id", documentId).maybeSingle();
+  if (existing.error) throw new Error(`facility document lookup failed: ${existing.error.message}`);
+  const savedResult = existing.data
+    ? await db.from("facility_compliance_documents").update(record).eq("id", existing.data.id).select("*").single()
+    : await db.from("facility_compliance_documents").insert(record).select("*").single();
+  if (savedResult.error) throw new Error(`facility document routing failed: ${savedResult.error.message}`);
+
+  if (isRegulatoryPermit) {
+    const { data: complianceOfficer, error: officerError } = await db
+      .from("users")
+      .select("id")
+      .eq("email", "co@photonicomega.com")
+      .eq("is_deleted", false)
+      .maybeSingle();
+    if (officerError) throw new Error(`compliance officer lookup failed: ${officerError.message}`);
+    if (complianceOfficer) {
+      const { error: notificationError } = await db.from("employee_notifications").insert({
+        recipient_id: complianceOfficer.id,
+        title: `Permit routed for review: ${documentCategory}`,
+        message: `${facility.name ?? "TNVS hub"} has a new regulatory document awaiting Compliance Officer review.`,
+        type: "FACILITY_PERMIT_REVIEW",
+        related_entity_type: "FacilityComplianceDocument",
+        related_entity_id: savedResult.data.id,
+        is_read: false,
+        created_by: ctx?.email ?? "SYSTEM",
+      });
+      if (notificationError) throw new Error(`permit notification failed: ${notificationError.message}`);
+    }
+  }
+  return jsonResponse(ok({ ...savedResult.data, routed: isRegulatoryPermit, hubName: facility.name }), 201);
+}
+
 // --- Calendar / analytics / reports ---
 
 async function handleCalendar(_ctx: AuthContext | null, req: Request) {
@@ -1774,6 +1887,8 @@ const routes = [
   { method: "GET", path: "/facilities-manager/maintenance", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleMaintenanceList },
   { method: "GET", path: "/facilities-manager/assets", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleAssetOverview },
   { method: "GET", path: "/facilities-manager/assets/list", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleAssetList },
+  { method: "GET", path: "/facilities-manager/inventory-alerts", guard: { kind: "assignedRoles", roles: ["FACILITIES_MANAGER"] }, handler: handleInventoryAlerts },
+  { method: "POST", path: "/facilities-manager/inventory-alerts/reorder", guard: { kind: "assignedRoles", roles: ["FACILITIES_MANAGER"] }, handler: handleInitiateReorder },
   { method: "GET", path: "/facilities-manager/calendar", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleCalendar },
   { method: "GET", path: "/facilities-manager/analytics", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleAnalytics },
   { method: "GET", path: "/facilities-manager/reports", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleReports },
@@ -1788,6 +1903,7 @@ const routes = [
   { method: "POST", path: "/facilities-officer/ai/suggest", guard: { kind: "roles", roles: ["FACILITIES_OFFICER"] }, handler: handleAiSuggestRooms },
   { method: "POST", path: "/facilities-officer/ai/draft", guard: { kind: "roles", roles: ["FACILITIES_OFFICER"] }, handler: handleAiDraft },
   { method: "POST", path: "/facilities-officer/ai/validate", guard: { kind: "roles", roles: ["FACILITIES_OFFICER"] }, handler: handleAiValidate },
+  { method: "POST", path: "/facilities-officer/facility-documents/route", guard: { kind: "assignedRoles", roles: ["FACILITIES_OFFICER"] }, handler: handleRouteFacilityDocument },
 
   // Facility controller
   { method: "GET", path: "/facilities", guard: { kind: "roles", roles: ["FACILITIES_MANAGER", "FACILITIES_OFFICER"] }, handler: handleFacilities },

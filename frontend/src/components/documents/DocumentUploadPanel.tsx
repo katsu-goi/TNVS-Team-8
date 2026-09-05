@@ -34,6 +34,9 @@ interface DocumentUploadPanelProps {
   onUploaded?: (document: DocumentSummary) => void;
   title?: string;
   subtitle?: string;
+  documentCategoryOptions?: string[];
+  documentCategory?: string;
+  onDocumentCategoryChange?: (category: string) => void;
 }
 
 /**
@@ -47,6 +50,9 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
   onUploaded,
   title = 'Upload a Document',
   subtitle = 'Files are stored on the file server, then OCR-scanned and classified by AI before review.',
+  documentCategoryOptions,
+  documentCategory = '',
+  onDocumentCategoryChange,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -163,6 +169,22 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
             ))}
           </select>
         </div>
+
+        {documentCategoryOptions?.length ? (
+          <div className="md:col-span-3">
+            <label className={labelCls}>Document Category</label>
+            <select
+              value={documentCategory}
+              onChange={(e) => onDocumentCategoryChange?.(e.target.value)}
+              disabled={uploading}
+              className={inputCls}
+            >
+              {documentCategoryOptions.map((category) => (
+                <option key={category} value={category}>{category.replace(/_/g, ' ')}</option>
+              ))}
+            </select>
+          </div>
+        ) : null}
       </div>
 
       {uploading && (

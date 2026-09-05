@@ -75,6 +75,10 @@ public class SecurityConfig {
                     .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                     .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
                     .requestMatchers("/v1/admin/rbac/**").hasAnyAuthority("ROLE_SUPER_ADMIN", "RBAC_ADMINISTER")
+                    .requestMatchers("/v1/admin/config/**", "/v1/admin/integrations/**",
+                            "/v1/admin/backups/**", "/v1/admin/notifications/**",
+                            "/v1/admin/system-monitoring/**", "/v1/admin/kpi")
+                        .hasAnyRole("SYSTEM_ADMIN", "SUPER_ADMIN")
                     .requestMatchers("/v1/admin/**").hasRole("SUPER_ADMIN")
                     .requestMatchers(HttpMethod.GET, "/v1/security/**")
                         .hasAnyAuthority("ROLE_SUPER_ADMIN", "SECURITY_MONITOR")

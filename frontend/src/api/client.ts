@@ -1,19 +1,12 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
+import { clearOversightSession, getOversightSessionId } from '../utils/oversightSession';
 
 const DEFAULT_SUPABASE_PROJECT_URL = 'https://dunijfrvfozwlykpkfhy.supabase.co';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim();
 
 export const getApiBaseUrl = (): string => {
   const envUrl = import.meta.env.VITE_API_BASE_URL?.trim();
-  const isLocalHost = typeof window !== 'undefined' && window.location && ['localhost', '127.0.0.1'].includes(window.location.hostname);
-
-  if (envUrl && !envUrl.includes('trycloudflare.com')) {
-    // If running on Vercel / non-localhost and envUrl is relative, relative calls to Vercel static origin will hit index.html
-    // Fallback to Supabase Edge Functions / production backend if envUrl is relative on non-localhost.
-    if (envUrl.startsWith('/') && typeof window !== 'undefined' && !isLocalHost) {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_PROJECT_URL;
-      return `${supabaseUrl.replace(/\/+$/, '')}/functions/v1`;
-    }
+  if (envUrl) {
     return envUrl.replace(/\/+$/, '');
   }
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_PROJECT_URL;
@@ -43,6 +36,7 @@ const SUPABASE_FUNCTION_ALIASES: Record<string, string> = {
   'facilities-manager': 'facilities',
   'facilities-officer': 'facilities',
   facilities: 'facilities',
+  governance: 'governance',
   legal: 'legal',
   monitoring: 'monitoring',
   notifications: 'notifications',
@@ -71,6 +65,10 @@ function routeSupabaseFunction(url: string): string {
   const functionName = firstSegment ? SUPABASE_FUNCTION_ALIASES[firstSegment] : undefined;
   if (!functionName) return normalized;
 
+  if (firstSegment === functionName) {
+    return `${pathname}${query ? `?${query}` : ''}`;
+  }
+
   return `/${functionName}${pathname}${query ? `?${query}` : ''}`;
 }
 
@@ -96,6 +94,10 @@ const prepareRequest = (config: InternalAxiosRequestConfig) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  const oversightSessionId = getOversightSessionId();
+  if (oversightSessionId) {
+    config.headers['X-Oversight-Session'] = oversightSessionId;
+  }
   return config;
 };
 
@@ -118,6 +120,7 @@ function clearStoredSession() {
   localStorage.removeItem('accessToken');
   localStorage.removeItem('refreshToken');
   localStorage.removeItem('user');
+  clearOversightSession();
   window.dispatchEvent(new Event('auth:session-expired'));
 }
 
@@ -200,18 +203,9 @@ export async function safeFetchJson<T = any>(url: string, options?: RequestInit)
       headers: options?.headers as Record<string, string> | undefined,
       data: options?.body,
     });
-    const contentType = String(response.headers['content-type'] ?? '');
-    if (contentType && !contentType.includes('application/json')) {
-      console.warn(`Safe fetch JSON received non-JSON content-type (${contentType}) for ${url}`);
-      return null;
-    }
-    if (typeof response.data === 'string' && (!response.data.trim() || response.data.trim().startsWith('<'))) {
-      return null;
-    }
     return response.data ?? null;
   } catch (err) {
     console.warn(`Safe fetch JSON failed for ${url}:`, err);
     return null;
   }
 }
-

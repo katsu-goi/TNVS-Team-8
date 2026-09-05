@@ -14,6 +14,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    hmr: false,
     proxy: {
       '/api': {
         target: 'http://localhost:8080',
@@ -28,6 +29,20 @@ export default defineConfig({
       '/v1': {
         target: 'http://localhost:8080',
         changeOrigin: true,
+      },
+    },
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'data-vendor': ['axios', 'zustand', '@supabase/supabase-js'],
+          'charts-vendor': ['recharts'],
+          'maps-vendor': ['leaflet', 'leaflet.markercluster', 'react-leaflet'],
+          'realtime-vendor': ['@stomp/stompjs', 'sockjs-client'],
+          'ui-vendor': ['lucide-react'],
+        },
       },
     },
   },

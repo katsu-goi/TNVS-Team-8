@@ -29,12 +29,18 @@ public class RbacCatalogBootstrap implements CommandLineRunner {
     public void run(String... args) {
         Role superAdmin = upsertRole("SUPER_ADMIN", "Super Administrator",
                 "Administers users, roles, permissions, hierarchy, and constraints.", "admin");
+        Role systemAdmin = upsertRole("SYSTEM_ADMIN", "System Administrator",
+                "Administers system health, backups, integrations, AI configuration, and platform operations.",
+                "system-admin");
         Role facilitiesOfficer = upsertRole("FACILITIES_OFFICER", "Facilities Officer",
                 "Handles day-to-day facilities operations.", "facilities-officer");
         Role facilitiesManager = upsertRole("FACILITIES_MANAGER", "Facilities Manager",
                 "Manages facilities and inherits facilities officer capabilities.", "facilities");
         Role complianceOfficer = upsertRole("COMPLIANCE_OFFICER", "Compliance Officer",
-                "Manages compliance and records operations.", "compliance");
+                "Handles day-to-day compliance monitoring and evidence workflows.", "compliance");
+        Role complianceManager = upsertRole("COMPLIANCE_MANAGER", "Compliance Manager",
+                "Oversees compliance operations, subordinate review, and management approvals.",
+                "compliance-manager");
         Role legalOfficer = upsertRole("LEGAL_OFFICER", "Legal Officer",
                 "Manages legal operations and reviews.", "legal");
         upsertRole("CONTRACT_OFFICER", "Contract Officer",
@@ -58,6 +64,15 @@ public class RbacCatalogBootstrap implements CommandLineRunner {
         grant(superAdmin, upsertPermission("RBAC_ADMINISTER", "Administer RBAC",
                 "Assign and revoke roles and permissions, hierarchy, and SoD constraints.",
                 "SYSTEM", "RBAC", PermissionAction.MANAGE));
+        grant(superAdmin, upsertPermission("USER_OVERSIGHT", "User Oversight",
+                "Review users and start audited read-only impersonation sessions.",
+                "SYSTEM", "USERS", PermissionAction.MANAGE));
+        grant(systemAdmin, upsertPermission("SYSTEM_ADMINISTER", "Administer System Operations",
+                "Manage platform health, backups, integrations, AI configuration, and system operations.",
+                "SYSTEM", "OPERATIONS", PermissionAction.MANAGE));
+        grant(complianceManager, upsertPermission("COMPLIANCE_OVERSIGHT", "Compliance Oversight",
+                "Review compliance and records activity through audited read-only shadow sessions.",
+                "COMPLIANCE", "OVERSIGHT", PermissionAction.READ));
         grant(dpo, upsertPermission("PRIVACY_OVERSIGHT", "Privacy Oversight",
                 "Review privacy, data-protection, and compliance controls.",
                 "PRIVACY", "*", PermissionAction.MANAGE));
@@ -80,15 +95,20 @@ public class RbacCatalogBootstrap implements CommandLineRunner {
                 "SECURITY", "INFOSEC", PermissionAction.MANAGE));
 
         inherit(facilitiesManager, facilitiesOfficer);
-        inherit(dpo, complianceOfficer);
         inherit(counsel, legalOfficer);
-        inherit(records, complianceOfficer);
         inherit(departmentHead, employee);
         inherit(security, employee);
         inherit(infosec, employee);
 
+        removeInheritance(dpo, complianceOfficer);
+        removeInheritance(records, complianceOfficer);
+
         upsertConflict("SOD_PRIVACY_SECURITY", dpo, security,
                 "Privacy oversight and operational security must be assigned to different users.");
+        upsertConflict("SOD_PRIVACY_COMPLIANCE", dpo, complianceOfficer,
+                "Privacy oversight and compliance execution must be assigned to different users.");
+        upsertConflict("SOD_RECORDS_COMPLIANCE", records, complianceOfficer,
+                "Records custody and compliance execution must be assigned to different users.");
         upsertConflict("SOD_LEGAL_RECORDS", counsel, records,
                 "Legal counsel and records custody must be assigned to different users.");
         upsertConflict("SOD_PHYSICAL_INFOSEC", security, infosec,
@@ -134,6 +154,11 @@ public class RbacCatalogBootstrap implements CommandLineRunner {
 
     private void inherit(Role senior, Role junior) {
         senior.getInheritedRoles().add(junior);
+        roleRepository.save(senior);
+    }
+
+    private void removeInheritance(Role senior, Role junior) {
+        senior.getInheritedRoles().removeIf(role -> role.getName().equals(junior.getName()));
         roleRepository.save(senior);
     }
 

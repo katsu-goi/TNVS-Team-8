@@ -4,6 +4,21 @@
 # working directory name when running `supabase init`.
 project_id = "photonic-omega"
 
+[functions.admin]
+verify_jwt = false
+
+[functions.auth]
+verify_jwt = false
+
+[functions.governance]
+verify_jwt = false
+
+[functions.legal]
+verify_jwt = false
+
+[functions.facilities]
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.

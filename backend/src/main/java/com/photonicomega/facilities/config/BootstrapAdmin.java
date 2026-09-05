@@ -5,6 +5,8 @@ import com.photonicomega.facilities.module.auth.domain.PermissionAction;
 import com.photonicomega.facilities.module.auth.domain.Role;
 import com.photonicomega.facilities.module.auth.domain.User;
 import com.photonicomega.facilities.module.auth.domain.UserStatus;
+import com.photonicomega.facilities.module.auth.repository.PermissionRepository;
+import com.photonicomega.facilities.module.auth.repository.RoleRepository;
 import com.photonicomega.facilities.module.auth.repository.UserRepository;
 import com.photonicomega.facilities.module.contracts.domain.Contract;
 import com.photonicomega.facilities.module.contracts.domain.ContractStatus;
@@ -46,6 +48,7 @@ import com.photonicomega.facilities.module.records.domain.RetentionPolicy;
 import com.photonicomega.facilities.module.records.repository.RetentionPolicyRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -54,6 +57,7 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.HashSet;
 import java.util.Set;
 
 @Slf4j
@@ -63,6 +67,8 @@ import java.util.Set;
 public class BootstrapAdmin implements CommandLineRunner {
 
     private final UserRepository userRepository;
+    private final RoleRepository roleRepository;
+    private final PermissionRepository permissionRepository;
     private final PasswordEncoder passwordEncoder;
     private final DocumentRepository documentRepository;
     private final DocumentGrantRepository documentGrantRepository;
@@ -82,6 +88,9 @@ public class BootstrapAdmin implements CommandLineRunner {
     private final EmployeeRequestRepository employeeRequestRepository;
     private final EmployeeNotificationRepository employeeNotificationRepository;
 
+    @Value("${app.rbac.bootstrap.passwords.system-admin:}")
+    private String systemAdminPassword;
+
     @Override
     public void run(String... args) {
         seedAdmin();
@@ -98,43 +107,68 @@ public class BootstrapAdmin implements CommandLineRunner {
     }
 
     private void seedAdmin() {
-        if (userRepository.findByEmailAndDeletedFalse("admin@photonicomega.com").isPresent()) {
+        Permission systemAdminPermission = permissionRepository.findByName("SYSTEM_ADMINISTER")
+                .orElseGet(() -> Permission.builder().name("SYSTEM_ADMINISTER").build());
+        systemAdminPermission.setDisplayName("Administer System Operations");
+        systemAdminPermission.setDescription(
+                "Manage platform health, backups, integrations, AI configuration, and system operations");
+        systemAdminPermission.setModule("SYSTEM");
+        systemAdminPermission.setResource("OPERATIONS");
+        systemAdminPermission.setAction(PermissionAction.MANAGE);
+        systemAdminPermission = permissionRepository.save(systemAdminPermission);
+
+        Role systemAdminRole = roleRepository.findByName("SYSTEM_ADMIN")
+                .orElseGet(() -> Role.builder().name("SYSTEM_ADMIN").build());
+        systemAdminRole.setDisplayName("System Administrator");
+        systemAdminRole.setDescription("System administrator for platform operations and configuration");
+        systemAdminRole.setDashboardKey("system-admin");
+        systemAdminRole.setSystemRole(true);
+        systemAdminRole.getPermissions().add(systemAdminPermission);
+        systemAdminRole = roleRepository.save(systemAdminRole);
+
+        var existingAdmin = userRepository.findByEmailAndDeletedFalse("systemadmin@photonicomega.com");
+        if (existingAdmin.isEmpty()) {
+            existingAdmin = userRepository.findByEmailAndDeletedFalse("admin@photonicomega.com");
+            existingAdmin.ifPresent(admin -> admin.setEmail("systemadmin@photonicomega.com"));
+        }
+        if (existingAdmin.isPresent()) {
+            User admin = existingAdmin.get();
+            admin.setEmail("systemadmin@photonicomega.com");
+            admin.setFirstName("System");
+            admin.setLastName("Administrator");
+            admin.setDepartment("Information Technology");
+            admin.setPosition("System Administrator");
+            admin.setRoles(new HashSet<>(Set.of(systemAdminRole)));
+            if (systemAdminPassword != null && !systemAdminPassword.isBlank()) {
+                admin.setPasswordHash(passwordEncoder.encode(systemAdminPassword));
+            }
+            userRepository.save(admin);
+            log.info("Bootstrap admin user reconciled to SYSTEM_ADMIN.");
             return;
         }
+
         log.info("Creating bootstrap admin user...");
 
-        Permission allPermission = Permission.builder()
-                .name("ALL")
-                .displayName("All Permissions")
-                .description("Grants full system access")
-                .module("SYSTEM")
-                .resource("*")
-                .action(PermissionAction.MANAGE)
-                .build();
-
-        Role superAdminRole = Role.builder()
-                .name("SUPER_ADMIN")
-                .displayName("Super Administrator")
-                .description("System super administrator with unrestricted access")
-                .systemRole(true)
-                .permissions(Set.of(allPermission))
-                .build();
+        boolean usesDefaultPassword = systemAdminPassword == null || systemAdminPassword.isBlank();
+        String password = usesDefaultPassword ? "Systemadmin2026!" : systemAdminPassword;
 
         userRepository.save(User.builder()
-                .email("admin@photonicomega.com")
-                .passwordHash(passwordEncoder.encode("Admin2026!"))
+                .email("systemadmin@photonicomega.com")
+                .passwordHash(passwordEncoder.encode(password))
                 .firstName("System")
                 .lastName("Administrator")
                 .employeeId("ADMIN-001")
-                .department("IT")
+                .department("Information Technology")
                 .position("System Administrator")
                 .status(UserStatus.ACTIVE)
                 .emailVerified(true)
-                .roles(Set.of(superAdminRole))
+                .roles(new HashSet<>(Set.of(systemAdminRole)))
                 .build());
 
-        log.warn("Bootstrap admin user created with DEFAULT credentials (admin@photonicomega.com / Admin2026!). "
-                + "Change the password before deploying outside a dev/test environment.");
+        if (usesDefaultPassword) {
+            log.warn("Bootstrap admin user created with DEFAULT credentials (systemadmin@photonicomega.com / Systemadmin2026!). "
+                    + "Change the password before deploying outside a dev/test environment.");
+        }
 
         log.info("Bootstrap admin user created.");
     }

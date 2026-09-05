@@ -1,9 +1,10 @@
-import { createHandler, AuthContext, RouteParams } from "../_shared/guard.ts";
+import { createHandler, AuthContext, hasRole, RouteParams } from "../_shared/guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
 import { ok, fail } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
 import { writeAudit } from "../_shared/lockout.ts";
 import { resolveClientIp } from "../_shared/ip.ts";
+import { findUserById } from "../_shared/auth-users.ts";
 import {
   assignedRoleIds,
   findConflict,
@@ -105,6 +106,19 @@ async function handleListUsers(_ctx: AuthContext | null, _req: Request, _body: u
   return jsonResponse(ok(users), 200);
 }
 
+async function handleListLockedUsers(_ctx: AuthContext | null, _req: Request, _body: unknown, _p: RouteParams) {
+  const { data, error } = await db
+    .from("users")
+    .select("*")
+    .eq("is_deleted", false)
+    .gt("locked_until", nowIso())
+    .order("locked_until", { ascending: true });
+  if (error) throw new Error(`locked users load failed: ${error.message}`);
+  const roleMap = await loadRolesByUser();
+  const users = (data as unknown as UserRow[]).map((u) => userDto(u, roleMap.get(u.id) ?? []));
+  return jsonResponse(ok(users), 200);
+}
+
 async function handleUnlockUser(ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
   const id = p.id;
   const { data, error } = await db
@@ -127,6 +141,432 @@ async function handleUnlockUser(ctx: AuthContext | null, _req: Request, _body: u
     resolveClientIp(_req).ip);
 
   return jsonResponse(ok("Account unlocked successfully"), 200);
+}
+
+// ---------------------------------------------------------------------------
+// Audited read-only oversight sessions
+// ---------------------------------------------------------------------------
+
+type OversightMode = "IMPERSONATION" | "SHADOW";
+
+type OversightSessionRow = {
+  id: string;
+  actor_user_id: string;
+  target_user_id: string;
+  mode: OversightMode;
+  actor_role: string;
+  target_role_names: string[];
+  justification: string;
+  read_only: boolean;
+  status: "ACTIVE" | "ENDED" | "EXPIRED";
+  started_at: string;
+  expires_at: string;
+  ended_at: string | null;
+};
+
+type OversightTargetRow = {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  department: string | null;
+  status: string;
+  is_deleted: boolean;
+};
+
+const OVERSIGHT_SESSION_HEADER = "X-Oversight-Session";
+const OVERSIGHT_DURATION_MINUTES = 15;
+const MAX_OVERSIGHT_DURATION_MINUTES = 30;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const COMPLIANCE_SHADOW_ROLES = new Set([
+  "COMPLIANCE_OFFICER",
+  "DATA_PROTECTION_OFFICER",
+  "RECORDS_OFFICER",
+]);
+const SHADOW_COMPATIBLE_ROLES = new Set([...COMPLIANCE_SHADOW_ROLES, "EMPLOYEE"]);
+const IMPERSONATION_PROTECTED_ROLES = new Set(["SUPER_ADMIN", "SYSTEM_ADMIN"]);
+
+function oversightValidationError(message: string) {
+  return jsonResponse(fail("Validation failed", "VALIDATION_ERROR", [message]), 400);
+}
+
+function oversightAccessDenied(message: string) {
+  return jsonResponse(fail(message, "ACCESS_DENIED"), 403);
+}
+
+function parseOversightMode(value: unknown): OversightMode | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toUpperCase();
+  return normalized === "IMPERSONATION" || normalized === "SHADOW" ? normalized : null;
+}
+
+function parseOversightDuration(value: unknown): number {
+  if (value === undefined || value === null) return OVERSIGHT_DURATION_MINUTES;
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return OVERSIGHT_DURATION_MINUTES;
+  return Math.min(MAX_OVERSIGHT_DURATION_MINUTES, Math.max(5, Math.floor(parsed)));
+}
+
+async function assignedRolesForUser(userId: string): Promise<string[]> {
+  const { data, error } = await db
+    .from("user_roles")
+    .select("roles(name)")
+    .eq("user_id", userId);
+  if (error) throw new Error(`target roles lookup failed: ${error.message}`);
+
+  const roles = new Set<string>();
+  for (const row of data ?? []) {
+    const related = (row as { roles: unknown }).roles;
+    const values = Array.isArray(related) ? related : related ? [related] : [];
+    for (const value of values) {
+      const name = (value as { name?: string }).name;
+      if (name) roles.add(name.toUpperCase());
+    }
+  }
+  return [...roles];
+}
+
+async function oversightTarget(userId: string): Promise<OversightTargetRow | null> {
+  const { data, error } = await db
+    .from("users")
+    .select("id, first_name, last_name, email, status, is_deleted")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) throw new Error(`oversight target lookup failed: ${error.message}`);
+  return data as OversightTargetRow | null;
+}
+
+async function activeOversightSession(actorUserId: string, sessionId?: string): Promise<OversightSessionRow | null> {
+  let query = db
+    .from("oversight_sessions")
+    .select(
+      "id, actor_user_id, target_user_id, mode, actor_role, target_role_names, justification, read_only, status, started_at, expires_at, ended_at",
+    )
+    .eq("actor_user_id", actorUserId)
+    .eq("read_only", true)
+    .eq("status", "ACTIVE")
+    .is("ended_at", null)
+    .gt("expires_at", nowIso())
+    .order("started_at", { ascending: false })
+    .limit(1);
+  if (sessionId) query = query.eq("id", sessionId);
+
+  const { data, error } = await query.maybeSingle();
+  if (error) throw new Error(`oversight session lookup failed: ${error.message}`);
+  return data as OversightSessionRow | null;
+}
+
+async function expireStaleOversightSessions(actorUserId: string): Promise<void> {
+  const endedAt = nowIso();
+  const { error } = await db
+    .from("oversight_sessions")
+    .update({ status: "EXPIRED", ended_at: endedAt, ended_by: actorUserId })
+    .eq("actor_user_id", actorUserId)
+    .eq("status", "ACTIVE")
+    .lte("expires_at", endedAt);
+  if (error) throw new Error(`expired oversight session cleanup failed: ${error.message}`);
+}
+
+async function writeOversightAudit(
+  ctx: AuthContext,
+  req: Request,
+  action: string,
+  session: OversightSessionRow,
+  targetEmail: string,
+) {
+  const { error } = await db.from("admin_audit_logs").insert({
+    actor_user_id: ctx.userId,
+    target_user_id: session.target_user_id,
+    oversight_session_id: session.id,
+    action,
+    entity_type: "OversightSession",
+    entity_id: session.id,
+    details: {
+      mode: session.mode,
+      actorEmail: ctx.email,
+      targetEmail,
+      actorRole: session.actor_role,
+      targetRoles: session.target_role_names,
+      readOnly: session.read_only,
+      justification: session.justification,
+    },
+    source_ip: resolveClientIp(req).ip,
+    user_agent: req.headers.get("User-Agent"),
+    occurred_at: nowIso(),
+  });
+  if (error) throw new Error(`oversight audit write failed: ${error.message}`);
+}
+
+function oversightDto(
+  session: OversightSessionRow,
+  target: OversightTargetRow,
+  targetRoles: string[],
+  targetPermissions: string[] = [],
+  dashboardKey: string | null = null,
+  assignedRoles: string[] = targetRoles,
+): Record<string, unknown> {
+  return {
+    id: session.id,
+    mode: session.mode,
+    actorRole: session.actor_role,
+    readOnly: session.read_only,
+    status: session.status,
+    justification: session.justification,
+    actorUserId: session.actor_user_id,
+    targetUser: {
+      id: target.id,
+      email: target.email,
+      firstName: target.first_name,
+      lastName: target.last_name,
+      fullName: `${target.first_name} ${target.last_name}`,
+      department: target.department,
+      roles: targetRoles,
+      assignedRoles,
+      permissions: targetPermissions,
+      dashboardKey,
+    },
+    startedAt: session.started_at,
+    expiresAt: session.expires_at,
+  };
+}
+
+async function handleListOversightTargets(ctx: AuthContext | null) {
+  const actor = ctx!;
+  const { data, error } = await db
+    .from("users")
+    .select("id, first_name, last_name, email, department, status, is_deleted")
+    .eq("status", "ACTIVE")
+    .eq("is_deleted", false)
+    .neq("id", actor.userId)
+    .order("last_name")
+    .limit(250);
+  if (error) throw new Error(`oversight targets lookup failed: ${error.message}`);
+
+  const targetIds = (data ?? []).map((row) => (row as OversightTargetRow).id);
+  const [onlineResult, activityResult] = await Promise.all([
+    db.from("online_users").select("user_id, last_activity").in("user_id", targetIds),
+    db.from("user_activity_events").select("user_id, action, event_type, created_at").in("user_id", targetIds).order("created_at", { ascending: false }).limit(500),
+  ]);
+  if (onlineResult.error) throw new Error(`online users lookup failed: ${onlineResult.error.message}`);
+  if (activityResult.error) throw new Error(`user activity lookup failed: ${activityResult.error.message}`);
+  const onlineByUser = new Map<string, string>();
+  for (const row of onlineResult.data ?? []) {
+    if (row.user_id && row.last_activity) onlineByUser.set(String(row.user_id), String(row.last_activity));
+  }
+  const latestActivityByUser = new Map<string, { action: string; occurredAt: string }>();
+  for (const row of activityResult.data ?? []) {
+    const userId = row.user_id ? String(row.user_id) : "";
+    if (userId && !latestActivityByUser.has(userId)) {
+      latestActivityByUser.set(userId, {
+        action: String(row.action || row.event_type || "Account activity"),
+        occurredAt: String(row.created_at),
+      });
+    }
+  }
+
+  const targets: Record<string, unknown>[] = [];
+  for (const row of (data ?? []) as OversightTargetRow[]) {
+    const profile = await findUserById(row.id);
+    if (!profile || profile.assignedRoles.length === 0) continue;
+    const roles = profile.assignedRoles;
+    if (hasRole(actor, "COMPLIANCE_MANAGER")) {
+      const hasSubordinateRole = roles.some((role) => COMPLIANCE_SHADOW_ROLES.has(role));
+      const hasOutOfScopeRole = roles.some((role) => !SHADOW_COMPATIBLE_ROLES.has(role));
+      if (!hasSubordinateRole || hasOutOfScopeRole) continue;
+    } else if (roles.some((role) => IMPERSONATION_PROTECTED_ROLES.has(role))) {
+      continue;
+    }
+    const lastActivity = onlineByUser.get(row.id) ?? null;
+    const activity = latestActivityByUser.get(row.id) ?? null;
+    const isOnline = Boolean(lastActivity && Date.now() - new Date(lastActivity).getTime() <= 5 * 60 * 1000);
+    targets.push({
+      id: row.id,
+      email: row.email,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      fullName: `${row.first_name} ${row.last_name}`,
+      department: row.department,
+      roles: profile.roles,
+      assignedRoles: profile.assignedRoles,
+      permissions: profile.permissions,
+      dashboardKey: profile.dashboardKey,
+      isOnline,
+      lastActiveAt: lastActivity,
+      lastActiveOperation: activity?.action ?? null,
+      lastActiveOperationAt: activity?.occurredAt ?? null,
+    });
+  }
+  return jsonResponse(ok(targets), 200);
+}
+
+async function handleStartOversightSession(ctx: AuthContext | null, req: Request, body: unknown, _p: RouteParams) {
+  const actor = ctx!;
+  const payload = (body ?? {}) as Record<string, unknown>;
+  const mode = parseOversightMode(payload.mode);
+  if (!mode) return oversightValidationError("mode must be IMPERSONATION or SHADOW");
+
+  const justification = typeof payload.justification === "string" ? payload.justification.trim() : "";
+  if (justification.length < 10) {
+    return oversightValidationError("justification must contain at least 10 characters");
+  }
+
+  const targetUserId = typeof payload.targetUserId === "string"
+    ? payload.targetUserId.trim()
+    : typeof payload.target_user_id === "string"
+    ? payload.target_user_id.trim()
+    : "";
+  if (!UUID_PATTERN.test(targetUserId)) return oversightValidationError("targetUserId must be a valid UUID");
+  if (targetUserId === actor.userId) return oversightValidationError("You cannot start oversight on your own account");
+
+  if (mode === "IMPERSONATION" && !hasRole(actor, "SUPER_ADMIN")) {
+    return oversightAccessDenied("Only a Super Admin can start an impersonation session");
+  }
+  if (mode === "SHADOW" && !hasRole(actor, "COMPLIANCE_MANAGER")) {
+    return oversightAccessDenied("Only a Compliance Manager can start a compliance shadow session");
+  }
+
+  await expireStaleOversightSessions(actor.userId);
+  const existing = await activeOversightSession(actor.userId);
+  if (existing) {
+    return jsonResponse(
+      fail("An active oversight session already exists. Stop it before starting another.", "OVERSIGHT_SESSION_ACTIVE"),
+      409,
+    );
+  }
+
+  const target = await oversightTarget(targetUserId);
+  if (!target || target.is_deleted || target.status !== "ACTIVE") {
+    return notFound(`Active oversight target not found with id: ${targetUserId}`);
+  }
+
+  const targetRoles = await assignedRolesForUser(targetUserId);
+  if (targetRoles.length === 0) return oversightValidationError("The target account has no assigned role");
+
+  if (mode === "IMPERSONATION" && targetRoles.some((role) => IMPERSONATION_PROTECTED_ROLES.has(role))) {
+    return oversightAccessDenied("Super Admin and System Admin accounts cannot be impersonated");
+  }
+  if (mode === "SHADOW") {
+    const hasSubordinateRole = targetRoles.some((role) => COMPLIANCE_SHADOW_ROLES.has(role));
+    const hasOutOfScopeRole = targetRoles.some((role) => !SHADOW_COMPATIBLE_ROLES.has(role));
+    if (!hasSubordinateRole || hasOutOfScopeRole) {
+      return oversightAccessDenied(
+        "Compliance Manager shadow mode is limited to Compliance Officer, Data Protection Officer, and Records Officer accounts",
+      );
+    }
+  }
+
+  const startedAt = new Date();
+  const durationMinutes = parseOversightDuration(payload.durationMinutes ?? payload.duration_minutes);
+  const expiresAt = new Date(startedAt.getTime() + durationMinutes * 60_000);
+  const actorRole = mode === "IMPERSONATION" ? "SUPER_ADMIN" : "COMPLIANCE_MANAGER";
+  const { data, error } = await db
+    .from("oversight_sessions")
+    .insert({
+      actor_user_id: actor.userId,
+      target_user_id: targetUserId,
+      mode,
+      actor_role: actorRole,
+      target_role_names: targetRoles,
+      justification,
+      read_only: true,
+      status: "ACTIVE",
+      started_at: startedAt.toISOString(),
+      expires_at: expiresAt.toISOString(),
+      source_ip: resolveClientIp(req).ip,
+      user_agent: req.headers.get("User-Agent"),
+    })
+    .select(
+      "id, actor_user_id, target_user_id, mode, actor_role, target_role_names, justification, read_only, status, started_at, expires_at, ended_at",
+    )
+    .single();
+  if (error) throw new Error(`oversight session start failed: ${error.message}`);
+
+  const session = data as OversightSessionRow;
+  const targetProfile = await findUserById(targetUserId);
+  if (!targetProfile) return notFound(`Active oversight target not found with id: ${targetUserId}`);
+  try {
+    await writeOversightAudit(
+      actor,
+      req,
+      mode === "IMPERSONATION" ? "IMPERSONATION_STARTED" : "SHADOW_SESSION_STARTED",
+      session,
+      target.email,
+    );
+  } catch (e) {
+    await db.from("oversight_sessions").update({
+      status: "ENDED",
+      ended_at: nowIso(),
+      ended_by: actor.userId,
+    }).eq("id", session.id);
+    throw e;
+  }
+
+  return jsonResponse(ok(oversightDto(
+    session,
+    target,
+    targetProfile.roles,
+    targetProfile.permissions,
+    targetProfile.dashboardKey,
+    targetProfile.assignedRoles,
+  ), "Oversight session started"), 201);
+}
+
+async function handleCurrentOversightSession(ctx: AuthContext | null, req: Request, _body: unknown, _p: RouteParams) {
+  const requestedSessionId = req.headers.get(OVERSIGHT_SESSION_HEADER)?.trim();
+  if (requestedSessionId && !UUID_PATTERN.test(requestedSessionId)) {
+    return oversightValidationError(`${OVERSIGHT_SESSION_HEADER} must contain a valid UUID`);
+  }
+
+  const session = await activeOversightSession(ctx!.userId, requestedSessionId || undefined);
+  if (!session) return jsonResponse(ok(null, "No active oversight session"), 200);
+
+  const target = await oversightTarget(session.target_user_id);
+  if (!target) return notFound(`Oversight target not found with id: ${session.target_user_id}`);
+  const targetProfile = await findUserById(session.target_user_id);
+  if (!targetProfile) return notFound(`Oversight target not found with id: ${session.target_user_id}`);
+  return jsonResponse(ok(oversightDto(
+    session,
+    target,
+    targetProfile.roles,
+    targetProfile.permissions,
+    targetProfile.dashboardKey,
+    targetProfile.assignedRoles,
+  )), 200);
+}
+
+async function handleStopOversightSession(ctx: AuthContext | null, req: Request, body: unknown, _p: RouteParams) {
+  const payload = (body ?? {}) as Record<string, unknown>;
+  const bodySessionId = typeof payload.sessionId === "string"
+    ? payload.sessionId.trim()
+    : typeof payload.session_id === "string"
+    ? payload.session_id.trim()
+    : "";
+  if (bodySessionId && !UUID_PATTERN.test(bodySessionId)) {
+    return oversightValidationError("sessionId must be a valid UUID");
+  }
+
+  const session = await activeOversightSession(ctx!.userId, bodySessionId || undefined);
+  if (!session) return notFound("No active oversight session was found for the current user");
+
+  const target = await oversightTarget(session.target_user_id);
+  if (!target) return notFound(`Oversight target not found with id: ${session.target_user_id}`);
+
+  const { error } = await db
+    .from("oversight_sessions")
+    .update({ status: "ENDED", ended_at: nowIso(), ended_by: ctx!.userId })
+    .eq("id", session.id)
+    .eq("actor_user_id", ctx!.userId)
+    .eq("status", "ACTIVE");
+  if (error) throw new Error(`oversight session stop failed: ${error.message}`);
+
+  await writeOversightAudit(
+    ctx!,
+    req,
+    session.mode === "IMPERSONATION" ? "IMPERSONATION_STOPPED" : "SHADOW_SESSION_STOPPED",
+    session,
+    target.email,
+  );
+  return jsonResponse(ok("Oversight session stopped"), 200);
 }
 
 // ---------------------------------------------------------------------------
@@ -913,36 +1353,46 @@ async function handleDeactivateConflict(ctx: AuthContext | null, req: Request, _
 
 // ---------------------------------------------------------------------------
 
+const SUPER_ADMIN_ONLY = { kind: "roles", roles: ["SUPER_ADMIN"] } as const;
+const SYSTEM_ADMIN_ONLY = { kind: "roles", roles: ["SYSTEM_ADMIN"] } as const;
+const ADMIN_PORTAL_ROLES = { kind: "roles", roles: ["SUPER_ADMIN", "SYSTEM_ADMIN"] } as const;
+const OVERSIGHT_ADMIN_ROLES = { kind: "roles", roles: ["SUPER_ADMIN", "COMPLIANCE_MANAGER"] } as const;
+
 const routes = [
-  { method: "GET", path: "/admin/users", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleListUsers },
-  { method: "POST", path: "/admin/users/:id/unlock", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleUnlockUser },
-  { method: "GET", path: "/admin/rbac/users", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleListUsers },
-  { method: "GET", path: "/admin/rbac/roles", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleListRbacRoles },
-  { method: "GET", path: "/admin/rbac/permissions", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleListRbacPermissions },
-  { method: "GET", path: "/admin/rbac/conflicts", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleListRbacConflicts },
-  { method: "PUT", path: "/admin/rbac/users/:userId/roles/:roleId", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleAssignRole },
-  { method: "DELETE", path: "/admin/rbac/users/:userId/roles/:roleId", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleRevokeRole },
-  { method: "PUT", path: "/admin/rbac/roles/:roleId/permissions/:permissionId", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleGrantPermission },
-  { method: "DELETE", path: "/admin/rbac/roles/:roleId/permissions/:permissionId", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleRevokePermission },
-  { method: "PUT", path: "/admin/rbac/hierarchy/:seniorRoleId/:juniorRoleId", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleAddInheritance },
-  { method: "DELETE", path: "/admin/rbac/hierarchy/:seniorRoleId/:juniorRoleId", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleRemoveInheritance },
-  { method: "POST", path: "/admin/rbac/conflicts", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleCreateConflict },
-  { method: "DELETE", path: "/admin/rbac/conflicts/:conflictId", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["RBAC_ADMINISTER"] }, handler: handleDeactivateConflict },
-  { method: "GET", path: "/admin/config", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleListConfigs },
-  { method: "GET", path: "/admin/config/:key", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleGetConfig },
-  { method: "PUT", path: "/admin/config/:key", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleUpsertConfig },
-  { method: "GET", path: "/admin/integrations", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleListIntegrations },
-  { method: "GET", path: "/admin/integrations/:systemName", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleGetIntegration },
-  { method: "GET", path: "/admin/hr-assistance", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleListHrRequests },
-  { method: "GET", path: "/admin/hr-assistance/:id", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleGetHrRequest },
-  { method: "PATCH", path: "/admin/hr-assistance/:id/status", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleUpdateHrStatus },
-  { method: "GET", path: "/admin/notifications", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleListAdminNotifications },
-  { method: "GET", path: "/admin/notifications/unread-count", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleUnreadCount },
-  { method: "PUT", path: "/admin/notifications/:id/read", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleMarkNotifRead },
-  { method: "GET", path: "/admin/backups", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleListBackups },
-  { method: "GET", path: "/admin/backups/latest", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleLatestBackup },
-  { method: "POST", path: "/admin/backups", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleCreateBackup },
-  { method: "GET", path: "/admin/kpi", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleKpi },
+  { method: "GET", path: "/admin/users", guard: SUPER_ADMIN_ONLY, handler: handleListUsers },
+  { method: "GET", path: "/admin/account-lockouts", guard: SYSTEM_ADMIN_ONLY, handler: handleListLockedUsers },
+  { method: "POST", path: "/admin/users/:id/unlock", guard: ADMIN_PORTAL_ROLES, handler: handleUnlockUser },
+  { method: "GET", path: "/admin/rbac/users", guard: SUPER_ADMIN_ONLY, handler: handleListUsers },
+  { method: "GET", path: "/admin/rbac/roles", guard: SUPER_ADMIN_ONLY, handler: handleListRbacRoles },
+  { method: "GET", path: "/admin/rbac/permissions", guard: SUPER_ADMIN_ONLY, handler: handleListRbacPermissions },
+  { method: "GET", path: "/admin/rbac/conflicts", guard: SUPER_ADMIN_ONLY, handler: handleListRbacConflicts },
+  { method: "PUT", path: "/admin/rbac/users/:userId/roles/:roleId", guard: SUPER_ADMIN_ONLY, handler: handleAssignRole },
+  { method: "DELETE", path: "/admin/rbac/users/:userId/roles/:roleId", guard: SUPER_ADMIN_ONLY, handler: handleRevokeRole },
+  { method: "PUT", path: "/admin/rbac/roles/:roleId/permissions/:permissionId", guard: SUPER_ADMIN_ONLY, handler: handleGrantPermission },
+  { method: "DELETE", path: "/admin/rbac/roles/:roleId/permissions/:permissionId", guard: SUPER_ADMIN_ONLY, handler: handleRevokePermission },
+  { method: "PUT", path: "/admin/rbac/hierarchy/:seniorRoleId/:juniorRoleId", guard: SUPER_ADMIN_ONLY, handler: handleAddInheritance },
+  { method: "DELETE", path: "/admin/rbac/hierarchy/:seniorRoleId/:juniorRoleId", guard: SUPER_ADMIN_ONLY, handler: handleRemoveInheritance },
+  { method: "POST", path: "/admin/rbac/conflicts", guard: SUPER_ADMIN_ONLY, handler: handleCreateConflict },
+  { method: "DELETE", path: "/admin/rbac/conflicts/:conflictId", guard: SUPER_ADMIN_ONLY, handler: handleDeactivateConflict },
+  { method: "POST", path: "/admin/oversight/start", guard: OVERSIGHT_ADMIN_ROLES, handler: handleStartOversightSession },
+  { method: "GET", path: "/admin/oversight/targets", guard: OVERSIGHT_ADMIN_ROLES, handler: handleListOversightTargets },
+  { method: "GET", path: "/admin/oversight/current", guard: OVERSIGHT_ADMIN_ROLES, handler: handleCurrentOversightSession },
+  { method: "POST", path: "/admin/oversight/stop", guard: OVERSIGHT_ADMIN_ROLES, handler: handleStopOversightSession },
+  { method: "GET", path: "/admin/config", guard: SYSTEM_ADMIN_ONLY, handler: handleListConfigs },
+  { method: "GET", path: "/admin/config/:key", guard: SYSTEM_ADMIN_ONLY, handler: handleGetConfig },
+  { method: "PUT", path: "/admin/config/:key", guard: SYSTEM_ADMIN_ONLY, handler: handleUpsertConfig },
+  { method: "GET", path: "/admin/integrations", guard: SYSTEM_ADMIN_ONLY, handler: handleListIntegrations },
+  { method: "GET", path: "/admin/integrations/:systemName", guard: SYSTEM_ADMIN_ONLY, handler: handleGetIntegration },
+  { method: "GET", path: "/admin/hr-assistance", guard: SUPER_ADMIN_ONLY, handler: handleListHrRequests },
+  { method: "GET", path: "/admin/hr-assistance/:id", guard: SUPER_ADMIN_ONLY, handler: handleGetHrRequest },
+  { method: "PATCH", path: "/admin/hr-assistance/:id/status", guard: SUPER_ADMIN_ONLY, handler: handleUpdateHrStatus },
+  { method: "GET", path: "/admin/notifications", guard: ADMIN_PORTAL_ROLES, handler: handleListAdminNotifications },
+  { method: "GET", path: "/admin/notifications/unread-count", guard: ADMIN_PORTAL_ROLES, handler: handleUnreadCount },
+  { method: "PUT", path: "/admin/notifications/:id/read", guard: ADMIN_PORTAL_ROLES, handler: handleMarkNotifRead },
+  { method: "GET", path: "/admin/backups", guard: SYSTEM_ADMIN_ONLY, handler: handleListBackups },
+  { method: "GET", path: "/admin/backups/latest", guard: SYSTEM_ADMIN_ONLY, handler: handleLatestBackup },
+  { method: "POST", path: "/admin/backups", guard: SYSTEM_ADMIN_ONLY, handler: handleCreateBackup },
+  { method: "GET", path: "/admin/kpi", guard: ADMIN_PORTAL_ROLES, handler: handleKpi },
 ] as const;
 
 Deno.serve(createHandler(routes as never, { name: "admin" }));

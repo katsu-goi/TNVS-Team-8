@@ -4,33 +4,23 @@ import {
   Database, Activity, Users, Shield,
   RefreshCw, AlertCircle, Cpu,
   Download, Bell, Layers,
-  Loader2,
+  ChevronRight, Loader2,
 } from 'lucide-react';
 import { supabaseMonitoringService } from '../../api/supabaseMonitoringService';
 import { kpiService } from '../../api/kpiService';
 import { securityService } from '../../api/securityService';
 import { loadBackups, loadNotifications } from '../../api/adminService';
+import { isActorSuperAdmin, useAuthStore } from '../../stores/authStore';
+import { OversightPanel } from '../oversight';
 import { useLiveActivities } from './useLiveActivities';
 import { SubsystemHealthGrid } from './SubsystemHealthGrid';
+import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import type { DashboardMetrics, SecurityLog, AdminNotification, BackupRecord, SystemKpi } from '../../types';
 
-const KpiCard: React.FC<{
-  label: string;
-  value: string | number;
-  icon: React.ElementType;
-  color?: string;
-  iconBackground?: string;
-  sub?: string;
-  onClick?: () => void;
-  pulse?: boolean;
-}> = ({ label, value, icon: Icon, color, iconBackground, sub, onClick, pulse }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    className="group min-h-[148px] w-full rounded-2xl border border-slate-200 bg-white p-6 text-left shadow-[0_4px_16px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-px hover:border-slate-300 hover:shadow-[0_10px_24px_rgba(15,23,42,0.08)] focus:outline-none focus:ring-2 focus:ring-[#D02F34]/20 focus:ring-offset-2"
-  >
-    <div className="mb-2 flex items-start justify-between gap-4">
-      <p className="flex min-w-0 items-center gap-1.5 pt-0.5 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500 transition-colors group-hover:text-slate-700">
+const KpiCard: React.FC<{ label: string; value: string | number; icon: React.ElementType; color?: string; sub?: string; onClick?: () => void; pulse?: boolean }> = ({ label, value, icon: Icon, color, sub, onClick, pulse }) => (
+  <button onClick={onClick} className="card-stat p-4 text-left w-full cursor-pointer hover:border-emerald-300 hover:shadow-md transition-all group">
+    <div className="flex items-center justify-between mb-2">
+      <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.08em] group-hover:text-emerald-700 transition-colors flex items-center gap-1.5">
         {label}
         {pulse && (
           <span className="relative flex h-2 w-2">
@@ -39,17 +29,20 @@ const KpiCard: React.FC<{
           </span>
         )}
       </p>
-      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ring-black/[0.035] ${iconBackground || 'bg-slate-50'}`}>
-        <Icon className={`h-5 w-5 ${color || 'text-slate-400'} transition-transform duration-200 group-hover:scale-105`} />
+      <div className="flex items-center space-x-1">
+        <Icon className={`w-4 h-4 ${color || 'text-slate-400'} group-hover:scale-110 transition-transform`} />
+        <ChevronRight className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 -ml-0.5 transition-all" />
       </div>
     </div>
-    <p className="text-[28px] font-bold leading-none tracking-tight text-slate-950">{value}</p>
-    {sub && <p className="mt-2 text-xs leading-4 text-slate-500">{sub}</p>}
+    <p className="text-2xl font-bold text-slate-900">{value}</p>
+    {sub && <p className="text-[10px] text-slate-400 mt-0.5 font-mono">{sub}</p>}
   </button>
 );
 
 export const SysAdminDashboard: React.FC = () => {
   const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
+  const superAdministrator = isActorSuperAdmin(user);
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [kpi, setKpi] = useState<SystemKpi | null>(null);
   const [logs, setLogs] = useState<SecurityLog[]>([]);
@@ -59,6 +52,7 @@ export const SysAdminDashboard: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const { activities, onlineCount, peakToday } = useLiveActivities();
+  const realtimeRevision = useRealtimeSyncStore((state) => state.revision);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -67,9 +61,9 @@ export const SysAdminDashboard: React.FC = () => {
       const [telemetry, k, l, b, n] = await Promise.all([
         supabaseMonitoringService.getLiveDashboardCounts(),
         kpiService.loadKpi(),
-        securityService.getLogs(),
-        loadBackups(),
-        loadNotifications(),
+        superAdministrator ? securityService.getLogs() : Promise.resolve([]),
+        superAdministrator ? Promise.resolve([]) : loadBackups(),
+        superAdministrator ? Promise.resolve([]) : loadNotifications(),
       ]);
       const m: DashboardMetrics = {
         totalDocuments: telemetry.data.totalDocuments,
@@ -92,7 +86,7 @@ export const SysAdminDashboard: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [retry]);
+  }, [retry, realtimeRevision, superAdministrator]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -131,44 +125,61 @@ export const SysAdminDashboard: React.FC = () => {
     ? new Date(latestBackup.completedAt).toLocaleDateString()
     : 'No backups';
   const backupStatus = latestBackup?.status || 'NONE';
+  const dashboardTitle = superAdministrator ? 'Super Administrator' : 'System Administrator';
+  const dashboardSubtitle = superAdministrator
+    ? 'Business Governance, RBAC & Security Oversight'
+    : 'Infrastructure, Integration & Platform Monitoring';
+  const dashboardCards = superAdministrator
+    ? [
+        { label: 'Managed Documents', value: metrics.totalDocuments, icon: Database, color: 'text-blue-500', sub: 'Live document records', path: '/admin/analytics' },
+        { label: 'Managed Contracts', value: metrics.totalContracts, icon: Layers, color: 'text-indigo-500', sub: 'Live contract records', path: '/admin/analytics' },
+        { label: 'Active Users', value: onlineCount, icon: Users, color: onlineCount > 0 ? 'text-emerald-600' : 'text-slate-400', sub: `${onlineCount} users online · Peak today: ${peakToday}`, path: '/security', pulse: true },
+        { label: 'Active Sessions', value: metrics.activeSessions, icon: Activity, color: 'text-emerald-600', sub: 'Authenticated sessions', path: '/security/audit-logs' },
+        { label: 'Security Alerts', value: metrics.activeAlertsCount, icon: Shield, color: metrics.activeAlertsCount > 0 ? 'text-rose-500' : 'text-emerald-600', sub: 'Open security alerts', path: '/security' },
+        { label: 'Failed Logins', value: metrics.failedLoginAttempts, icon: Shield, color: metrics.failedLoginAttempts > 0 ? 'text-amber-500' : 'text-emerald-600', sub: 'Failed authentication attempts', path: '/security' },
+      ]
+    : [
+        { label: 'Connected Subsystems', value: kpi ? `${[kpi.facilities.totalFacilities, kpi.visitors.totalVisitors, kpi.documents.totalDocuments, kpi.legal.totalCases, kpi.contracts.totalContracts].filter(v => v > 0).length}` : '0', icon: Layers, color: 'text-blue-500', sub: 'Modules with data', path: '/admin/integrations' },
+        { label: 'Active Sessions', value: metrics.activeSessions, icon: Users, color: metrics.activeSessions > 0 ? 'text-emerald-600' : 'text-slate-400', sub: `${onlineCount} users online · Peak today: ${peakToday}`, path: '/admin/sessions', pulse: true },
+        { label: 'AI Services', value: `${metrics.totalDocuments} docs`, icon: Cpu, color: metrics.totalDocuments > 0 ? 'text-emerald-600' : 'text-slate-400', sub: `${metrics.totalContracts} contracts`, path: '/admin/ai-services' },
+        { label: 'Backup Status', value: backupStatus, icon: Download, color: backupStatus === 'COMPLETED' ? 'text-emerald-600' : 'text-amber-500', sub: `Last: ${lastBackupTime}`, path: '/admin/backup' },
+        { label: 'Platform Alerts', value: metrics.activeAlertsCount, icon: Shield, color: metrics.activeAlertsCount > 0 ? 'text-rose-500' : 'text-emerald-600', sub: 'Infrastructure alerts', path: '/admin/system-health' },
+        { label: 'Notifications', value: unreadNotifs, icon: Bell, color: unreadNotifs > 0 ? 'text-rose-500' : 'text-slate-400', sub: `${notifications.length} total`, path: '/admin/notifications' },
+      ];
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-5 rounded-2xl border border-[#2A2D34] bg-gradient-to-br from-[#17191F] to-[#20232A] p-5 shadow-[0_10px_30px_rgba(15,23,42,0.13)] sm:flex-row sm:items-center sm:justify-between sm:p-6">
-        <div className="min-w-0">
-          <h1 className="font-heading text-[28px] font-extrabold leading-tight text-white sm:text-[34px]">System Administrator</h1>
-          <p className="mt-1 text-sm leading-5 text-white/65">Infrastructure, Integration &amp; Platform Monitoring</p>
+      <div className="glass-panel p-5 flex items-center justify-between">
+        <div>
+          <h1 className="text-[34px] font-extrabold font-heading text-slate-900 leading-tight">{dashboardTitle}</h1>
+          <p className="text-slate-500 text-sm mt-1">{dashboardSubtitle}</p>
         </div>
-        <div className="flex shrink-0 items-center">
-          <button
-            type="button"
-            onClick={() => setRetry(r => r + 1)}
-            className="rounded-lg border border-white/15 bg-white/10 p-2.5 text-white/70 shadow-sm transition hover:border-white/25 hover:bg-white/15 hover:text-white focus:outline-none focus:ring-2 focus:ring-white/30"
-            title="Refresh from database"
-            aria-label="Refresh dashboard data"
-          >
-            <RefreshCw className="h-4 w-4" />
+        <div className="flex items-center space-x-3">
+          <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition text-slate-400 hover:text-slate-700" title="Refresh from database">
+            <RefreshCw className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      <div className="space-y-4">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <KpiCard label="Connected Subsystems" value={kpi ? `${[kpi.facilities.totalFacilities, kpi.visitors.totalVisitors, kpi.documents.totalDocuments, kpi.legal.totalCases, kpi.contracts.totalContracts].filter(v => v > 0).length}` : '0'} icon={Layers} color="text-blue-500" iconBackground="bg-blue-50" sub="Modules with data" onClick={() => navigate('/admin/integrations')} />
-          <KpiCard label="Active Users" value={onlineCount} icon={Users} color={onlineCount > 0 ? 'text-emerald-600' : 'text-slate-400'} iconBackground={onlineCount > 0 ? 'bg-emerald-50' : 'bg-slate-50'} sub={`${onlineCount} users online · Peak today: ${peakToday}`} onClick={() => navigate('/security')} pulse />
-          <KpiCard label="AI Services" value={`${metrics.totalDocuments} docs`} icon={Cpu} color={metrics.totalDocuments > 0 ? 'text-[#D02F34]' : 'text-slate-400'} iconBackground={metrics.totalDocuments > 0 ? 'bg-red-50' : 'bg-slate-50'} sub={`${metrics.totalContracts} contracts`} onClick={() => navigate('/admin/ai-services')} />
-          <KpiCard label="Backup Status" value={backupStatus} icon={Download} color={backupStatus === 'COMPLETED' ? 'text-emerald-600' : 'text-amber-500'} iconBackground={backupStatus === 'COMPLETED' ? 'bg-emerald-50' : 'bg-amber-50'} sub={`Last: ${lastBackupTime}`} onClick={() => navigate('/admin/backup')} />
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <KpiCard label="Security Alerts" value={metrics.activeAlertsCount} icon={Shield} color={metrics.activeAlertsCount > 0 ? 'text-rose-500' : 'text-emerald-600'} iconBackground={metrics.activeAlertsCount > 0 ? 'bg-rose-50' : 'bg-emerald-50'} sub="Open security alerts" onClick={() => navigate('/security')} />
-          <KpiCard label="Failed Logins" value={metrics.failedLoginAttempts} icon={Shield} color={metrics.failedLoginAttempts > 0 ? 'text-amber-500' : 'text-emerald-600'} iconBackground={metrics.failedLoginAttempts > 0 ? 'bg-amber-50' : 'bg-emerald-50'} sub="Failed authentication attempts" onClick={() => navigate('/security')} />
-          <KpiCard label="Notifications" value={unreadNotifs} icon={Bell} color={unreadNotifs > 0 ? 'text-rose-500' : 'text-violet-500'} iconBackground={unreadNotifs > 0 ? 'bg-rose-50' : 'bg-violet-50'} sub={`${notifications.length} total`} onClick={() => navigate('/admin/notifications')} />
-        </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {dashboardCards.map((card) => (
+          <KpiCard
+            key={card.label}
+            label={card.label}
+            value={card.value}
+            icon={card.icon}
+            color={card.color}
+            sub={card.sub}
+            pulse={card.pulse}
+            onClick={() => navigate(card.path)}
+          />
+        ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="card-stat p-5">
+      {superAdministrator && <OversightPanel />}
+
+      <div className={`grid grid-cols-1 gap-6 ${superAdministrator ? 'lg:grid-cols-2' : ''}`}>
+        {superAdministrator && <div className="card-stat p-5">
           <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center"><Shield className="w-4 h-4 mr-2 text-rose-500" /> Recent Security Events</h3>
           {logs.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-slate-400">
@@ -191,9 +202,9 @@ export const SysAdminDashboard: React.FC = () => {
               ))}
             </div>
           )}
-        </div>
+        </div>}
 
-        <div className="card-stat p-5">
+        {superAdministrator && <div className="card-stat p-5">
           <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center">
             <Activity className="w-4 h-4 mr-2 text-emerald-600" />
             Live User Activity
@@ -236,13 +247,13 @@ export const SysAdminDashboard: React.FC = () => {
               })}
             </div>
           )}
-        </div>
+        </div>}
       </div>
 
       {/* SUBSYSTEM HEALTH & AVAILABILITY MONITORING 2x2 GRID */}
       <SubsystemHealthGrid />
 
-      <div className="glass-panel p-5">
+      {superAdministrator && <div className="glass-panel p-5">
         <div className="flex items-center space-x-3 mb-5">
           <div className="p-2 rounded-xl bg-emerald-50 border border-emerald-200"><Database className="w-5 h-5 text-emerald-600" /></div>
           <div><h2 className="text-lg font-bold text-slate-900">Database Summary</h2><p className="text-xs text-slate-500">Live record counts from primary database</p></div>
@@ -281,12 +292,12 @@ export const SysAdminDashboard: React.FC = () => {
             <p className="text-lg font-bold text-slate-900 mt-1">{kpi?.legal.totalCases ?? 0}</p>
           </div>
         </div>
-      </div>
+      </div>}
 
       <div className="glass-panel p-3 flex items-center justify-between text-xs text-slate-400">
         <span className="flex items-center space-x-2">
           <Activity className="w-3.5 h-3.5 text-emerald-600" />
-          <span>All data sourced from live backend database</span>
+          <span>All data sourced from live backend database · No mock data used</span>
         </span>
         <button onClick={() => setRetry(r => r + 1)} className="flex items-center space-x-1 text-emerald-600 hover:underline">
           <RefreshCw className="w-3 h-3" /><span>Refresh</span>
