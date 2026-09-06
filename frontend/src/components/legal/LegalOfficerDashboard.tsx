@@ -12,17 +12,7 @@ import {
 } from 'recharts';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { safeFetchJson } from '../../api/client';
-
-const KpiCard: React.FC<{ label: string; value: string | number; icon: React.ElementType; color?: string; sub?: string; onClick?: () => void }> = ({ label, value, icon: Icon, color, sub, onClick }) => (
-  <button onClick={onClick} className="card-stat p-4 text-left w-full cursor-pointer hover:border-emerald-300 hover:shadow-md transition-all group">
-    <div className="flex items-center justify-between mb-2">
-      <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.08em] group-hover:text-emerald-700 transition-colors">{label}</p>
-      <Icon className={`w-4 h-4 ${color || 'text-slate-400'} group-hover:scale-110 transition-transform`} />
-    </div>
-    <p className="text-2xl font-bold text-slate-900">{value}</p>
-    {sub && <p className="text-[10px] text-slate-400 mt-0.5 font-mono">{sub}</p>}
-  </button>
-);
+import { DashboardMetricCard as KpiCard } from '../ui/DashboardPrimitives';
 
 const PIE_COLORS = ['#10B981', '#F59E0B', '#EF4444', '#6B7280', '#3B82F6', '#8B5CF6'];
 
@@ -81,7 +71,7 @@ export const LegalOfficerDashboard: React.FC = () => {
           <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
           <p className="text-sm text-slate-500">Loading legal dashboard...</p>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           {Array.from({ length: 4 }).map((_, i) => <div key={i} className="card-stat p-5 animate-pulse"><div className="h-3 w-20 bg-slate-200 rounded mb-3" /><div className="h-7 w-12 bg-slate-200 rounded" /></div>)}
         </div>
       </div>
@@ -111,10 +101,10 @@ export const LegalOfficerDashboard: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="glass-panel p-5 flex items-center justify-between">
+      <div className="dashboard-hero">
         <div>
           <h1 className="text-[34px] font-extrabold font-heading text-slate-900 leading-tight">Legal Officer</h1>
-          <p className="text-slate-500 text-sm mt-1">Contract &amp; Legal Case Oversight</p>
+          <p className="text-slate-500 text-sm mt-1">Legal Cases &amp; Administrative Legal Management</p>
         </div>
         <div className="flex items-center space-x-3">
           <div className="flex items-center px-3 py-1.5 rounded-lg border bg-emerald-50 border-emerald-200">
@@ -127,14 +117,14 @@ export const LegalOfficerDashboard: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <KpiCard label="Pending Reviews" value={data.pendingContractReviews ?? 0} icon={Clock} color={(data.pendingContractReviews ?? 0) > 0 ? 'text-amber-500' : 'text-slate-400'} sub="Contracts under review" onClick={() => navigate('/legal/contracts')} />
         <KpiCard label="Active Contracts" value={data.activeContracts ?? 0} icon={FileSignature} color="text-emerald-600" sub={`${data.totalContracts ?? 0} total`} onClick={() => navigate('/legal/contracts')} />
         <KpiCard label="Expiring Soon" value={data.expiringContracts ?? 0} icon={ShieldAlert} color={(data.expiringContracts ?? 0) > 0 ? 'text-rose-500' : 'text-slate-400'} sub="Within 30 days" onClick={() => navigate('/legal/contracts')} />
         <KpiCard label="Open Notices" value={data.openNotices ?? 0} icon={BellRing} color={(data.openNotices ?? 0) > 0 ? 'text-amber-500' : 'text-slate-400'} sub="Require attention" onClick={() => navigate('/legal/notices')} />
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <KpiCard label="Total Cases" value={data.totalCases ?? 0} icon={Gavel} color="text-blue-500" sub="All legal matters" onClick={() => navigate('/legal/cases')} />
         <KpiCard label="Open Cases" value={data.openCases ?? 0} icon={Gavel} color={(data.openCases ?? 0) > 0 ? 'text-amber-500' : 'text-slate-400'} sub="Not yet resolved" onClick={() => navigate('/legal/cases')} />
         <KpiCard label="High Priority" value={data.highPriorityCases ?? 0} icon={ShieldAlert} color={(data.highPriorityCases ?? 0) > 0 ? 'text-rose-500' : 'text-slate-400'} sub="High/critical open" onClick={() => navigate('/legal/cases')} />

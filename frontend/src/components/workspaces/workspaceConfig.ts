@@ -138,7 +138,7 @@ export const workspaceConfigs: WorkspaceConfig[] = [
     slug: 'compliance',
     portalLabel: 'Regulatory Compliance',
     headerLabel: 'Compliance Officer',
-    description: 'TNVS franchise compliance, facility permits, vendor controls, and EHS corrective actions.',
+    description: 'Records Retention & Compliance Monitoring',
     nav: [
       { section: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { section: 'franchise', label: 'Franchise & Regulatory Tracker', icon: Gavel },

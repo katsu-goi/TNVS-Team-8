@@ -48,7 +48,7 @@ const Badge: React.FC<{ text?: string; className: string }> = ({ text, className
 
 type ActionVariant = 'primary' | 'neutral' | 'danger';
 const actionClasses: Record<ActionVariant, string> = {
-  primary: 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700',
+  primary: 'bg-[#B5121B] text-white border-[#B5121B] hover:bg-[#98131B]',
   neutral: 'bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:bg-slate-50',
   danger: 'bg-white text-rose-600 border-rose-200 hover:bg-rose-50',
 };

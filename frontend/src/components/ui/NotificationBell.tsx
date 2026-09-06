@@ -184,7 +184,7 @@ export const NotificationBell: React.FC<{ className?: string }> = ({ className =
         aria-label={`Notifications${unread ? ` (${unread} unread)` : ''}`}
         aria-haspopup="true"
         aria-expanded={open}
-        className="relative p-2 rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-200"
+        className="relative p-2 rounded-xl text-slate-500 hover:text-[#B5121B] hover:bg-[#FDF0F1] transition-colors focus:outline-none focus:ring-2 focus:ring-[#B5121B]/20"
       >
         <Bell className="w-5 h-5" />
         {unread > 0 && (

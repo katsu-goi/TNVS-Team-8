@@ -3,8 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Database, Activity, Users, Shield,
   RefreshCw, AlertCircle, Cpu,
-  Download, Bell, Layers,
-  ChevronRight, Loader2,
+  Download, Bell, Layers, Loader2,
 } from 'lucide-react';
 import { supabaseMonitoringService } from '../../api/supabaseMonitoringService';
 import { kpiService } from '../../api/kpiService';
@@ -16,28 +15,7 @@ import { useLiveActivities } from './useLiveActivities';
 import { SubsystemHealthGrid } from './SubsystemHealthGrid';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import type { DashboardMetrics, SecurityLog, AdminNotification, BackupRecord, SystemKpi } from '../../types';
-
-const KpiCard: React.FC<{ label: string; value: string | number; icon: React.ElementType; color?: string; sub?: string; onClick?: () => void; pulse?: boolean }> = ({ label, value, icon: Icon, color, sub, onClick, pulse }) => (
-  <button onClick={onClick} className="card-stat p-4 text-left w-full cursor-pointer hover:border-emerald-300 hover:shadow-md transition-all group">
-    <div className="flex items-center justify-between mb-2">
-      <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.08em] group-hover:text-emerald-700 transition-colors flex items-center gap-1.5">
-        {label}
-        {pulse && (
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-            <span className="animate-pulse relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-          </span>
-        )}
-      </p>
-      <div className="flex items-center space-x-1">
-        <Icon className={`w-4 h-4 ${color || 'text-slate-400'} group-hover:scale-110 transition-transform`} />
-        <ChevronRight className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 -ml-0.5 transition-all" />
-      </div>
-    </div>
-    <p className="text-2xl font-bold text-slate-900">{value}</p>
-    {sub && <p className="text-[10px] text-slate-400 mt-0.5 font-mono">{sub}</p>}
-  </button>
-);
+import { DashboardHero, DashboardMetricCard } from '../ui/DashboardPrimitives';
 
 export const SysAdminDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -97,7 +75,7 @@ export const SysAdminDashboard: React.FC = () => {
           <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
           <p className="text-sm text-slate-500">Loading system data from database...</p>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           {Array.from({ length: 8 }).map((_, i) => <div key={i} className="card-stat p-5 animate-pulse"><div className="h-3 w-20 bg-slate-200 rounded mb-3" /><div className="h-7 w-12 bg-slate-200 rounded" /></div>)}
         </div>
       </div>
@@ -140,30 +118,25 @@ export const SysAdminDashboard: React.FC = () => {
       ]
     : [
         { label: 'Connected Subsystems', value: kpi ? `${[kpi.facilities.totalFacilities, kpi.visitors.totalVisitors, kpi.documents.totalDocuments, kpi.legal.totalCases, kpi.contracts.totalContracts].filter(v => v > 0).length}` : '0', icon: Layers, color: 'text-blue-500', sub: 'Modules with data', path: '/admin/integrations' },
-        { label: 'Active Sessions', value: metrics.activeSessions, icon: Users, color: metrics.activeSessions > 0 ? 'text-emerald-600' : 'text-slate-400', sub: `${onlineCount} users online · Peak today: ${peakToday}`, path: '/admin/sessions', pulse: true },
+        { label: 'Active Users', value: onlineCount, icon: Users, color: onlineCount > 0 ? 'text-emerald-600' : 'text-slate-400', sub: `${onlineCount} users online · Peak today: ${peakToday}`, path: '/admin/sessions', pulse: true },
         { label: 'AI Services', value: `${metrics.totalDocuments} docs`, icon: Cpu, color: metrics.totalDocuments > 0 ? 'text-emerald-600' : 'text-slate-400', sub: `${metrics.totalContracts} contracts`, path: '/admin/ai-services' },
         { label: 'Backup Status', value: backupStatus, icon: Download, color: backupStatus === 'COMPLETED' ? 'text-emerald-600' : 'text-amber-500', sub: `Last: ${lastBackupTime}`, path: '/admin/backup' },
-        { label: 'Platform Alerts', value: metrics.activeAlertsCount, icon: Shield, color: metrics.activeAlertsCount > 0 ? 'text-rose-500' : 'text-emerald-600', sub: 'Infrastructure alerts', path: '/admin/system-health' },
+        { label: 'Security Alerts', value: metrics.activeAlertsCount, icon: Shield, color: metrics.activeAlertsCount > 0 ? 'text-rose-500' : 'text-emerald-600', sub: 'Open security alerts', path: '/admin/system-health' },
+        { label: 'Failed Logins', value: metrics.failedLoginAttempts, icon: Shield, color: metrics.failedLoginAttempts > 0 ? 'text-amber-500' : 'text-emerald-600', sub: 'Failed authentication attempts', path: '/admin/account-lockouts' },
         { label: 'Notifications', value: unreadNotifs, icon: Bell, color: unreadNotifs > 0 ? 'text-rose-500' : 'text-slate-400', sub: `${notifications.length} total`, path: '/admin/notifications' },
       ];
 
   return (
     <div className="space-y-6">
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h1 className="text-[34px] font-extrabold font-heading text-slate-900 leading-tight">{dashboardTitle}</h1>
-          <p className="text-slate-500 text-sm mt-1">{dashboardSubtitle}</p>
-        </div>
-        <div className="flex items-center space-x-3">
+      <DashboardHero title={dashboardTitle} subtitle={dashboardSubtitle} actions={
           <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition text-slate-400 hover:text-slate-700" title="Refresh from database">
             <RefreshCw className="w-4 h-4" />
           </button>
-        </div>
-      </div>
+      } />
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {dashboardCards.map((card) => (
-          <KpiCard
+          <DashboardMetricCard
             key={card.label}
             label={card.label}
             value={card.value}
@@ -258,7 +231,7 @@ export const SysAdminDashboard: React.FC = () => {
           <div className="p-2 rounded-xl bg-emerald-50 border border-emerald-200"><Database className="w-5 h-5 text-emerald-600" /></div>
           <div><h2 className="text-lg font-bold text-slate-900">Database Summary</h2><p className="text-xs text-slate-500">Live record counts from primary database</p></div>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <p className="text-xs text-slate-500">Documents</p>
             <p className="text-lg font-bold text-slate-900 mt-1">{metrics.totalDocuments}</p>

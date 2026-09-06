@@ -7,13 +7,27 @@
 @tailwind utilities;
 
 :root {
-  --hirna-red: #b81820;
-  --hirna-red-dark: #a9121a;
-  --hirna-red-deep: #941018;
-  --hirna-yellow: #ffc83d;
-  --hirna-yellow-strong: #ffb927;
+  --hirna-red: #b5121b;
+  --hirna-red-strong: #c8102e;
+  --hirna-red-dark: #98131b;
+  --hirna-red-deep: #7f0e16;
+  --hirna-yellow: #ffbf2f;
+  --hirna-yellow-strong: #ffb51b;
   --hirna-active-text: #78151a;
   --hirna-sidebar-text: #ffffff;
+  --hirna-page: #fff5f5;
+  --hirna-section: #faedee;
+  --hirna-surface: #fffdfd;
+  --hirna-surface-hover: #fff7f7;
+  --hirna-border: #f1dada;
+  --hirna-header: #1d2027;
+  --hirna-text: #171a21;
+  --hirna-text-muted: #64748b;
+  --hirna-success: #10b981;
+  --hirna-warning: #f59e0b;
+  --hirna-danger: #ef4444;
+  --hirna-info: #3b82f6;
+  --hirna-purple: #8b5cf6;
 }
 
 /* ── Theme-aware Leaflet World Map Container ──────────────────────────────── */
@@ -289,47 +303,49 @@ section {
 /* Standard base & utility styles */
 @layer base {
   body {
-    background-color: #F8FAFC;
-    color: #0F172A;
+    background-color: var(--hirna-page);
+    color: var(--hirna-text);
     @apply font-sans antialiased;
   }
 }
 
 /* ── Card / Panel Styles (Light Mode Main Content) ──────────── */
 .glass-panel {
-  background: #FFFFFF;
-  border: 1px solid #E2E8F0;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-  border-radius: 1rem;
+  background: var(--hirna-surface);
+  border: 1px solid var(--hirna-border);
+  box-shadow: 0 2px 8px rgba(101, 24, 30, 0.05);
+  border-radius: 0.875rem;
   transition: box-shadow 200ms ease, border-color 200ms ease;
 }
 .glass-panel:hover {
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
+  box-shadow: 0 6px 16px rgba(101, 24, 30, 0.07);
 }
 
 .glass-card {
-  background: #FFFFFF;
-  border: 1px solid #E2E8F0;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-  border-radius: 1rem;
+  background: var(--hirna-surface);
+  border: 1px solid var(--hirna-border);
+  box-shadow: 0 2px 8px rgba(101, 24, 30, 0.05);
+  border-radius: 0.875rem;
   transition: all 200ms ease, box-shadow 200ms ease, border-color 200ms ease;
 }
 .glass-card:hover {
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
-  border-color: #D02F34;
+  background: var(--hirna-surface-hover);
+  box-shadow: 0 6px 16px rgba(101, 24, 30, 0.07);
+  border-color: #e8bfc2;
 }
 
 /* Card solid variant for stat cards */
 .card-stat {
-  background: #FFFFFF;
-  border: 1px solid #E2E8F0;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-  border-radius: 1rem;
+  background: var(--hirna-surface);
+  border: 1px solid var(--hirna-border);
+  box-shadow: 0 2px 8px rgba(101, 24, 30, 0.05);
+  border-radius: 0.875rem;
   transition: box-shadow 200ms ease, border-color 200ms ease;
 }
 .card-stat:hover {
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
-  border-color: #D02F34;
+  background: var(--hirna-surface-hover);
+  box-shadow: 0 6px 16px rgba(101, 24, 30, 0.07);
+  border-color: #e8bfc2;
 }
 
 /* Shared Hirna visual system used by every authenticated sidebar. */
@@ -337,7 +353,7 @@ section {
   background: linear-gradient(
     180deg,
     var(--hirna-red) 0%,
-    #b4141c 42%,
+    var(--hirna-red-strong) 42%,
     var(--hirna-red-deep) 100%
   );
   color: var(--hirna-sidebar-text);
@@ -348,6 +364,192 @@ section {
   background: rgba(126, 10, 17, 0.28);
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 8px 20px rgba(74, 0, 5, 0.12);
+}
+
+.hirna-app,
+.hirna-main {
+  background: var(--hirna-page);
+}
+
+.hirna-topbar {
+  background: rgba(255, 253, 253, 0.94);
+  border-color: var(--hirna-border);
+  box-shadow: 0 1px 0 rgba(101, 24, 30, 0.02);
+  backdrop-filter: blur(14px);
+}
+
+.hirna-search {
+  background: var(--hirna-surface);
+  border-color: #dfc9cb;
+}
+
+.hirna-content {
+  width: 100%;
+  max-width: 100rem;
+  margin-inline: auto;
+}
+
+.dashboard-hero {
+  display: flex;
+  flex-wrap: wrap;
+  min-height: 7.25rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.5rem;
+  color: #fff;
+  background: linear-gradient(135deg, var(--hirna-header), #17191f);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 1rem;
+  box-shadow: 0 8px 20px rgba(29, 32, 39, 0.1);
+}
+
+.dashboard-hero h1,
+.dashboard-hero h2 {
+  color: #fff !important;
+}
+
+.dashboard-hero p {
+  color: #cbd5e1 !important;
+}
+
+.dashboard-hero .hero-eyebrow {
+  color: var(--hirna-yellow) !important;
+}
+
+.dashboard-hero button {
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.dashboard-hero button:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.hirna-app .glass-panel:has(> div > h1) {
+  flex-wrap: wrap;
+  color: #fff;
+  background: linear-gradient(135deg, var(--hirna-header), #17191f);
+  border-color: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 8px 20px rgba(29, 32, 39, 0.1);
+}
+
+.hirna-app .glass-panel:has(> div > h1) h1 {
+  color: #fff;
+}
+
+.hirna-app .glass-panel:has(> div > h1) p {
+  color: #cbd5e1;
+}
+
+.hirna-app .glass-panel:has(> div > h1) > div:first-child > div:first-child {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.dashboard-metric-card {
+  min-height: 9.25rem;
+  padding: 1.5rem;
+}
+
+.dashboard-metric-icon {
+  display: flex;
+  width: 2.5rem;
+  height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--hirna-border);
+  border-radius: 0.75rem;
+  background: var(--hirna-section);
+}
+
+.workspace-metric-card {
+  background: var(--hirna-surface) !important;
+  border-color: var(--hirna-border) !important;
+}
+
+/* Shared secondary-page surfaces. Existing business components retain their
+   markup and behavior while inheriting the Hirna surface language. */
+.hirna-app :where(.bg-white) {
+  background-color: var(--hirna-surface);
+}
+
+.hirna-app :where(.bg-slate-50) {
+  background-color: var(--hirna-surface-hover);
+}
+
+.hirna-app :where(.border-slate-100, .border-slate-200, .border-slate-300) {
+  border-color: var(--hirna-border);
+}
+
+.hirna-app :where(input:not([type='checkbox']):not([type='radio']), select, textarea) {
+  background-color: var(--hirna-surface);
+  border-color: #dfc9cb;
+  border-radius: 0.75rem;
+}
+
+.hirna-app :where(input:not([type='checkbox']):not([type='radio']), select, textarea):focus {
+  border-color: var(--hirna-red);
+  box-shadow: 0 0 0 3px rgba(181, 18, 27, 0.12);
+}
+
+.hirna-app :where(table) {
+  width: 100%;
+  background: var(--hirna-surface);
+}
+
+.hirna-app :where(.overflow-hidden:has(> table)) {
+  overflow-x: auto;
+}
+
+.hirna-app :where(thead) {
+  background: var(--hirna-section);
+}
+
+.hirna-app :where(th) {
+  color: #475569;
+}
+
+.hirna-app :where(tbody tr) {
+  border-color: var(--hirna-border);
+}
+
+.hirna-app :where(tbody tr:hover) {
+  background: var(--hirna-surface-hover);
+}
+
+.hirna-app :where([role='dialog']) {
+  background-color: var(--hirna-surface);
+  border-color: var(--hirna-border);
+  border-radius: 1rem;
+}
+
+@media (max-width: 639px) {
+  .dashboard-hero {
+    min-height: auto;
+    align-items: flex-start;
+    padding: 1.25rem;
+  }
+
+  .dashboard-hero h1 {
+    font-size: 1.65rem !important;
+  }
+
+  .dashboard-metric-card {
+    min-height: 8rem;
+    padding: 1.125rem;
+  }
+
+  .hirna-app .glass-panel:has(> div > h1) {
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  .hirna-app table {
+    min-width: 40rem;
+  }
 }
 
 .hirna-sidebar-logo {

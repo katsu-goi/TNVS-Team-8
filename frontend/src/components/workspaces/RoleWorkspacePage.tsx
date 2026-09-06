@@ -152,11 +152,12 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
 
   return (
     <div className="space-y-6">
-      <section className="border-b border-slate-200 pb-5">
+      <section className="dashboard-hero">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-[#D02F34]">{config.portalLabel}</p>
-            <h1 className="mt-1 text-2xl font-bold text-slate-950">{item.label}</h1>
+            <p className="hero-eyebrow text-xs font-bold uppercase tracking-wider text-[#FFBF2F]">{config.portalLabel}</p>
+            <h1 className="mt-1 text-3xl font-bold text-slate-950">{item.label}</h1>
+            <p className="mt-1 text-sm text-slate-400">{config.description}</p>
           </div>
           <div className="flex gap-2">
             {config.slug === 'privacy' && section === 'retention' && (
@@ -176,7 +177,7 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
       {payload?.metrics?.length ? (
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {payload.metrics.map((metric) => (
-            <div key={metric.label} className={`rounded-lg border p-5 ${toneClass[metric.tone || 'info']}`}>
+            <div key={metric.label} className={`workspace-metric-card card-stat p-5 ${toneClass[metric.tone || 'info']}`}>
               <p className="text-xs font-semibold">{metric.label}</p>
               <p className="mt-3 text-3xl font-bold text-slate-950">{metric.value}{metric.suffix}</p>
             </div>
@@ -191,7 +192,7 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
           Reserved for future profile and system settings.
         </section>
       ) : (
-        <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_2px_8px_rgba(101,24,30,0.05)]">
           <div className="border-b border-slate-200 px-5 py-4">
             <h2 className="text-sm font-bold text-slate-900">Live Workspace Records</h2>
             <p className="mt-1 text-xs text-slate-500">Supabase cloud data · updated {payload?.generatedAt ? new Date(payload.generatedAt).toLocaleString() : ''}</p>
@@ -203,8 +204,8 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
               {payload.rows.map((row) => {
                 const status = rowStatus(row);
                 return (
-                  <article key={row.id || rowTitle(row)} className="p-5">
-                    <div className="flex items-start justify-between gap-5">
+                  <article key={row.id || rowTitle(row)} className="p-5 transition-colors hover:bg-[#FFF7F7]">
+                    <div className="flex flex-col items-start justify-between gap-5 lg:flex-row">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="font-semibold text-slate-900">{rowTitle(row)}</h3>

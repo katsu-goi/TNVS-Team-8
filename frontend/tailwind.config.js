@@ -12,12 +12,12 @@ export default {
       },
       colors: {
         brand: {
-          50: '#FCE8E9',   // Light Red
+          50: '#FFF5F5',   // Warm page background
           100: '#FCD7D9',
           200: '#F8B1B4',
-          500: '#D02F34',  // Hirna Red
-          600: '#B2282C',
-          700: '#A9252A',  // Hirna Dark Red
+          500: '#B5121B',  // Hirna Red
+          600: '#C8102E',
+          700: '#98131B',  // Hirna Dark Red
           900: '#7B1B1E',
           950: '#4D1113',
         },
@@ -34,12 +34,12 @@ export default {
           active: '#1e293b',
           overlay: 'rgba(0, 0, 0, 0.6)',
           code: '#0F172A',
-          page: '#F8FAFC',
-          'card-light': '#FFFFFF',
-          'card-light-hover': '#FAFBFC',
-          'input-light': '#FFFFFF',
+          page: '#FFF5F5',
+          'card-light': '#FFFDFD',
+          'card-light-hover': '#FFF7F7',
+          'input-light': '#FFFDFD',
           'header-light': 'rgba(255, 255, 255, 0.85)',
-          'hover-light': '#F1F5F9',
+          'hover-light': '#FDF0F1',
         },
         content: {
           primary: '#1F2937', // Default text color updated as requested
@@ -80,10 +80,10 @@ export default {
           bg: 'rgba(255, 198, 41, 0.1)',
         },
         hirna: {
-          red: '#D02F34',
-          'dark-red': '#A9252A',
-          yellow: '#FFC629',
-          'light-red': '#FCE8E9',
+          red: '#B5121B',
+          'dark-red': '#98131B',
+          yellow: '#FFBF2F',
+          'light-red': '#FFF5F5',
           'light-yellow': '#FFF6D8',
         }
       },
