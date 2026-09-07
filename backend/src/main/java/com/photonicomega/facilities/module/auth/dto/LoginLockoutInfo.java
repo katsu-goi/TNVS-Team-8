@@ -1,25 +1,26 @@
 package com.photonicomega.facilities.module.auth.dto;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
-import lombok.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
-import java.time.Instant;
+import java.time.LocalDateTime;
 
-/** Public failures expose only retry timing; counters remain server-side. */
+/**
+ * Structured lockout state returned to the client on a failed login. The
+ * counters are authoritative server-side state; the client only uses the
+ * values to render attempt progress and the progressive countdown.
+ */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class LoginLockoutInfo {
-    @JsonIgnore
     private int failedAttempts;
-    @JsonIgnore
-    private boolean accountExists;
-    @JsonIgnore
-    private boolean counted;
-    @JsonIgnore
-    private String identifierReference;
-
+    private int maxAttempts;
+    private int remainingAttempts;
     private long lockSecondsRemaining;
-    private Instant retryAt;
+    private boolean permanentlyLocked;
+    private LocalDateTime lockedUntil;
 }

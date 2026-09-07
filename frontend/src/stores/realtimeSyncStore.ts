@@ -53,9 +53,12 @@ export const useRealtimeSyncStore = create<RealtimeSyncState>((set, get) => ({
         .on(
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'realtime_events' },
-          () => {
+          (payload) => {
+            const sourceTable = (payload.new as { source_table?: string } | null)?.source_table;
+            const isBackupChange = sourceTable === 'backup_records' || sourceTable === 'backup_schedules';
             set((state) => ({
               revision: state.revision + 1,
+              backupRevision: isBackupChange ? state.backupRevision + 1 : state.backupRevision,
               lastSyncAt: Date.now(),
               connected: true,
             }));

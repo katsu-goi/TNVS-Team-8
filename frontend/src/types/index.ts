@@ -127,10 +127,16 @@ export interface BackupRecord {
   status: string;
   startedAt: string;
   completedAt?: string;
+  createdAt?: string;
   fileSize?: number;
   filePath?: string;
+  fileUrl?: string;
+  checksum?: string;
   integrityCheck?: string;
   triggeredBy?: string;
+  createdBy?: string;
+  moduleScope?: string[];
+  exportFormat?: string;
   notes?: string;
 }
 

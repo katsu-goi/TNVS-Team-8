@@ -13,6 +13,7 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
@@ -66,6 +67,29 @@ public class BackupService {
 
         backupExecutor.submit(() -> runBackup(saved.getId()));
         return saved;
+    }
+
+    public Path locateBackupFile(BackupRecord record) throws IOException {
+        if (record == null || record.getFilePath() == null || record.getFilePath().isBlank()) {
+            throw new IOException("Backup archive is not available yet.");
+        }
+
+        Path backupRoot;
+        Path requested;
+        try {
+            backupRoot = Path.of(storagePath).toAbsolutePath().normalize();
+            requested = Path.of(record.getFilePath()).toAbsolutePath().normalize();
+        } catch (InvalidPathException ex) {
+            throw new IOException("Backup archive path is invalid.", ex);
+        }
+
+        if (!requested.startsWith(backupRoot)) {
+            throw new IOException("Backup archive path is outside the configured backup directory.");
+        }
+        if (!Files.isRegularFile(requested)) {
+            throw new IOException("Backup archive is no longer available on the backup server.");
+        }
+        return requested;
     }
 
     private void runBackup(java.util.UUID id) {

@@ -20,6 +20,102 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+const BACKUP_BUCKET = "backup-archives";
+const BACKUP_ROW_LIMIT = 5000;
+const BACKUP_TABLES: Record<string, string[]> = {
+  audit_logs: ["audit_logs", "admin_audit_logs"],
+  facilities: [
+    "facilities",
+    "rooms",
+    "equipment",
+    "facility_amenities",
+    "facility_permits",
+    "maintenance_schedules",
+    "facility_data_logs",
+    "hub_inventory_assets",
+    "facility_reorder_requests",
+  ],
+  compliance_permits: [
+    "facility_compliance_documents",
+    "retention_policies",
+    "compliance_alerts",
+    "compliance_incidents",
+    "management_signoffs",
+    "disposal_requests",
+  ],
+  security_events: [
+    "security_logs",
+    "security_alerts",
+    "ip_threats",
+    "blocked_ips",
+    "active_sessions",
+    "security_role_incidents",
+    "privacy_breach_incidents",
+    "login_history",
+    "api_request_logs",
+  ],
+};
+const FULL_BACKUP_TABLES = [
+  ...new Set([
+    ...BACKUP_TABLES.audit_logs,
+    ...BACKUP_TABLES.facilities,
+    ...BACKUP_TABLES.compliance_permits,
+    ...BACKUP_TABLES.security_events,
+    "visitors",
+    "documents",
+    "contracts",
+    "legal_cases",
+    "reservations",
+    "admin_notifications",
+    "integration_status",
+    "system_configurations",
+    "employee_notifications",
+    "employee_requests",
+    "legal_notices",
+    "vendors",
+    "vendor_obligations",
+    "procurement_notices",
+    "folders",
+    "categories",
+    "tags",
+    "document_tags",
+    "reservation_approvals",
+    "retention_disposal_queue",
+    "visitor_verifications",
+    "visitor_watchlist",
+    "hr_assistance_requests",
+    "user_activity_events",
+    "online_users",
+    "oversight_sessions",
+    "department_scope_assignments",
+    "data_subject_requests",
+    "cctv_export_requests",
+    "governance_settings",
+    "department_approvals",
+    "users",
+    "roles",
+    "permissions",
+    "user_roles",
+    "role_permissions",
+    "role_hierarchy",
+    "role_conflicts",
+    "backup_records",
+    "backup_schedules",
+  ]),
+];
+
+async function ensureBackupBucket() {
+  const { data, error } = await db.storage.getBucket(BACKUP_BUCKET);
+  if (data) return;
+  if (error && Number((error as { statusCode?: unknown }).statusCode) !== 404) {
+    throw new Error(`backup storage lookup failed: ${error.message}`);
+  }
+  const { error: createError } = await db.storage.createBucket(BACKUP_BUCKET, { public: false });
+  if (createError && !createError.message.toLowerCase().includes("already exists")) {
+    throw new Error(`backup storage bucket create failed: ${createError.message}`);
+  }
+}
+
 function notFound(message: string) {
   return jsonResponse(fail(message, "NOT_FOUND"), 404);
 }
@@ -229,7 +325,7 @@ async function assignedRolesForUser(userId: string): Promise<string[]> {
 async function oversightTarget(userId: string): Promise<OversightTargetRow | null> {
   const { data, error } = await db
     .from("users")
-    .select("id, first_name, last_name, email, status, is_deleted")
+    .select("id, first_name, last_name, email, department, status, is_deleted")
     .eq("id", userId)
     .maybeSingle();
   if (error) throw new Error(`oversight target lookup failed: ${error.message}`);
@@ -343,18 +439,24 @@ async function handleListOversightTargets(ctx: AuthContext | null) {
   if (error) throw new Error(`oversight targets lookup failed: ${error.message}`);
 
   const targetIds = (data ?? []).map((row) => (row as OversightTargetRow).id);
-  const [onlineResult, activityResult] = await Promise.all([
-    db.from("online_users").select("user_id, last_activity").in("user_id", targetIds),
-    db.from("user_activity_events").select("user_id, action, event_type, created_at").in("user_id", targetIds).order("created_at", { ascending: false }).limit(500),
-  ]);
-  if (onlineResult.error) throw new Error(`online users lookup failed: ${onlineResult.error.message}`);
-  if (activityResult.error) throw new Error(`user activity lookup failed: ${activityResult.error.message}`);
+  const [onlineResult, activityResult] = targetIds.length
+    ? await Promise.all([
+        db.from("online_users").select("user_id, last_activity").in("user_id", targetIds),
+        db.from("user_activity_events").select("user_id, action, event_type, created_at").in("user_id", targetIds).order("created_at", { ascending: false }).limit(500),
+      ])
+    : [{ data: [], error: null }, { data: [], error: null }];
+  if (onlineResult.error) {
+    console.warn(`Oversight online presence unavailable; treating all targets as offline: ${onlineResult.error.message}`);
+  }
+  if (activityResult.error) {
+    console.warn(`Oversight activity telemetry unavailable; continuing without activity details: ${activityResult.error.message}`);
+  }
   const onlineByUser = new Map<string, string>();
-  for (const row of onlineResult.data ?? []) {
+  for (const row of onlineResult.error ? [] : onlineResult.data ?? []) {
     if (row.user_id && row.last_activity) onlineByUser.set(String(row.user_id), String(row.last_activity));
   }
   const latestActivityByUser = new Map<string, { action: string; occurredAt: string }>();
-  for (const row of activityResult.data ?? []) {
+  for (const row of activityResult.error ? [] : activityResult.data ?? []) {
     const userId = row.user_id ? String(row.user_id) : "";
     if (userId && !latestActivityByUser.has(userId)) {
       latestActivityByUser.set(userId, {
@@ -853,28 +955,41 @@ async function handleMarkNotifRead(ctx: AuthContext | null, _req: Request, _body
 
 type BackupRow = {
   id: string;
+  created_at: string;
   backup_type: string;
   status: string;
   started_at: string;
   completed_at: string | null;
   file_size: number | null;
   file_path: string | null;
+  file_url: string | null;
+  checksum: string | null;
   integrity_check: string | null;
   triggered_by: string | null;
+  created_by: string | null;
+  created_by_email: string | null;
+  module_scope: string[] | null;
+  export_format: string | null;
   notes: string | null;
 };
 
 function backupDto(b: BackupRow): Record<string, unknown> {
   return {
     id: b.id,
+    createdAt: b.created_at,
     backupType: b.backup_type,
     status: b.status,
     startedAt: b.started_at,
     completedAt: b.completed_at,
     fileSize: b.file_size,
     filePath: b.file_path,
+    fileUrl: b.file_url,
+    checksum: b.checksum,
     integrityCheck: b.integrity_check,
     triggeredBy: b.triggered_by,
+    createdBy: b.created_by_email ?? b.created_by,
+    moduleScope: b.module_scope ?? [],
+    exportFormat: b.export_format,
     notes: b.notes,
   };
 }
@@ -892,31 +1007,297 @@ async function handleLatestBackup(_ctx: AuthContext | null, _req: Request, _body
   return jsonResponse(ok(backupDto(data[0] as unknown as BackupRow)), 200);
 }
 
-async function handleCreateBackup(_ctx: AuthContext | null, _req: Request, body: unknown, _p: RouteParams) {
+const ALLOWED_BACKUP_MODULES = new Set([
+  "audit_logs",
+  "facilities",
+  "compliance_permits",
+  "security_events",
+]);
+
+type BackupTableRows = { table: string; rows: Record<string, unknown>[] };
+type LoadedBackupTables = { tables: BackupTableRows[]; skippedTables: string[] };
+
+function tablesForBackup(backupType: string, modules: string[] | null | undefined): string[] {
+  if (backupType === "GRANULAR_EXPORT") {
+    const selectedTables = (modules ?? []).flatMap((module) => BACKUP_TABLES[module] ?? []);
+    // Older granular records were created before module_scope was persisted.
+    // Preserve their downloadability by exporting the available granular scope.
+    return [...new Set(selectedTables.length > 0
+      ? selectedTables
+      : Object.values(BACKUP_TABLES).flat())];
+  }
+  return FULL_BACKUP_TABLES;
+}
+
+async function loadBackupTables(tableNames: string[]): Promise<LoadedBackupTables> {
+  const result: BackupTableRows[] = [];
+  const skippedTables: string[] = [];
+  const batchSize = 8;
+
+  for (let offset = 0; offset < tableNames.length; offset += batchSize) {
+    const batch = tableNames.slice(offset, offset + batchSize);
+    const settled = await Promise.allSettled(batch.map(async (table) => {
+      const { data, error } = await db.from(table).select("*").limit(BACKUP_ROW_LIMIT);
+      if (error) throw new Error(error.message);
+      return { table, rows: (data ?? []) as Record<string, unknown>[] };
+    }));
+
+    settled.forEach((entry, index) => {
+      if (entry.status === "fulfilled") {
+        result.push(entry.value);
+      } else {
+        const table = batch[index];
+        skippedTables.push(table);
+        console.warn(`Skipping unavailable backup table ${table}: ${entry.reason instanceof Error ? entry.reason.message : String(entry.reason)}`);
+      }
+    });
+  }
+
+  if (result.length === 0) throw new Error("No backup tables were available to export.");
+  return { tables: result, skippedTables };
+}
+
+function quoteSqlIdentifier(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function quoteSqlValue(value: unknown): string {
+  if (value === null || value === undefined) return "NULL";
+  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  const text = typeof value === "object" ? JSON.stringify(value) : String(value);
+  return `'${(text ?? "").replace(/'/g, "''")}'`;
+}
+
+function csvValue(value: unknown): string {
+  const text = value === null || value === undefined
+    ? ""
+    : typeof value === "object" ? JSON.stringify(value) : String(value);
+  return `"${(text ?? "").replace(/"/g, '""')}"`;
+}
+
+function createSqlArtifact(tables: BackupTableRows[]): string {
+  const lines = [
+    "-- Photonic Omega logical backup generated by the Backup & Disaster Recovery console",
+    `-- Generated at: ${nowIso()}`,
+    "-- Restore this file after applying the current Supabase schema migrations.",
+    "",
+  ];
+  for (const { table, rows } of tables) {
+    lines.push(`-- TABLE: public.${table}`);
+    if (rows.length === 0) {
+      lines.push("-- No rows captured.", "");
+      continue;
+    }
+    for (const row of rows) {
+      const columns = Object.keys(row);
+      lines.push(
+        `INSERT INTO public.${quoteSqlIdentifier(table)} (${columns.map(quoteSqlIdentifier).join(", ")}) VALUES (${columns.map((column) => quoteSqlValue(row[column])).join(", ")}) ON CONFLICT DO NOTHING;`,
+      );
+    }
+    lines.push("");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function createCsvArtifact(tables: BackupTableRows[]): string {
+  const lines = ["table,record"];
+  for (const { table, rows } of tables) {
+    for (const row of rows) lines.push(`${csvValue(table)},${csvValue(row)}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function createJsonArtifact(tables: BackupTableRows[]): string {
+  const payload = Object.fromEntries(tables.map(({ table, rows }) => [table, rows]));
+  return `${JSON.stringify({ generatedAt: nowIso(), tables: payload }, null, 2)}\n`;
+}
+
+async function materializeBackup(id: string, existing?: BackupRow): Promise<BackupRow> {
+  const record = existing ?? (await db.from("backup_records").select("*").eq("id", id).single()).data as BackupRow;
+  if (!record) throw new Error("Backup record not found");
+
+  try {
+    await ensureBackupBucket();
+    await db.from("backup_records").update({ status: "RUNNING", notes: "Generating backup archive..." }).eq("id", id);
+
+    const loaded = await loadBackupTables(tablesForBackup(record.backup_type, record.module_scope));
+    const tables = loaded.tables;
+    const legacyGranularFallback = record.backup_type === "GRANULAR_EXPORT" && (record.module_scope ?? []).length === 0;
+    const skippedNote = loaded.skippedTables.length > 0
+      ? ` Skipped unavailable tables: ${loaded.skippedTables.join(", ")}.`
+      : "";
+    const legacyNote = legacyGranularFallback
+      ? " Legacy granular record had no saved module scope; available granular tables were included."
+      : "";
+    const isGranular = record.backup_type === "GRANULAR_EXPORT";
+    const format = isGranular && record.export_format === "JSON" ? "JSON" : isGranular ? "CSV" : "SQL";
+    const content = format === "JSON" ? createJsonArtifact(tables) : format === "CSV" ? createCsvArtifact(tables) : createSqlArtifact(tables);
+    const bytes = new TextEncoder().encode(content);
+    const digestBytes = await crypto.subtle.digest("SHA-256", bytes);
+    const checksum = Array.from(new Uint8Array(digestBytes)).map((value) => value.toString(16).padStart(2, "0")).join("");
+    const extension = format.toLowerCase();
+    const objectPath = `backups/${id}/${record.backup_type.toLowerCase()}-${id}.${extension}`;
+    const contentType = format === "JSON" ? "application/json" : format === "CSV" ? "text/csv" : "application/sql";
+    const { error: uploadError } = await db.storage.from(BACKUP_BUCKET).upload(objectPath, bytes, {
+      contentType,
+      upsert: true,
+    });
+    if (uploadError) throw new Error(`backup archive upload failed: ${uploadError.message}`);
+
+    const { data: signed, error: signedError } = await db.storage.from(BACKUP_BUCKET).createSignedUrl(objectPath, 900);
+    if (signedError || !signed?.signedUrl) throw new Error(`backup signed URL creation failed: ${signedError?.message ?? "no URL returned"}`);
+
+    const { data: saved, error: saveError } = await db.from("backup_records").update({
+      status: "COMPLETED",
+      completed_at: nowIso(),
+      file_size: bytes.byteLength,
+      file_path: objectPath,
+      file_url: signed.signedUrl,
+      checksum,
+      integrity_check: "PASSED",
+      notes: `Backup completed. ${bytes.byteLength} bytes across ${tables.length} table(s).${legacyNote}${skippedNote}`,
+    }).eq("id", id).select("*").single();
+    if (saveError) throw new Error(`backup metadata update failed: ${saveError.message}`);
+    return saved as unknown as BackupRow;
+  } catch (error) {
+    await db.from("backup_records").update({
+      status: "FAILED",
+      completed_at: nowIso(),
+      integrity_check: "FAILED",
+      notes: `Backup failed: ${error instanceof Error ? error.message : "unknown error"}`,
+    }).eq("id", id);
+    throw error;
+  }
+}
+
+async function handleCreateBackup(ctx: AuthContext | null, _req: Request, body: unknown, _p: RouteParams) {
   const b = (body ?? {}) as Record<string, unknown>;
-  const backupType = typeof b.backupType === "string" && b.backupType.trim()
+  const requestedType = typeof b.backupType === "string" && b.backupType.trim()
     ? b.backupType.toUpperCase()
     : "FULL";
-  const triggeredBy = typeof b.triggeredBy === "string" && b.triggeredBy.trim()
-    ? b.triggeredBy
-    : "system";
+  const granular = requestedType === "GRANULAR" || requestedType === "GRANULAR_EXPORT";
+  const modules = Array.isArray(b.modules)
+    ? b.modules.filter((value): value is string => typeof value === "string" && ALLOWED_BACKUP_MODULES.has(value))
+    : [];
+  const format = b.format === "JSON" ? "JSON" : "CSV";
+
+  if (granular && modules.length === 0) {
+    return jsonResponse(fail("At least one export module is required.", "VALIDATION_ERROR"), 400);
+  }
 
   const now = nowIso();
   const { data, error } = await db
     .from("backup_records")
     .insert({
-      backup_type: backupType,
-      status: "COMPLETED",
+      backup_type: granular ? "GRANULAR_EXPORT" : "FULL_SQL",
+      status: "QUEUED",
       started_at: now,
-      completed_at: now,
-      triggered_by: triggeredBy,
-      integrity_check: "PASSED",
-      notes: "Backup completed via Supabase-managed database.",
+      triggered_by: ctx!.email,
+      created_by: ctx!.userId,
+      created_by_email: ctx!.email,
+      module_scope: modules,
+      export_format: granular ? format : null,
+      notes: "Backup request queued for the configured backup worker.",
     })
     .select("*")
     .single();
   if (error) throw new Error(`backup insert failed: ${error.message}`);
-  return jsonResponse(ok(backupDto(data as unknown as BackupRow)), 200);
+  const completed = await materializeBackup(String((data as { id: string }).id), data as unknown as BackupRow);
+  return jsonResponse(ok(backupDto(completed)), 200);
+}
+
+async function handleGetBackupSchedule(_ctx: AuthContext | null, _req: Request, _body: unknown, _p: RouteParams) {
+  const { data, error } = await db
+    .from("backup_schedules")
+    .select("*")
+    .eq("schedule_key", "BACKUP_DAILY")
+    .maybeSingle();
+  if (error) throw new Error(`backup schedule load failed: ${error.message}`);
+  if (!data) {
+    return jsonResponse(ok({
+      scheduleKey: "BACKUP_DAILY",
+      cronExpression: "0 0 * * *",
+      enabled: false,
+    }), 200);
+  }
+  return jsonResponse(ok({
+    id: data.id,
+    scheduleKey: data.schedule_key,
+    cronExpression: data.cron_expression,
+    enabled: data.enabled,
+    updatedAt: data.updated_at,
+    updatedBy: data.updated_by,
+  }), 200);
+}
+
+async function handleSaveBackupSchedule(ctx: AuthContext | null, _req: Request, body: unknown, _p: RouteParams) {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const cronExpression = b.cronExpression === "0 0 * * 0" ? "0 0 * * 0" : "0 0 * * *";
+  const enabled = b.enabled === true;
+  const { data, error } = await db
+    .from("backup_schedules")
+    .upsert({
+      schedule_key: "BACKUP_DAILY",
+      cron_expression: cronExpression,
+      enabled,
+      updated_by: ctx!.userId,
+      updated_at: nowIso(),
+    }, { onConflict: "schedule_key" })
+    .select("*")
+    .single();
+  if (error) throw new Error(`backup schedule save failed: ${error.message}`);
+  return jsonResponse(ok({
+    id: data.id,
+    scheduleKey: data.schedule_key,
+    cronExpression: data.cron_expression,
+    enabled: data.enabled,
+    updatedAt: data.updated_at,
+    updatedBy: ctx!.email,
+  }), 200);
+}
+
+async function handleDownloadBackup(ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
+  const { data: record, error: lookupError } = await db
+    .from("backup_records")
+    .select("*")
+    .eq("id", p.id)
+    .maybeSingle();
+  if (lookupError) throw new Error(`backup download lookup failed: ${lookupError.message}`);
+  if (!record) return notFound("Backup record not found");
+
+  const target = record as unknown as BackupRow;
+  let fileUrl: string | null = null;
+  let storageObjectAvailable = false;
+  if (target.file_path) {
+    await ensureBackupBucket();
+    const { data: signed, error: signedError } = await db.storage.from(BACKUP_BUCKET).createSignedUrl(target.file_path, 900);
+    if (!signedError && signed?.signedUrl) {
+      fileUrl = signed.signedUrl;
+      storageObjectAvailable = true;
+    }
+  }
+  if (!storageObjectAvailable) {
+    const materialized = await materializeBackup(p.id, target);
+    fileUrl = materialized.file_url;
+  }
+  if (!fileUrl) return jsonResponse(fail("The backup archive is not available yet.", "BACKUP_FILE_NOT_READY"), 409);
+
+  await db.from("backup_records").update({ file_url: fileUrl }).eq("id", p.id);
+
+  const { data, error } = await db.rpc("record_backup_download", {
+    p_backup_id: p.id,
+    p_user_id: ctx!.userId,
+    p_user_email: ctx!.email,
+    p_ip_address: ctx!.ip,
+    p_user_agent: ctx!.userAgent,
+  });
+  if (error) throw new Error(`backup download audit failed: ${error.message}`);
+  const result = Array.isArray(data) ? data[0] : data;
+  if (!result?.file_url && !fileUrl) {
+    return jsonResponse(fail("The backup service did not return a valid file URL.", "BACKUP_FILE_NOT_READY"), 409);
+  }
+  return jsonResponse(ok({ fileUrl: fileUrl ?? result.file_url, backupId: p.id }), 200);
 }
 
 // ---------------------------------------------------------------------------
@@ -1389,8 +1770,11 @@ const routes = [
   { method: "GET", path: "/admin/notifications", guard: ADMIN_PORTAL_ROLES, handler: handleListAdminNotifications },
   { method: "GET", path: "/admin/notifications/unread-count", guard: ADMIN_PORTAL_ROLES, handler: handleUnreadCount },
   { method: "PUT", path: "/admin/notifications/:id/read", guard: ADMIN_PORTAL_ROLES, handler: handleMarkNotifRead },
-  { method: "GET", path: "/admin/backups", guard: SYSTEM_ADMIN_ONLY, handler: handleListBackups },
   { method: "GET", path: "/admin/backups/latest", guard: SYSTEM_ADMIN_ONLY, handler: handleLatestBackup },
+  { method: "GET", path: "/admin/backups/schedule", guard: SYSTEM_ADMIN_ONLY, handler: handleGetBackupSchedule },
+  { method: "PUT", path: "/admin/backups/schedule", guard: SYSTEM_ADMIN_ONLY, handler: handleSaveBackupSchedule },
+  { method: "POST", path: "/admin/backups/:id/download", guard: SYSTEM_ADMIN_ONLY, handler: handleDownloadBackup },
+  { method: "GET", path: "/admin/backups", guard: SYSTEM_ADMIN_ONLY, handler: handleListBackups },
   { method: "POST", path: "/admin/backups", guard: SYSTEM_ADMIN_ONLY, handler: handleCreateBackup },
   { method: "GET", path: "/admin/kpi", guard: ADMIN_PORTAL_ROLES, handler: handleKpi },
 ] as const;

@@ -20,6 +20,7 @@ on conflict (name) do update set
   is_system_role = true,
   is_deleted = false,
   updated_at = now();
+
 do $$
 declare
   system_admin_id uuid;
@@ -96,6 +97,7 @@ begin
     end if;
   end if;
 end $$;
+
 do $$
 declare
   super_admin_id uuid;
