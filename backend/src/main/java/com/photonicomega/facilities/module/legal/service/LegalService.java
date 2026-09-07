@@ -81,8 +81,6 @@ public class LegalService {
                 .endDate(parseDate(body.get("endDate")))
                 .renewalNoticeDate(parseDate(body.get("renewalNoticeDate")))
                 .status(ContractStatus.DRAFT)
-                .aiAssessedRiskLevel(parseRisk(body.get("aiAssessedRiskLevel")))
-                .aiRiskSummary(str(body.get("aiRiskSummary")))
                 .build();
         Contract saved = contractRepository.save(contract);
         auditService.log(user, "CREATE_CONTRACT", MODULE, "Contract", saved.getId().toString(),
@@ -100,8 +98,6 @@ public class LegalService {
         if (body.containsKey("startDate")) c.setStartDate(parseDate(body.get("startDate")));
         if (body.containsKey("endDate")) c.setEndDate(parseDate(body.get("endDate")));
         if (body.containsKey("renewalNoticeDate")) c.setRenewalNoticeDate(parseDate(body.get("renewalNoticeDate")));
-        if (body.containsKey("aiAssessedRiskLevel")) c.setAiAssessedRiskLevel(parseRisk(body.get("aiAssessedRiskLevel")));
-        if (body.containsKey("aiRiskSummary")) c.setAiRiskSummary(str(body.get("aiRiskSummary")));
         Contract saved = contractRepository.save(c);
         auditService.log(user, "UPDATE_CONTRACT", MODULE, "Contract", id.toString(),
                 "Updated contract: " + c.getTitle(), null);
@@ -116,26 +112,6 @@ public class LegalService {
         }
         return transition(c, ContractStatus.UNDER_REVIEW, "SUBMIT_CONTRACT_REVIEW",
                 "Submitted contract for review: " + c.getTitle(), user);
-    }
-
-    @Transactional
-    public Contract approveContract(UUID id, User user) {
-        Contract c = getContract(id);
-        if (c.getStatus() != ContractStatus.UNDER_REVIEW) {
-            throw new BusinessRuleViolationException("Only contracts under review can be approved.");
-        }
-        return transition(c, ContractStatus.APPROVED, "APPROVE_CONTRACT",
-                "Approved contract: " + c.getTitle(), user);
-    }
-
-    @Transactional
-    public Contract activateContract(UUID id, User user) {
-        Contract c = getContract(id);
-        if (c.getStatus() != ContractStatus.APPROVED) {
-            throw new BusinessRuleViolationException("Only approved contracts can be activated.");
-        }
-        return transition(c, ContractStatus.ACTIVE, "ACTIVATE_CONTRACT",
-                "Activated contract: " + c.getTitle(), user);
     }
 
     @Transactional

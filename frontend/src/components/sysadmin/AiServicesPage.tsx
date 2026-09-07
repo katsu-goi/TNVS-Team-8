@@ -265,8 +265,9 @@ export const AiServicesPage: React.FC = () => {
   // Open the Configure modal and load the module's available models
   const openConfigModal = async (mod: AIModule) => {
     setShowConfigModuleModal(mod);
-    setConfigProviderId(mod.usesSystemDefault ? '' : (mod.providerId ?? ''));
-    setConfigModel(mod.usesSystemDefault ? '' : (mod.model ?? ''));
+    const requiresExplicitAssignment = ['mod-1', 'mod-2'].includes(mod.id);
+    setConfigProviderId(requiresExplicitAssignment ? (mod.providerId ?? '') : (mod.usesSystemDefault ? '' : (mod.providerId ?? '')));
+    setConfigModel(requiresExplicitAssignment ? (mod.model ?? '') : (mod.usesSystemDefault ? '' : (mod.model ?? '')));
     setConfigFallbackModel(mod.fallbackModel ?? '');
     setConfigExecutionMode(mod.executionMode ?? 'REALTIME');
     setConfigEnabledFeatures(mod.enabledFeatures ?? [...mod.features]);
@@ -301,6 +302,10 @@ export const AiServicesPage: React.FC = () => {
 
   const handleSaveModuleConfig = async () => {
     if (!showConfigModuleModal) return;
+    if (['mod-1', 'mod-2'].includes(showConfigModuleModal.id) && (!configProviderId || !configModel)) {
+      showToast(`${showConfigModuleModal.name} requires an explicit provider and model.`);
+      return;
+    }
     setSavingModuleConfig(true);
     try {
       const res = await apiClient.put(`/ai/modules/${showConfigModuleModal.id}/config`, {
@@ -1369,11 +1374,13 @@ export const AiServicesPage: React.FC = () => {
                       onChange={e => handleConfigProviderChange(e.target.value)}
                       className="w-full border border-slate-300 rounded-xl p-2.5 text-slate-800 bg-white font-medium"
                     >
-                      <option value="">
-                        System Default{showConfigModuleModal.defaultProviderName
-                          ? ` (${showConfigModuleModal.defaultProviderName})`
-                          : ''}
-                      </option>
+                      {!['mod-1', 'mod-2'].includes(showConfigModuleModal.id) && (
+                        <option value="">
+                          System Default{showConfigModuleModal.defaultProviderName
+                            ? ` (${showConfigModuleModal.defaultProviderName})`
+                            : ''}
+                        </option>
+                      )}
                       {providers.map(p => (
                         <option key={p.id} value={p.id}>
                           {p.name}
@@ -1386,7 +1393,7 @@ export const AiServicesPage: React.FC = () => {
                       const selected = configProviderId
                         ? providers.find(p => p.id === configProviderId)
                         : null;
-                      if (configProviderId === '') {
+                      if (configProviderId === '' && !['mod-1', 'mod-2'].includes(showConfigModuleModal.id)) {
                         return (
                           <div className="mt-2 flex flex-col gap-0.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
                             <p className="text-[11px] text-slate-500">

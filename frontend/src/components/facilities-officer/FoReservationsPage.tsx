@@ -25,7 +25,8 @@ export interface ReservationItem {
   startTime: string;
   endTime: string;
   durationHours: number;
-  status: 'PENDING' | 'ESCALATED' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
+  status: 'PENDING' | 'PENDING_MANAGER_APPROVAL' | 'APPROVED' | 'CONFIRMED' | 'COMPLETED' | 'REJECTED' | 'CANCELLED';
+  expectedAttendees: number;
   priorityLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
   description?: string;
   updatedAt: string;
@@ -45,8 +46,10 @@ export interface MaintenanceNotice {
 /** Status → label + badge classes for the approval queue cards. */
 const STATUS_META: Record<ReservationItem['status'], { label: string; badge: string }> = {
   PENDING:   { label: 'Pending',      badge: 'bg-amber-50 text-amber-700 border-amber-200' },
-  ESCALATED: { label: 'Under Review', badge: 'bg-purple-50 text-purple-700 border-purple-200' },
+  PENDING_MANAGER_APPROVAL: { label: 'Waiting for Manager', badge: 'bg-purple-50 text-purple-700 border-purple-200' },
   APPROVED:  { label: 'Approved',     badge: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  CONFIRMED: { label: 'Confirmed',    badge: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  COMPLETED: { label: 'Completed',    badge: 'bg-blue-50 text-blue-700 border-blue-200' },
   REJECTED:  { label: 'Rejected',     badge: 'bg-rose-50 text-rose-700 border-rose-200' },
   CANCELLED: { label: 'Cancelled',    badge: 'bg-slate-100 text-slate-500 border-slate-200' },
 };
@@ -106,6 +109,7 @@ const QueueField: React.FC<{
 
 export const FoReservationsPage: React.FC = () => {
   const syncData = useRealtimeSyncStore(s => s.syncData);
+  const revision = useRealtimeSyncStore(s => s.revision);
   // Navigation & View States
   const [activeTab, setActiveTab] = useState<'upcoming' | 'pending' | 'calendar' | 'recent' | 'utilization' | 'notices'>('upcoming');
   const [calendarViewMode, setCalendarViewMode] = useState<'daily' | 'weekly' | 'monthly'>('weekly');
@@ -141,8 +145,7 @@ export const FoReservationsPage: React.FC = () => {
   const [reservations, setReservations] = useState<ReservationItem[]>([]);
   const [maintenanceNotices] = useState<MaintenanceNotice[]>([]);
 
-  React.useEffect(() => {
-    const fetchReservations = async () => {
+  const fetchReservations = React.useCallback(async () => {
       try {
         const json = await safeFetchJson('/api/v1/facilities-officer/reservations');
         if (json?.data && Array.isArray(json.data)) {
@@ -151,9 +154,11 @@ export const FoReservationsPage: React.FC = () => {
       } catch (e) {
         console.warn('Backend reservations offline, default to empty list', e);
       }
-    };
-    fetchReservations();
   }, []);
+
+  React.useEffect(() => {
+    fetchReservations();
+  }, [fetchReservations, revision]);
 
   const mapBackendReservation = (r: any): ReservationItem => ({
     id: r.id,
@@ -161,26 +166,27 @@ export const FoReservationsPage: React.FC = () => {
     title: r.title,
     facilityCategory: 'ROOM',
     facilityName: r.roomName || r.facilityName || '',
-    requesterName: r.employeeName || 'Facilities Officer',
-    requesterEmail: r.employeeEmail || '',
+    requesterName: r.requesterName || r.employeeName || 'Requester',
+    requesterEmail: r.requesterEmail || r.employeeEmail || '',
     reservationDate: (r.startTime || '').slice(0, 10),
     startTime: (r.startTime || '').slice(11, 16),
     endTime: (r.endTime || '').slice(11, 16),
     durationHours: r.startTime && r.endTime
       ? Math.max(0, (new Date(r.endTime).getTime() - new Date(r.startTime).getTime()) / 3600000)
       : 0,
-    status: (r.status === 'PENDING' || r.status === 'APPROVED' || r.status === 'REJECTED' || r.status === 'CANCELLED') ? r.status : 'PENDING',
+    status: ['PENDING', 'PENDING_MANAGER_APPROVAL', 'APPROVED', 'CONFIRMED', 'COMPLETED', 'REJECTED', 'CANCELLED'].includes(r.status) ? r.status : 'PENDING',
+    expectedAttendees: r.expectedAttendees ?? 1,
     priorityLevel: 'MEDIUM',
     description: r.description,
     updatedAt: r.createdAt || new Date().toLocaleString(),
-    updatedBy: r.employeeName || 'Facilities Officer',
+    updatedBy: r.requesterName || r.employeeName || 'Requester',
     modificationNotes: `Requested ${r.roomName} · ${r.facilityName || ''}`.trim()
   });
 
   // Derived metrics for Component 1: Summary Cards & Component 6: Resource Utilization
-  const pendingCount = syncData?.pendingReservations ?? reservations.filter(r => r.status === 'PENDING' || r.status === 'ESCALATED').length;
-  const approvedCount = reservations.filter(r => r.status === 'APPROVED').length;
-  const upcomingCount = reservations.filter(r => r.status === 'APPROVED' && new Date(r.reservationDate) >= new Date('2026-07-30')).length;
+  const pendingCount = syncData?.pendingReservations ?? reservations.filter(r => r.status === 'PENDING' || r.status === 'PENDING_MANAGER_APPROVAL').length;
+  const approvedCount = reservations.filter(r => r.status === 'APPROVED' || r.status === 'CONFIRMED').length;
+  const upcomingCount = reservations.filter(r => ['APPROVED', 'CONFIRMED'].includes(r.status) && new Date(r.reservationDate) >= new Date()).length;
   const maintenanceCount = maintenanceNotices.length;
   const occupancyRate = 68; // 68% calculated occupancy rate
 
@@ -322,28 +328,44 @@ export const FoReservationsPage: React.FC = () => {
     setAiValidation((prev: any) => prev ? { ...prev, alternatives: [] } : prev);
   };
 
-  const handleEscalateSubmit = (id: string) => {
-    setReservations(reservations.map(r => r.id === id ? {
-      ...r,
-      status: 'ESCALATED',
-      updatedAt: new Date().toLocaleString(),
-      updatedBy: 'Facilities Officer',
-      modificationNotes: escalateNotes.trim() ? `Escalated to Manager: ${escalateNotes}` : 'Escalated to Facilities Manager for final approval decision.'
-    } : r));
-    setEscalateModal(null);
-    setEscalateNotes('');
+  const handleEscalateSubmit = async (id: string) => {
+    setSubmitError('');
+    try {
+      await facilitiesService.reviewReservation(id, escalateNotes.trim());
+      await fetchReservations();
+      setEscalateModal(null);
+      setEscalateNotes('');
+    } catch (err: any) {
+      setSubmitError(err?.response?.data?.message || 'Operational review could not be completed.');
+    }
   };
 
-  const handleEditSave = (e: React.FormEvent) => {
+  const handleEditSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editModal) return;
-    setReservations(reservations.map(r => r.id === editModal.id ? {
-      ...editModal,
-      updatedAt: new Date().toLocaleString(),
-      updatedBy: 'Facilities Officer',
-      modificationNotes: `Updated title/time details: ${editModal.startTime} - ${editModal.endTime}`
-    } : r));
-    setEditModal(null);
+    setSubmitError('');
+    try {
+      await facilitiesService.rescheduleReservation(editModal.id, {
+        startTime: `${editModal.reservationDate}T${editModal.startTime}:00`,
+        endTime: `${editModal.reservationDate}T${editModal.endTime}:00`,
+        expectedAttendees: editModal.expectedAttendees,
+        reason: `Facilities Officer rescheduled the request to ${editModal.startTime}-${editModal.endTime}.`,
+      });
+      await fetchReservations();
+      setEditModal(null);
+    } catch (err: any) {
+      setSubmitError(err?.response?.data?.message || 'Reservation could not be rescheduled.');
+    }
+  };
+
+  const cancelReservation = async (id: string) => {
+    setSubmitError('');
+    try {
+      await facilitiesService.cancelReservation(id, 'Cancelled by Facilities Officer after operational review.');
+      await fetchReservations();
+    } catch (err: any) {
+      setSubmitError(err?.response?.data?.message || 'Reservation could not be cancelled.');
+    }
   };
 
   return (
@@ -561,7 +583,7 @@ export const FoReservationsPage: React.FC = () => {
             </span>
           </div>
 
-          {reservations.filter(r => r.status === 'PENDING' || r.status === 'ESCALATED').length === 0 ? (
+          {reservations.filter(r => r.status === 'PENDING' || r.status === 'PENDING_MANAGER_APPROVAL').length === 0 ? (
             <div className="flex min-h-40 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 text-center">
               <Inbox className="mb-2 h-7 w-7 text-slate-300" />
               <p className="text-sm font-semibold text-slate-600">No requests awaiting review</p>
@@ -569,7 +591,7 @@ export const FoReservationsPage: React.FC = () => {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-              {reservations.filter(r => r.status === 'PENDING' || r.status === 'ESCALATED').map(r => {
+              {reservations.filter(r => r.status === 'PENDING' || r.status === 'PENDING_MANAGER_APPROVAL').map(r => {
                 const status = STATUS_META[r.status];
                 return (
                   <article key={r.id} className="flex min-w-0 flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
@@ -617,27 +639,24 @@ export const FoReservationsPage: React.FC = () => {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setReservations(reservations.map(item => item.id === r.id ? {
-                          ...item,
-                          status: 'CANCELLED',
-                          updatedAt: new Date().toLocaleString(),
-                          updatedBy: 'Facilities Officer',
-                          modificationNotes: 'Cancelled reservation request by Facilities Officer.'
-                        } : item))}
+                        onClick={() => cancelReservation(r.id)}
                         className="rounded-lg border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-600 transition-colors hover:bg-rose-50"
                         title="Cancel request"
                       >
                         <X className="mr-1.5 inline-block h-3.5 w-3.5" />Cancel
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => { setEscalateModal(r); setEscalateNotes(r.modificationNotes || ''); }}
-                        className="ml-auto inline-flex items-center rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700"
-                        title="Forward to Manager for final approval"
-                      >
-                        <Send className="mr-1.5 h-3.5 w-3.5" />
-                        {r.status === 'ESCALATED' ? 'Update Review' : 'Forward to Manager'}
-                      </button>
+                      {r.status === 'PENDING' ? (
+                        <button
+                          type="button"
+                          onClick={() => { setEscalateModal(r); setEscalateNotes(''); }}
+                          className="ml-auto inline-flex items-center rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700"
+                          title="Forward to Manager for final approval"
+                        >
+                          <Send className="mr-1.5 h-3.5 w-3.5" />Forward to Manager
+                        </button>
+                      ) : (
+                        <span className="ml-auto text-[10px] font-semibold text-purple-700">Awaiting manager decision</span>
+                      )}
                     </div>
                   </article>
                 );
@@ -1154,7 +1173,7 @@ export const FoReservationsPage: React.FC = () => {
 
               <div className="pt-2 flex justify-end space-x-2">
                 <button onClick={() => setEscalateModal(null)} className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-semibold hover:bg-slate-200">Cancel</button>
-                <button onClick={() => handleEscalateSubmit(escalateModal.id)} className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 shadow-sm flex items-center space-x-1.5">
+                <button disabled={!escalateNotes.trim()} onClick={() => handleEscalateSubmit(escalateModal.id)} className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 shadow-sm flex items-center space-x-1.5 disabled:opacity-40">
                   <Send className="w-3.5 h-3.5" />
                   <span>Confirm Escalation</span>
                 </button>

@@ -324,9 +324,17 @@ async function handleWorkspace(ctx: AuthContext | null, _req: Request, _body: un
 }
 
 async function handleSubmitLegal(ctx: AuthContext | null, _req: Request, _body: unknown, params: RouteParams) {
-  const { data: workflow, error } = await db.from("legal_contract_workflows").select("*").eq("id", params.id).maybeSingle();
+  const { data: workflow, error } = await db.from("legal_contract_workflows")
+    .select("*, contract:contracts(id,status,ai_analysis_review_status)").eq("id", params.id).maybeSingle();
   if (error) throw new Error(`legal workflow lookup failed: ${error.message}`);
   if (!workflow) return jsonResponse(fail("Legal workflow not found.", "RESOURCE_NOT_FOUND"), 404);
+  const linkedContract = Array.isArray(workflow.contract) ? workflow.contract[0] : workflow.contract;
+  if (linkedContract?.status !== "UNDER_REVIEW") {
+    return jsonResponse(fail("The Contract Officer must submit the contract for review first.", "BUSINESS_RULE_VIOLATION"), 422);
+  }
+  if (!['APPROVED', 'CORRECTED'].includes(String(linkedContract?.ai_analysis_review_status ?? ''))) {
+    return jsonResponse(fail("The Contract AI analysis must be approved or corrected before counsel sign-off.", "BUSINESS_RULE_VIOLATION"), 422);
+  }
   if (workflow.state === "REJECTED_REVISION") {
     const { error: draftError } = await db.from("legal_contract_workflows").update({ state: "DRAFT", updated_at: new Date().toISOString() }).eq("id", params.id);
     if (draftError) throw new Error(`legal workflow reset failed: ${draftError.message}`);
@@ -356,11 +364,19 @@ async function handleCounselAction(ctx: AuthContext | null, _req: Request, body:
   if (action === "REJECTED_REVISION" && comments.length < 5) {
     return jsonResponse(fail("Revision comments must contain at least 5 characters.", "VALIDATION_ERROR"), 400);
   }
-  const { data: workflow, error } = await db.from("legal_contract_workflows").select("*, contract:contracts(id, document_id)").eq("id", params.id).maybeSingle();
+  const { data: workflow, error } = await db.from("legal_contract_workflows")
+    .select("*, contract:contracts(id,document_id,status,created_by,ai_analysis_review_status)").eq("id", params.id).maybeSingle();
   if (error) throw new Error(`legal workflow lookup failed: ${error.message}`);
   if (!workflow) return jsonResponse(fail("Legal workflow not found.", "RESOURCE_NOT_FOUND"), 404);
   if (workflow.state !== "PENDING_COUNSEL_REVIEW") {
     return jsonResponse(fail("Only pending counsel reviews can be decided.", "BUSINESS_RULE_VIOLATION"), 422);
+  }
+  const contract = Array.isArray(workflow.contract) ? workflow.contract[0] : workflow.contract;
+  if (String(contract?.created_by ?? '').toLowerCase() === String(ctx?.email ?? '').toLowerCase()) {
+    return jsonResponse(fail("A contract creator cannot approve their own contract.", "SEPARATION_OF_DUTIES_VIOLATION"), 403);
+  }
+  if (action === "COUNSEL_APPROVED" && !['APPROVED', 'CORRECTED'].includes(String(contract?.ai_analysis_review_status ?? ''))) {
+    return jsonResponse(fail("Counsel approval requires an authorized Contract AI review decision.", "BUSINESS_RULE_VIOLATION"), 422);
   }
   const { error: updateError } = await db.from("legal_contract_workflows").update({
     state: action,
@@ -371,7 +387,12 @@ async function handleCounselAction(ctx: AuthContext | null, _req: Request, body:
   }).eq("id", params.id);
   if (updateError) throw new Error(`counsel action failed: ${updateError.message}`);
 
-  const contract = Array.isArray(workflow.contract) ? workflow.contract[0] : workflow.contract;
+  const contractPatch = action === "COUNSEL_APPROVED"
+    ? { status: "APPROVED", approved_by: ctx?.email, approved_at: new Date().toISOString(), updated_by: ctx?.email, updated_at: new Date().toISOString() }
+    : { status: "DRAFT", approved_by: null, approved_at: null, updated_by: ctx?.email, updated_at: new Date().toISOString() };
+  const { error: contractError } = await db.from("contracts").update(contractPatch).eq("id", contract?.id);
+  if (contractError) throw new Error(`contract approval state update failed: ${contractError.message}`);
+
   if (action === "COUNSEL_APPROVED" && contract?.document_id) {
     await db.from("records_archives").upsert({
       document_id: contract.document_id,

@@ -79,6 +79,8 @@ const labelCls = 'text-[11px] font-semibold text-slate-500 uppercase';
 const reservationStatusBadge = (status?: string) => {
   switch ((status || '').toUpperCase()) {
     case 'APPROVED': return 'bg-emerald-50 text-emerald-600';
+    case 'CONFIRMED': return 'bg-emerald-50 text-emerald-700';
+    case 'PENDING_MANAGER_APPROVAL': return 'bg-purple-50 text-purple-700';
     case 'PENDING': return 'bg-amber-50 text-amber-600';
     case 'REJECTED': return 'bg-rose-50 text-rose-600';
     case 'CANCELLED': return 'bg-slate-100 text-slate-500';
@@ -261,7 +263,7 @@ export const EmpReservationsPage: React.FC = () => {
           <div className="divide-y divide-slate-50">
             {rows.map((r) => {
               const editable = (r.status || '').toUpperCase() === 'PENDING';
-              const cancellable = !['APPROVED', 'CHECKED_IN', 'COMPLETED', 'CANCELLED', 'REJECTED'].includes((r.status || '').toUpperCase());
+              const cancellable = !['CHECKED_IN', 'COMPLETED', 'CANCELLED', 'REJECTED'].includes((r.status || '').toUpperCase());
               return (
                 <div key={r.id} className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
                   <div className="min-w-0">

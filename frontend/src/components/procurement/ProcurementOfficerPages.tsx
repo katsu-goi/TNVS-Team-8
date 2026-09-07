@@ -6,6 +6,7 @@ import {
   RotateCcw, Pencil, ChevronRight, Gauge, CalendarClock,
 } from 'lucide-react';
 import { safeFetchJson } from '../../api/client';
+import { ContractAiPanel } from '../contracts/ContractAiPanel';
 
 // POST/PUT helper that surfaces failure (safeFetchJson returns null on error).
 const mutate = async (url: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown) => {
@@ -268,8 +269,6 @@ export const PoContractsPage: React.FC = () => {
         contractValue: form.contractValue === '' ? null : form.contractValue,
         startDate: form.startDate || null, endDate: form.endDate || null,
         renewalNoticeDate: form.renewalNoticeDate || null,
-        aiAssessedRiskLevel: form.aiAssessedRiskLevel || null,
-        aiRiskSummary: form.aiRiskSummary?.trim() || null,
       };
       const url = isEdit ? `/api/v1/procurement/contracts/${editing.id}` : '/api/v1/procurement/contracts';
       await mutate(url, isEdit ? 'PUT' : 'POST', payload);
@@ -351,7 +350,6 @@ export const PoContractsPage: React.FC = () => {
                           <ActionButton onClick={() => setDetail(c)} icon={ChevronRight} disabled={busy}>Details</ActionButton>
                           <ActionButton onClick={() => openEdit(c)} icon={Pencil} disabled={busy}>Edit</ActionButton>
                           {status === 'DRAFT' && <ActionButton onClick={() => runAction(c.id, 'submit-review', 'Submitted for review')} icon={Send} variant="primary" disabled={busy}>Submit</ActionButton>}
-                          {status === 'UNDER_REVIEW' && <ActionButton onClick={() => runAction(c.id, 'approve', 'Contract approved')} icon={CheckCircle2} variant="primary" disabled={busy}>Approve</ActionButton>}
                           {status === 'APPROVED' && <ActionButton onClick={() => runAction(c.id, 'activate', 'Contract activated')} icon={PlayCircle} variant="primary" disabled={busy}>Activate</ActionButton>}
                           {(status === 'ACTIVE' || status === 'EXPIRED') && <ActionButton onClick={() => runAction(c.id, 'renew', 'Contract renewed')} icon={RotateCcw} disabled={busy}>Renew</ActionButton>}
                           {status !== 'TERMINATED' && <ActionButton onClick={() => runAction(c.id, 'terminate', 'Contract terminated')} icon={Ban} variant="danger" disabled={busy}>Terminate</ActionButton>}
@@ -395,12 +393,6 @@ export const PoContractsPage: React.FC = () => {
               <input type="number" min={0} value={form.contractValue} onChange={e => setForm((f: any) => ({ ...f, contractValue: e.target.value }))} className={inputCls} />
             </div>
             <div>
-              <label className={labelCls}>Risk Level</label>
-              <select value={form.aiAssessedRiskLevel} onChange={e => setForm((f: any) => ({ ...f, aiAssessedRiskLevel: e.target.value }))} className={`${inputCls} bg-white`}>
-                {RISK_LEVELS.map(r => <option key={r || 'none'} value={r}>{r || '— none —'}</option>)}
-              </select>
-            </div>
-            <div>
               <label className={labelCls}>Start Date</label>
               <input type="date" value={form.startDate} onChange={e => setForm((f: any) => ({ ...f, startDate: e.target.value }))} className={inputCls} />
             </div>
@@ -411,10 +403,6 @@ export const PoContractsPage: React.FC = () => {
             <div>
               <label className={labelCls}>Renewal Notice Date</label>
               <input type="date" value={form.renewalNoticeDate} onChange={e => setForm((f: any) => ({ ...f, renewalNoticeDate: e.target.value }))} className={inputCls} />
-            </div>
-            <div className="md:col-span-2">
-              <label className={labelCls}>Risk Summary</label>
-              <textarea value={form.aiRiskSummary} onChange={e => setForm((f: any) => ({ ...f, aiRiskSummary: e.target.value }))} rows={2} className={inputCls} />
             </div>
           </div>
           <div className="flex justify-end space-x-2 pt-1">
@@ -534,6 +522,12 @@ const ContractDetailDrawer: React.FC<{ contract: any; onClose: () => void; onCha
             </div>
           )}
         </div>
+
+        <ContractAiPanel
+          contractId={contract.id}
+          associatedDocumentId={full?.associatedDocumentId ?? contract.associatedDocumentId}
+          onChanged={() => { void load(); onChanged(); }}
+        />
 
         {clauseForm && (
           <Modal title={clauseForm.id ? 'Edit Clause' : 'Add Clause'} icon={FileText} onClose={() => !saving && setClauseForm(null)}>

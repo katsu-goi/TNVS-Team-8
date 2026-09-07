@@ -138,6 +138,29 @@ export const ComplianceOfficerDashboard: React.FC = () => {
         <KpiCard label="Pending Disposals" value={data.pendingDisposals ?? 0} icon={Trash2} color={(data.pendingDisposals ?? 0) > 0 ? 'text-rose-500' : 'text-slate-400'} sub="Awaiting decision" onClick={() => navigate('/compliance/disposals')} />
       </div>
 
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <KpiCard label="Policy Required" value={data.retentionPolicyRequired ?? 0} icon={AlertCircle} color={(data.retentionPolicyRequired ?? 0) > 0 ? 'text-rose-500' : 'text-slate-400'} sub="Needs classification match" onClick={() => navigate('/compliance/documents')} />
+        <KpiCard label="Retention Upcoming" value={data.retentionExpiring ?? 0} icon={Clock} color="text-amber-500" sub="Automated windows" onClick={() => navigate('/compliance/alerts')} />
+        <KpiCard label="Disposal Eligible" value={data.retentionExpired ?? 0} icon={Trash2} color="text-rose-500" sub="Human review required" onClick={() => navigate('/compliance/disposals')} />
+        <KpiCard label="Legal Holds" value={data.activeLegalHolds ?? 0} icon={ShieldAlert} color="text-purple-500" sub="Disposal blocked" onClick={() => navigate('/compliance/documents')} />
+        <KpiCard label="Overdue Obligations" value={data.overdueObligations ?? 0} icon={FileSignature} color="text-rose-500" sub="Reviewed obligations" onClick={() => navigate('/compliance/contracts')} />
+      </div>
+
+      <div className="glass-panel p-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Lifecycle automation health</p>
+          <p className="mt-1 text-sm font-bold text-slate-900">
+            {data.automationHealth?.status ?? 'AWAITING FIRST RUN'}
+            {data.automationHealth?.lastCompletedAt ? ` · ${new Date(data.automationHealth.lastCompletedAt).toLocaleString()}` : ''}
+          </p>
+        </div>
+        <div className="flex gap-4 text-[11px] font-mono text-slate-500">
+          <span>Processed {data.automationHealth?.processedCount ?? 0}</span>
+          <span>Alerts {data.automationHealth?.generatedAlerts ?? 0}</span>
+          <span>Notifications {data.automationHealth?.generatedNotifications ?? 0}</span>
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <KpiCard label="Approved Documents" value={data.approvedDocuments ?? 0} icon={CheckCircle2} color="text-emerald-600" sub="Finalized" onClick={() => navigate('/compliance/documents')} />
         <KpiCard label="Archived Documents" value={data.archivedDocuments ?? 0} icon={Archive} color="text-slate-400" sub="Retained" onClick={() => navigate('/compliance/documents')} />

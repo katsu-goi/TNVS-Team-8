@@ -11,6 +11,7 @@ import { ID_TYPES } from '../../types/visitors';
 import type {
   IdType, VisitorVerification, VisitorWatchlistEntry,
 } from '../../types/visitors';
+import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -141,6 +142,7 @@ const VisitorVerificationSection: React.FC = () => {
   const [idNumber, setIdNumber] = useState<Record<string, string>>({});
   const [result, setResult] = useState<VisitorVerification | null>(null);
   const [history, setHistory] = useState<VisitorVerification[]>([]);
+  const [reviewNotes, setReviewNotes] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -167,6 +169,23 @@ const VisitorVerificationSection: React.FC = () => {
       setHistory(await visitorService.listVerifications(id));
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Verification failed');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const review = async (decision: 'CLEAR' | 'BLOCK') => {
+    if (!result || !reviewNotes.trim()) return;
+    setBusyId(result.visitorId);
+    setError(null);
+    try {
+      const reviewed = await visitorService.reviewVisitor(result.visitorId, result.id, decision, reviewNotes.trim());
+      setResult(reviewed);
+      setHistory(await visitorService.listVerifications(result.visitorId));
+      setReviewNotes('');
+      await load();
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Review failed');
     } finally {
       setBusyId(null);
     }
@@ -246,22 +265,27 @@ const VisitorVerificationSection: React.FC = () => {
 
       {result && (
         <div className={`rounded-xl border p-4 space-y-3 ${
-          result.watchlistStatus === 'FLAGGED'
+          result.clearanceState === 'BLOCKED'
             ? 'border-rose-200 bg-rose-50/50'
-            : 'border-emerald-200 bg-emerald-50/50'
+            : result.clearanceState === 'REVIEW_REQUIRED'
+              ? 'border-amber-200 bg-amber-50/50'
+              : 'border-emerald-200 bg-emerald-50/50'
         }`}>
           <div className="flex items-center space-x-2">
             {result.watchlistStatus === 'FLAGGED'
               ? <ShieldAlert className="w-4 h-4 text-rose-600" />
               : <ShieldCheck className="w-4 h-4 text-emerald-600" />}
-            <p className="text-sm font-bold text-slate-900">
+            <p className="hidden">
               {result.watchlistStatus === 'FLAGGED' ? 'Watchlist match — escalate' : 'Cleared'}
             </p>
+            <p className="text-sm font-bold text-slate-900">{result.clearanceState.replace(/_/g, ' ')}</p>
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
             <div><p className="text-slate-400 text-[10px] uppercase">Verification</p><p className="font-mono">{result.verificationStatus}</p></div>
             <div><p className="text-slate-400 text-[10px] uppercase">Watchlist</p><p className="font-mono">{result.watchlistStatus}</p></div>
+            <div><p className="text-slate-400 text-[10px] uppercase">Automated</p><p className="font-mono">{result.automatedClearance}</p></div>
+            <div><p className="text-slate-400 text-[10px] uppercase">Effective</p><p className="font-mono">{result.clearanceState}</p></div>
             <div>
               <p className="text-slate-400 text-[10px] uppercase">Match Score</p>
               <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${scoreTone(result.matchScore)}`}>
@@ -272,6 +296,20 @@ const VisitorVerificationSection: React.FC = () => {
           </div>
 
           {result.notes && <p className="text-xs text-slate-600">{result.notes}</p>}
+
+          {result.clearanceState === 'REVIEW_REQUIRED' && (
+            <div className="space-y-2 rounded-xl border border-amber-200 bg-white p-3">
+              <p className="text-[10px] font-bold uppercase text-amber-700">Authorized manual review</p>
+              <textarea value={reviewNotes} onChange={e => setReviewNotes(e.target.value)} rows={2}
+                placeholder="Required review notes" className="w-full rounded-lg border border-slate-200 p-2 text-xs" />
+              <div className="flex gap-2">
+                <button disabled={!reviewNotes.trim() || busyId === result.visitorId} onClick={() => review('CLEAR')}
+                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-40">Clear</button>
+                <button disabled={!reviewNotes.trim() || busyId === result.visitorId} onClick={() => review('BLOCK')}
+                  className="rounded-lg bg-rose-600 px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-40">Block</button>
+              </div>
+            </div>
+          )}
 
           <div>
             <p className="text-[10px] uppercase text-slate-400 mb-1">Extracted Fields</p>
@@ -292,7 +330,7 @@ const VisitorVerificationSection: React.FC = () => {
                   <li key={h.id} className="text-[11px] text-slate-600 flex items-center space-x-2">
                     <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
                       h.watchlistStatus === 'FLAGGED' ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'
-                    }`}>{h.watchlistStatus}</span>
+                    }`}>{h.clearanceState}</span>
                     <span className="font-mono">{h.matchScore ?? '—'}</span>
                     <span className="text-slate-400">{h.verifiedAt ? new Date(h.verifiedAt).toLocaleString() : '—'}</span>
                   </li>
@@ -311,7 +349,7 @@ const VisitorWatchlistSection: React.FC = () => {
   const [entries, setEntries] = useState<VisitorWatchlistEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState({ fullName: '', idNumber: '', reason: '' });
+  const [form, setForm] = useState({ fullName: '', idNumber: '', reason: '', severity: 'HIGH' as 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' });
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -335,8 +373,9 @@ const VisitorWatchlistSection: React.FC = () => {
     try {
       await visitorService.addWatchlistEntry(
         form.fullName.trim(), form.idNumber.trim() || undefined, form.reason.trim() || undefined,
+        form.severity,
       );
-      setForm({ fullName: '', idNumber: '', reason: '' });
+      setForm({ fullName: '', idNumber: '', reason: '', severity: 'HIGH' });
       await load();
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Failed to add entry');
@@ -390,6 +429,10 @@ const VisitorWatchlistSection: React.FC = () => {
           placeholder="Reason"
           className="text-xs border border-slate-200 rounded-lg px-3 py-2 flex-1 min-w-[160px]"
         />
+        <select value={form.severity} onChange={e => setForm(f => ({ ...f, severity: e.target.value as typeof f.severity }))}
+          className="text-xs border border-slate-200 rounded-lg px-3 py-2 bg-white">
+          {['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].map(value => <option key={value} value={value}>{value}</option>)}
+        </select>
         <button
           onClick={add}
           disabled={saving || !form.fullName.trim()}
@@ -412,6 +455,7 @@ const VisitorWatchlistSection: React.FC = () => {
                 <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Name</th>
                 <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">ID Number</th>
                 <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Reason</th>
+                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Severity</th>
                 <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
                 <th className="p-2" />
               </tr>
@@ -422,6 +466,7 @@ const VisitorWatchlistSection: React.FC = () => {
                   <td className="p-2 font-medium text-slate-900">{e.fullName}</td>
                   <td className="p-2 text-slate-600 font-mono text-xs">{e.idNumber || '—'}</td>
                   <td className="p-2 text-slate-600 text-xs">{e.reason || '—'}</td>
+                  <td className="p-2 text-slate-600 text-xs font-mono">{e.severity}</td>
                   <td className="p-2">
                     <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
                       e.status === 'ACTIVE' ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-500'
@@ -450,6 +495,7 @@ export const FoVisitorManagementPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const revision = useRealtimeSyncStore(s => s.revision);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -465,6 +511,18 @@ export const FoVisitorManagementPage: React.FC = () => {
   }, [retry]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
+
+  const updateVisit = async (visitor: any, action: 'check-in' | 'check-out') => {
+    setError(null);
+    try {
+      if (action === 'check-in') await visitorService.checkIn(visitor.id);
+      else await visitorService.checkOut(visitor.id);
+      setRetry(r => r + 1);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || `Unable to ${action} visitor`);
+    }
+  };
 
   if (loading && visitors.length === 0) return <LoadingSkeleton />;
   if (error && visitors.length === 0) return <ErrorState message={error} onRetry={() => setRetry(r => r + 1)} />;
@@ -481,7 +539,7 @@ export const FoVisitorManagementPage: React.FC = () => {
 
       <div className="flex items-center space-x-2 text-xs text-slate-500 bg-white border border-slate-200 rounded-xl px-4 py-3">
         <Eye className="w-4 h-4 text-amber-500" />
-        <span>Read-only view of visitors associated with facility visits</span>
+        <span>Server-validated clearance, entry, departure, and visitor audit workflow</span>
       </div>
 
       {visitors.length === 0 ? (
@@ -497,6 +555,8 @@ export const FoVisitorManagementPage: React.FC = () => {
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Facility</th>
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Check-In</th>
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Clearance</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -513,6 +573,23 @@ export const FoVisitorManagementPage: React.FC = () => {
                         v.status === 'CHECKED_OUT' ? 'bg-slate-100 text-slate-500' :
                         'bg-amber-50 text-amber-600'
                       }`}>{v.status}</span>
+                    </td>
+                    <td className="p-3">
+                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
+                        v.clearanceState === 'CLEAR' ? 'bg-emerald-50 text-emerald-700' :
+                        v.clearanceState === 'BLOCKED' ? 'bg-rose-50 text-rose-700' :
+                        'bg-amber-50 text-amber-700'
+                      }`}>{v.clearanceState?.replace(/_/g, ' ') || 'VERIFICATION REQUIRED'}</span>
+                    </td>
+                    <td className="p-3">
+                      {v.status === 'REGISTERED' && (
+                        <button onClick={() => updateVisit(v, 'check-in')} disabled={v.clearanceState !== 'CLEAR'}
+                          className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">Check in</button>
+                      )}
+                      {v.status === 'CHECKED_IN' && (
+                        <button onClick={() => updateVisit(v, 'check-out')}
+                          className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-[10px] font-semibold text-white">Check out</button>
+                      )}
                     </td>
                   </tr>
                 ))}

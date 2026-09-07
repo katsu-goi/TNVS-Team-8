@@ -76,11 +76,12 @@ async function extractPdfText(bytes: Uint8Array): Promise<{ text: string; pageCo
   }
   let pdf: Awaited<ReturnType<typeof getDocumentProxy>>;
   try {
-    pdf = await getDocumentProxy(bytes.slice(), {
+    const safePdfOptions = {
       isEvalSupported: false,
       disableFontFace: true,
       useSystemFonts: false,
-    });
+    };
+    pdf = await getDocumentProxy(bytes.slice(), safePdfOptions);
   } catch {
     throw new DocumentExtractionError("INVALID_PDF", "The PDF could not be parsed.");
   }

@@ -24,6 +24,15 @@ function accessDenied() {
   return jsonResponse(fail("Access denied: insufficient permissions", "ACCESS_DENIED"), 403);
 }
 
+type WorkflowRpcResult = { ok: boolean; data?: Record<string, unknown>; errorCode?: string; message?: string };
+
+function workflowResponse(result: WorkflowRpcResult, successMessage: string) {
+  if (result.ok) return jsonResponse(ok(result.data ?? {}, successMessage), 200);
+  const code = result.errorCode ?? "BUSINESS_RULE_VIOLATION";
+  const status = code === "ACCESS_DENIED" ? 403 : code.endsWith("_NOT_FOUND") ? 404 : 422;
+  return jsonResponse(fail(result.message ?? "Workflow request rejected.", code), status);
+}
+
 /** Interprets a naive LocalDateTime string (Spring's LocalDateTime.parse) as UTC, matching how the Spring backend persisted timestamptz columns. */
 function toUtcIso(s: string): string {
   if (/[zZ]|[+-]\d{2}:\d{2}$/.test(s)) return new Date(s).toISOString();
@@ -355,85 +364,23 @@ async function handleListReservations(ctx: AuthContext | null, _req: Request) {
 
 async function handleCreateReservation(ctx: AuthContext | null, _req: Request, body: unknown) {
   const req = (body ?? {}) as Record<string, unknown>;
-  let roomId: string;
-  try {
-    roomId = String(req.roomId);
-  } catch {
-    return businessRule("A valid roomId is required.");
-  }
+  const roomId = String(req.roomId ?? "");
   if (!roomId || roomId === "undefined") return businessRule("A valid roomId is required.");
-
-  const { data: room, error: roomErr } = await db
-    .from("rooms")
-    .select("id, name, room_number, floor_number, status, active, open_time, close_time, facility_id, facilities(name, code)")
-    .eq("id", roomId)
-    .maybeSingle();
-  if (roomErr) throw new Error(`room lookup failed: ${roomErr.message}`);
-  if (!room) return notFound(`Room not found with id: '${roomId}'`);
-
-  const roomRow = room as Record<string, unknown> & { active: boolean | null; status: string | null; open_time: string | null; close_time: string | null };
-  if (roomRow.active !== true) return businessRule("This room is not active and cannot be reserved.");
-
-  const startRaw = String(req.startTime ?? "");
-  const endRaw = String(req.endTime ?? "");
-  const start = toUtcIso(startRaw);
-  const end = toUtcIso(endRaw);
-  if (new Date(end).getTime() <= new Date(start).getTime()) {
-    return businessRule("End time must be after start time.");
-  }
-  if (isInPast(start)) {
-    return businessRule("Reservation cannot be in the past.");
-  }
-
-  if (roomRow.open_time && roomRow.close_time) {
-    const withinHours = startRaw.split("T")[1]?.slice(0, 5) >= hhmm(String(roomRow.open_time)).slice(0, 5)
-      && endRaw.split("T")[1]?.slice(0, 5) <= hhmm(String(roomRow.close_time)).slice(0, 5);
-    if (!withinHours) {
-      return businessRule(
-        `Selected time is outside the room's operating hours (${String(roomRow.open_time).slice(0, 5)} - ${String(roomRow.close_time).slice(0, 5)}).`,
-      );
-    }
-  }
-
-  const maintenanceBlocked = roomRow.status === "MAINTENANCE" || roomRow.status === "OUT_OF_SERVICE"
-    || await hasMaintenanceOverlap(roomId, start, end);
-  if (maintenanceBlocked) {
-    return businessRule("This room is under maintenance for the selected timeframe.");
-  }
-
-  const conflict = await firstConflict(roomId, start, end);
-  if (conflict) {
-    return businessRule(
-      `Room is already reserved for the selected timeframe (${conflict.start_time} - ${conflict.end_time}).`,
-    );
-  }
-
-  const expectedAttendees = req.expectedAttendees != null
-    ? Number.parseInt(String(req.expectedAttendees), 10)
-    : null;
-  if (req.expectedAttendees != null && Number.isNaN(expectedAttendees)) {
-    throw new Error("expectedAttendees must be a number");
-  }
-
-  const { data: saved, error: insErr } = await db.from("reservations").insert({
-    room_id: roomId,
-    user_id: ctx!.userId,
-    title: String(req.title ?? "Room Reservation"),
-    description: req.description != null ? String(req.description) : null,
-    start_time: start,
-    end_time: end,
-    expected_attendees: expectedAttendees,
-    status: "PENDING",
-    created_by: ctx!.email,
-  }).select("id, room_id, user_id, title, description, start_time, end_time, expected_attendees, status, rejection_reason, created_at")
-    .single();
-  if (insErr) throw new Error(`reservation insert failed: ${insErr.message}`);
-
-  await writeAudit(ctx!.user, "CREATE_RESERVATION", "EMPLOYEE", "Reservation", (saved as { id: string }).id,
-    `Submitted reservation request: ${String(req.title ?? "Room Reservation")}`, resolveClientIp(_req).ip);
-
-  const dto = await findOwnedReservation((saved as { id: string }).id, ctx!.userId);
-  return jsonResponse(ok(dto ? toReservationDto(dto) : saved, "Reservation request submitted"), 200);
+  const attendees = Number.parseInt(String(req.expectedAttendees ?? 1), 10);
+  const { data, error } = await db.rpc("phase5_submit_reservation", {
+    p_room_id: roomId,
+    p_user_id: ctx!.userId,
+    p_title: String(req.title ?? ""),
+    p_purpose: String(req.purpose ?? req.description ?? ""),
+    p_description: req.description != null ? String(req.description) : null,
+    p_start: toUtcIso(String(req.startTime ?? "")),
+    p_end: toUtcIso(String(req.endTime ?? "")),
+    p_attendees: Number.isNaN(attendees) ? 0 : attendees,
+    p_actor_email: ctx!.email,
+    p_actor_role: "EMPLOYEE",
+  });
+  if (error) throw new Error(`reservation submission transaction failed: ${error.message}`);
+  return workflowResponse(data as WorkflowRpcResult, "Reservation request submitted for Facilities Officer review");
 }
 
 async function hasMaintenanceOverlap(roomId: string, start: string, end: string): Promise<boolean> {
@@ -471,51 +418,44 @@ async function handleUpdateReservation(ctx: AuthContext | null, _req: Request, b
   }
 
   const b = (body ?? {}) as Record<string, unknown>;
-  const fields: Record<string, unknown> = {};
-  if (b.title != null) fields.title = String(b.title);
-  if (b.description != null) fields.description = String(b.description);
-  if (b.expectedAttendees != null) {
-    const ea = Number.parseInt(String(b.expectedAttendees), 10);
-    if (Number.isNaN(ea)) throw new Error("expectedAttendees must be a number");
-    fields.expected_attendees = ea;
+  const attendees = Number.parseInt(String(b.expectedAttendees ?? r.expected_attendees ?? 1), 10);
+  const { data, error } = await db.rpc("phase5_reschedule_reservation", {
+    p_reservation_id: r.id,
+    p_start: toUtcIso(String(b.startTime ?? r.start_time ?? "")),
+    p_end: toUtcIso(String(b.endTime ?? r.end_time ?? "")),
+    p_attendees: Number.isNaN(attendees) ? 0 : attendees,
+    p_reason: String(b.reason ?? "Requester updated the pending reservation schedule."),
+    p_actor_id: ctx!.userId,
+    p_actor_email: ctx!.email,
+    p_actor_role: "EMPLOYEE",
+  });
+  if (error) throw new Error(`reservation reschedule transaction failed: ${error.message}`);
+  const result = data as WorkflowRpcResult;
+  if (!result.ok) return workflowResponse(result, "Reservation updated");
+  if (b.title != null || b.description != null) {
+    const fields: Record<string, unknown> = { updated_by: ctx!.email };
+    if (b.title != null) fields.title = String(b.title);
+    if (b.description != null) fields.description = String(b.description);
+    const { error: updateError } = await db.from("reservations").update(fields).eq("id", r.id).eq("user_id", ctx!.userId).eq("status", "PENDING");
+    if (updateError) throw new Error(`reservation metadata update failed: ${updateError.message}`);
   }
-  if (b.startTime != null) fields.start_time = toUtcIso(String(b.startTime));
-  if (b.endTime != null) fields.end_time = toUtcIso(String(b.endTime));
-
-  if (fields.end_time != null && fields.start_time != null && !(fields.end_time > fields.start_time)) {
-    return businessRule("End time must be after start time.");
-  }
-  fields.updated_by = ctx!.email;
-
-  const { data: saved, error: updErr } = await db.from("reservations").update(fields).eq("id", r.id)
-    .select("id, room_id, user_id, title, description, start_time, end_time, expected_attendees, status, rejection_reason, created_at")
-    .single();
-  if (updErr) throw new Error(`reservation update failed: ${updErr.message}`);
-
-  await writeAudit(ctx!.user, "UPDATE_RESERVATION", "EMPLOYEE", "Reservation", r.id,
-    `Updated reservation request: ${String(fields.title ?? r.title ?? "")}`, resolveClientIp(_req).ip);
-
   const dto = await findOwnedReservation(r.id, ctx!.userId);
-  return jsonResponse(ok(dto ? toReservationDto(dto) : saved, "Reservation updated"), 200);
+  return jsonResponse(ok(dto ? toReservationDto(dto) : result.data, "Reservation rescheduled; approval was reset"), 200);
 }
 
-async function handleCancelReservation(ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
+async function handleCancelReservation(ctx: AuthContext | null, _req: Request, body: unknown, p: RouteParams) {
   const r = await findOwnedReservation(p.id, ctx!.userId);
   if (!r) return notFound(`Reservation not found with id: '${p.id}'`);
-  if (r.status === "APPROVED" || r.status === "CHECKED_IN" || r.status === "COMPLETED") {
-    return businessRule(`A ${String(r.status).toLowerCase()} reservation cannot be cancelled.`);
-  }
-  const { data: saved, error: updErr } = await db.from("reservations").update({ status: "CANCELLED", updated_by: ctx!.email })
-    .eq("id", r.id)
-    .select("id, room_id, user_id, title, description, start_time, end_time, expected_attendees, status, rejection_reason, created_at")
-    .single();
-  if (updErr) throw new Error(`reservation update failed: ${updErr.message}`);
-
-  await writeAudit(ctx!.user, "CANCEL_RESERVATION", "EMPLOYEE", "Reservation", r.id,
-    `Cancelled reservation request: ${String(r.title ?? "")}`, resolveClientIp(_req).ip);
-
-  const dto = await findOwnedReservation(r.id, ctx!.userId);
-  return jsonResponse(ok(dto ? toReservationDto(dto) : saved, "Reservation cancelled"), 200);
+  const b = (body ?? {}) as Record<string, unknown>;
+  const { data, error } = await db.rpc("phase5_cancel_reservation", {
+    p_reservation_id: r.id,
+    p_reason: String(b.reason ?? "Cancelled by requester."),
+    p_actor_id: ctx!.userId,
+    p_actor_email: ctx!.email,
+    p_actor_role: "EMPLOYEE",
+  });
+  if (error) throw new Error(`reservation cancellation transaction failed: ${error.message}`);
+  return workflowResponse(data as WorkflowRpcResult, "Reservation cancelled and slot released");
 }
 
 // ---------------------------------------------------------------------------
@@ -769,7 +709,7 @@ async function handleCreateVisitor(ctx: AuthContext | null, _req: Request, body:
   if (insErr) throw new Error(`visitor insert failed: ${insErr.message}`);
 
   await writeAudit(ctx!.user, "REGISTER_VISITOR", "EMPLOYEE", "Visitor", (saved as { id: string }).id,
-    `Registered visitor: ${fullName}`, resolveClientIp(_req).ip);
+    "Visitor registration created; personal details remain in the protected visitor record.", resolveClientIp(_req).ip);
   return jsonResponse(ok(toVisitorDto(saved as unknown as VisitorRow), "Visitor registered"), 200);
 }
 
@@ -794,7 +734,7 @@ async function handleUpdateVisitor(ctx: AuthContext | null, _req: Request, body:
   if (updErr) throw new Error(`visitor update failed: ${updErr.message}`);
 
   await writeAudit(ctx!.user, "UPDATE_VISITOR", "EMPLOYEE", "Visitor", v.id,
-    `Updated visitor: ${String(saved.full_name ?? "")}`, resolveClientIp(_req).ip);
+    "Visitor registration updated; personal details remain in the protected visitor record.", resolveClientIp(_req).ip);
   return jsonResponse(ok(toVisitorDto(saved as unknown as VisitorRow), "Visitor updated"), 200);
 }
 

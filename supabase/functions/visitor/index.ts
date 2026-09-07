@@ -51,6 +51,7 @@ type VisitorRow = {
   qr_code_token: string | null;
   badge_number: string | null;
   host_id: string | null;
+  current_verification_id: string | null;
   users?: HostUser | null;
 };
 
@@ -71,7 +72,7 @@ function hostOf(v: VisitorRow): HostUser | null {
   return v.users ?? null;
 }
 
-function toVisitorDto(v: VisitorRow) {
+function toVisitorDto(v: VisitorRow, verification?: VerificationRow | null) {
   const h = hostOf(v);
   return {
     id: v.id,
@@ -126,7 +127,22 @@ function toVisitorDto(v: VisitorRow) {
     status: v.status,
     qrCodeToken: v.qr_code_token,
     badgeNumber: v.badge_number,
+    currentVerificationId: v.current_verification_id,
+    clearanceState: verification?.clearance_state ?? null,
+    automatedClearance: verification?.automated_clearance ?? null,
+    verificationStatus: verification?.verification_status ?? null,
+    verificationReviewedAt: verification?.reviewed_at ?? null,
   };
+}
+
+async function currentClearanceMap(rows: VisitorRow[]): Promise<Map<string, VerificationRow>> {
+  const ids = rows.map((row) => row.current_verification_id).filter((id): id is string => Boolean(id));
+  const result = new Map<string, VerificationRow>();
+  if (ids.length === 0) return result;
+  const { data, error } = await db.from("visitor_verifications").select("*").in("id", ids);
+  if (error) throw new Error(`visitor clearance load failed: ${error.message}`);
+  for (const row of (data as unknown as VerificationRow[]) ?? []) result.set(row.id, row);
+  return result;
 }
 
 async function loadVisitor(id: string): Promise<VisitorRow | null> {
@@ -145,35 +161,13 @@ async function loadVisitor(id: string): Promise<VisitorRow | null> {
 // Verification helpers (port of VisitorVerificationService)
 // ---------------------------------------------------------------------------
 
-const DRIVERS_LICENSE = /^[A-Z]\d{9,10}$/;
-const GENERIC_ID = /^[A-Z0-9]{6,}$/;
-
-function normalize(raw: string | null): string {
-  if (raw == null) return "";
-  return raw.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-}
-
-function matchesFormat(type: string, normalized: string): boolean {
-  if (normalized.length === 0) return false;
-  return type === "DRIVERS_LICENSE"
-    ? DRIVERS_LICENSE.test(normalized)
-    : GENERIC_ID.test(normalized);
-}
-
-function nameMatches(watchlistName: string | null, visitorName: string | null): boolean {
-  if (watchlistName == null || visitorName == null) return false;
-  const a = watchlistName.trim().toLowerCase();
-  const b = visitorName.trim().toLowerCase();
-  if (a.length < 4 || b.length < 4) return false;
-  return a.includes(b) || b.includes(a);
-}
-
 type WatchlistRow = {
   id: string;
   full_name: string;
   id_number: string | null;
   reason: string | null;
   status: string;
+  severity: string;
   created_at: string | null;
 };
 
@@ -184,6 +178,7 @@ function toWatchlistDto(w: WatchlistRow) {
     idNumber: w.id_number,
     reason: w.reason,
     status: w.status,
+    severity: w.severity,
     createdAt: w.created_at,
   };
 }
@@ -202,6 +197,13 @@ function toVerificationDto(v: VerificationRow) {
     verifiedBy: v.verified_by,
     notes: v.notes,
     createdAt: v.created_at,
+    automatedClearance: v.automated_clearance,
+    clearanceState: v.clearance_state,
+    matchedWatchlistEntryId: v.matched_watchlist_entry_id,
+    matchType: v.match_type,
+    reviewedBy: v.reviewed_by,
+    reviewedAt: v.reviewed_at,
+    reviewNotes: v.review_notes,
   };
 }
 
@@ -218,7 +220,31 @@ type VerificationRow = {
   verified_by: string | null;
   notes: string | null;
   created_at: string | null;
+  automated_clearance: string;
+  clearance_state: string;
+  matched_watchlist_entry_id: string | null;
+  match_type: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_notes: string | null;
 };
+
+type WorkflowRpcResult = {
+  ok: boolean;
+  data?: Record<string, unknown>;
+  errorCode?: string;
+  message?: string;
+};
+
+function workflowResponse(result: WorkflowRpcResult, successMessage: string) {
+  if (result.ok) return jsonResponse(ok(result.data ?? {}, successMessage), 200);
+  const code = result.errorCode ?? "BUSINESS_RULE_VIOLATION";
+  const status = code === "ACCESS_DENIED" ? 403
+    : code.endsWith("_NOT_FOUND") ? 404
+    : ["VISITOR_ALREADY_CHECKED_IN", "VISITOR_INVALID_STATUS", "VISITOR_REVIEW_REQUIRED", "VISITOR_BLOCKED"].includes(code) ? 409
+    : 400;
+  return jsonResponse(fail(result.message ?? "Workflow request rejected.", code), status);
+}
 
 // ---------------------------------------------------------------------------
 // Handlers
@@ -233,18 +259,32 @@ async function handleListVisitors() {
     .order("created_at", { ascending: false });
   if (error) throw new Error(`visitors load failed: ${error.message}`);
   const rows = (data as unknown as VisitorRow[]) ?? [];
-  return jsonResponse(ok(rows.map(toVisitorDto), "Visitors list retrieved"), 200);
+  const clearances = await currentClearanceMap(rows);
+  return jsonResponse(ok(rows.map((row) => toVisitorDto(
+    row,
+    row.current_verification_id ? clearances.get(row.current_verification_id) ?? null : null,
+  )), "Visitors list retrieved"), 200);
 }
 
-async function handleRegister(_ctx: AuthContext | null, _req: Request, body: unknown) {
+async function handleRegister(ctx: AuthContext | null, req: Request, body: unknown) {
   const b = (body ?? {}) as Record<string, unknown>;
-  const fullName = typeof b.fullName === "string" ? b.fullName : null;
+  const fullName = typeof b.fullName === "string" ? b.fullName.trim() : "";
   const email = typeof b.email === "string" ? b.email : "";
   const hostId = typeof b.hostId === "string"
     ? b.hostId
     : typeof (b.host as { id?: unknown } | undefined)?.id === "string"
       ? (b.host as { id: string }).id
       : null;
+
+  const purpose = typeof b.purposeOfVisit === "string" ? b.purposeOfVisit.trim() : "";
+  const expectedArrival = typeof b.expectedArrival === "string" ? b.expectedArrival : null;
+  if (!fullName || !purpose || !expectedArrival || !hostId) {
+    return badRequest("Full name, purpose, expected arrival, and an active host are required.", "VALIDATION_ERROR");
+  }
+  const { data: host, error: hostError } = await db.from("users")
+    .select("id").eq("id", hostId).eq("status", "ACTIVE").eq("is_deleted", false).maybeSingle();
+  if (hostError) throw new Error(`host lookup failed: ${hostError.message}`);
+  if (!host) return badRequest("The selected host is unavailable.", "VISITOR_HOST_REQUIRED");
 
   const { data: saved, error } = await db.from("visitors").insert({
     full_name: fullName,
@@ -253,63 +293,53 @@ async function handleRegister(_ctx: AuthContext | null, _req: Request, body: unk
     company: typeof b.company === "string" ? b.company : null,
     id_number: typeof b.idNumber === "string" ? b.idNumber : null,
     host_id: hostId,
-    purpose_of_visit: typeof b.purposeOfVisit === "string" ? b.purposeOfVisit : null,
-    expected_arrival: typeof b.expectedArrival === "string"
-      ? toUtcIso(b.expectedArrival)
-      : null,
+    purpose_of_visit: purpose,
+    expected_arrival: toUtcIso(expectedArrival),
     status: "REGISTERED",
     qr_code_token: "QR-" + crypto.randomUUID().substring(0, 8).toUpperCase(),
     badge_number: typeof b.badgeNumber === "string" ? b.badgeNumber : null,
+    created_by: ctx!.email,
     updated_at: naiveIso(),
   }).select(
     "*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)",
   ).single();
   if (error) throw new Error(`visitor register failed: ${error.message}`);
 
+  await writeAudit(ctx?.user ?? null, "REGISTER_VISITOR", MODULE, "Visitor",
+    (saved as { id: string }).id, "Visitor registration created for an active host.",
+    resolveClientIp(req).ip, "INFO");
+
   return jsonResponse(ok(toVisitorDto(saved as unknown as VisitorRow), "Visitor registered and pass generated"), 200);
 }
 
-async function handleCheckIn(_ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
-  const v = await loadVisitor(p.id);
-  if (!v) return emptyNotFound();
-
-  const { data: saved, error } = await db.from("visitors")
-    .update({
-      status: "CHECKED_IN",
-      actual_arrival: new Date().toISOString(),
-      updated_at: naiveIso(),
-    })
-    .eq("id", p.id)
-    .select(
-      "*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)",
-    )
-    .single();
-  if (error) throw new Error(`visitor check-in failed: ${error.message}`);
-
-  // Side effect only - never throws, response shape unchanged.
-  await notifyHostOfArrival(saved as unknown as VisitorRow);
-
-  return jsonResponse(ok(toVisitorDto(saved as unknown as VisitorRow), "Visitor checked in"), 200);
+async function handleCheckIn(ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
+  const { data, error } = await db.rpc("phase5_check_in_visitor", {
+    p_visitor_id: p.id,
+    p_actor_id: ctx!.userId,
+    p_actor_email: ctx!.email,
+    p_actor_role: "FACILITIES_OFFICER",
+  });
+  if (error) throw new Error(`visitor check-in transaction failed: ${error.message}`);
+  const result = data as WorkflowRpcResult;
+  if (!result.ok) return workflowResponse(result, "Visitor checked in");
+  const saved = await loadVisitor(p.id);
+  if (!saved) return emptyNotFound();
+  await notifyHostOfArrival(saved);
+  return jsonResponse(ok(toVisitorDto(saved), "Visitor checked in"), 200);
 }
 
-async function handleCheckOut(_ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
-  const v = await loadVisitor(p.id);
-  if (!v) return emptyNotFound();
-
-  const { data: saved, error } = await db.from("visitors")
-    .update({
-      status: "CHECKED_OUT",
-      actual_departure: new Date().toISOString(),
-      updated_at: naiveIso(),
-    })
-    .eq("id", p.id)
-    .select(
-      "*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)",
-    )
-    .single();
-  if (error) throw new Error(`visitor check-out failed: ${error.message}`);
-
-  return jsonResponse(ok(toVisitorDto(saved as unknown as VisitorRow), "Visitor checked out"), 200);
+async function handleCheckOut(ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
+  const { data, error } = await db.rpc("phase5_check_out_visitor", {
+    p_visitor_id: p.id,
+    p_actor_id: ctx!.userId,
+    p_actor_email: ctx!.email,
+    p_actor_role: "FACILITIES_OFFICER",
+  });
+  if (error) throw new Error(`visitor check-out transaction failed: ${error.message}`);
+  const result = data as WorkflowRpcResult;
+  if (!result.ok) return workflowResponse(result, "Visitor checked out");
+  const saved = await loadVisitor(p.id);
+  return saved ? jsonResponse(ok(toVisitorDto(saved), "Visitor checked out"), 200) : emptyNotFound();
 }
 
 async function handleVerify(ctx: AuthContext | null, _req: Request, body: unknown, p: RouteParams) {
@@ -317,13 +347,35 @@ async function handleVerify(ctx: AuthContext | null, _req: Request, body: unknow
   const rawNumber = (body as Record<string, unknown> | null)?.idNumber;
   const idNumber = rawNumber == null ? null : String(rawNumber);
 
-  const result = await verify(p.id, idType, idNumber, ctx);
-  if (!result) return emptyNotFound();
+  const { data, error } = await db.rpc("phase5_verify_visitor", {
+    p_visitor_id: p.id,
+    p_id_type: idType,
+    p_id_number: idNumber,
+    p_actor_id: ctx!.userId,
+    p_actor_email: ctx!.email,
+    p_actor_role: "FACILITIES_OFFICER",
+  });
+  if (error) throw new Error(`visitor verification transaction failed: ${error.message}`);
+  const result = data as WorkflowRpcResult;
+  if (!result.ok) return workflowResponse(result, "Visitor verified");
+  return jsonResponse(ok(toVerificationDto(result.data as unknown as VerificationRow), "Visitor verification completed"), 200);
+}
 
-  const message = result.watchlist_status === "FLAGGED"
-    ? "Visitor FLAGGED - watchlist match, security alert raised"
-    : "Visitor verified - no watchlist match";
-  return jsonResponse(ok(toVerificationDto(result), message), 200);
+async function handleReview(ctx: AuthContext | null, _req: Request, body: unknown, p: RouteParams) {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const { data, error } = await db.rpc("phase5_review_visitor", {
+    p_visitor_id: p.id,
+    p_verification_id: p.verificationId,
+    p_decision: String(b.decision ?? ""),
+    p_notes: String(b.notes ?? ""),
+    p_actor_id: ctx!.userId,
+    p_actor_email: ctx!.email,
+    p_actor_role: "FACILITIES_OFFICER",
+  });
+  if (error) throw new Error(`visitor review transaction failed: ${error.message}`);
+  const result = data as WorkflowRpcResult;
+  if (!result.ok) return workflowResponse(result, "Visitor review completed");
+  return jsonResponse(ok(toVerificationDto(result.data as unknown as VerificationRow), "Visitor review completed"), 200);
 }
 
 async function handleVerifications(_ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
@@ -335,6 +387,15 @@ async function handleVerifications(_ctx: AuthContext | null, _req: Request, _bod
   if (error) throw new Error(`verifications load failed: ${error.message}`);
   const rows = (data as unknown as VerificationRow[]) ?? [];
   return jsonResponse(ok(rows.map(toVerificationDto), "Verification history retrieved"), 200);
+}
+
+async function handleVisitorHistory(_ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
+  const { data, error } = await db.from("visitor_workflow_events")
+    .select("id, visitor_id, verification_id, event_type, from_status, to_status, actor_id, actor_email, actor_role, details, occurred_at")
+    .eq("visitor_id", p.id)
+    .order("occurred_at", { ascending: false });
+  if (error) throw new Error(`visitor history load failed: ${error.message}`);
+  return jsonResponse(ok(data ?? [], "Visitor workflow history retrieved"), 200);
 }
 
 async function handleListWatchlist() {
@@ -356,11 +417,16 @@ async function handleAddWatchlist(ctx: AuthContext | null, _req: Request, body: 
     }
     const rawId = typeof b.idNumber === "string" ? b.idNumber : null;
     const reason = typeof b.reason === "string" ? b.reason : null;
+    const severity = typeof b.severity === "string" ? b.severity.trim().toUpperCase() : "HIGH";
+    if (!["LOW", "MEDIUM", "HIGH", "CRITICAL"].includes(severity)) {
+      throw new Error("severity must be LOW, MEDIUM, HIGH, or CRITICAL");
+    }
 
     const { data: saved, error } = await db.from("visitor_watchlist").insert({
       full_name: fullName.trim(),
       id_number: rawId != null && rawId.trim() !== "" ? rawId.trim() : null,
       reason,
+      severity,
       status: "ACTIVE",
       created_at: naiveIso(),
       updated_at: naiveIso(),
@@ -369,7 +435,7 @@ async function handleAddWatchlist(ctx: AuthContext | null, _req: Request, body: 
 
     await writeAudit(ctx?.user ?? null, "ADD_VISITOR_WATCHLIST", MODULE, "VisitorWatchlist",
       (saved as { id: string }).id,
-      `Added '${saved.full_name}' to the visitor watchlist. Reason: ${reason ?? "not recorded"}`,
+      `Protected watchlist entry added with ${severity} severity; identity details remain in the protected source record.`,
       ctx ? resolveClientIp(_req).ip : null, "INFO");
 
     return jsonResponse(ok(toWatchlistDto(saved as unknown as WatchlistRow), "Watchlist entry added"), 200);
@@ -401,146 +467,12 @@ async function handleWatchlistStatus(ctx: AuthContext | null, _req: Request, bod
     if (error) throw new Error(`watchlist update failed: ${error.message}`);
 
     await writeAudit(ctx?.user ?? null, "UPDATE_VISITOR_WATCHLIST", MODULE, "VisitorWatchlist", p.id,
-      `Watchlist entry '${saved.full_name}' changed from ${previous} to ${next}`,
+      `Protected watchlist entry status changed from ${previous} to ${next}; identity details remain in the protected source record.`,
       ctx ? resolveClientIp(_req).ip : null, "INFO");
 
     return jsonResponse(ok(toWatchlistDto(saved as unknown as WatchlistRow), "Watchlist entry updated"), 200);
   } catch (e) {
     return badRequest((e as Error).message, "VALIDATION_ERROR");
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Verification core (port of VisitorVerificationService.verify)
-// ---------------------------------------------------------------------------
-
-async function verify(
-  visitorId: string,
-  idType: string | null,
-  idNumber: string | null,
-  actor: AuthContext | null,
-): Promise<VerificationRow | null> {
-  const visitor = await loadVisitor(visitorId);
-  if (!visitor) return null;
-
-  const resolvedType = idType != null ? idType : "OTHER";
-  const presented = idNumber != null && idNumber.trim() !== ""
-    ? idNumber.trim()
-    : visitor.id_number ?? "";
-
-  const normalized = normalize(presented);
-  const parses = matchesFormat(resolvedType, normalized);
-
-  // --- Screen against the active watchlist ---------------------------
-  const { data: activeRows, error: wlErr } = await db.from("visitor_watchlist")
-    .select("*")
-    .eq("status", "ACTIVE")
-    .eq("is_deleted", false);
-  if (wlErr) throw new Error(`watchlist screen failed: ${wlErr.message}`);
-  const active = (activeRows as unknown as WatchlistRow[]) ?? [];
-
-  let idHit: WatchlistRow | null = null;
-  if (normalized.length > 0) {
-    idHit = active.find((w) => normalized === normalize(w.id_number)) ?? null;
-  }
-
-  let nameHit: WatchlistRow | null = null;
-  if (idHit == null) {
-    nameHit = active.find((w) => nameMatches(w.full_name, visitor.full_name)) ?? null;
-  }
-
-  let watchlistStatus: string;
-  let score: number;
-  let notes: string;
-
-  if (idHit != null) {
-    watchlistStatus = "FLAGGED";
-    score = 0.99;
-    notes = `Watchlist ID match: '${idHit.full_name}'. Reason: ${idHit.reason ?? "not recorded"}`;
-  } else if (nameHit != null) {
-    watchlistStatus = "FLAGGED";
-    score = 0.8;
-    notes = `Watchlist name match: '${nameHit.full_name}'. Reason: ${nameHit.reason ?? "not recorded"}. ID number did not match - confirm identity manually.`;
-  } else {
-    watchlistStatus = "CLEAR";
-    score = Math.min(0.4 + (parses ? 0.3 : 0), 0.95);
-    notes = normalized.length === 0
-      ? "No watchlist match. No ID number was presented, so the score reflects name screening only."
-      : parses
-        ? `No watchlist match. ID number matches the expected ${resolvedType} format.`
-        : `No watchlist match. ID number does not match the expected ${resolvedType} format - inspect the physical ID.`;
-  }
-  score = Math.round(score * 100) / 100;
-
-  const extractedFields = buildExtractedFields(visitor, resolvedType, presented, normalized, parses);
-  const now = naiveIso();
-
-  const { data: saved, error } = await db.from("visitor_verifications").insert({
-    visitor_id: visitor.id,
-    id_type: resolvedType,
-    id_number: presented,
-    extracted_fields: extractedFields,
-    match_score: score,
-    watchlist_status: watchlistStatus,
-    verification_status: "VERIFIED",
-    verified_at: now,
-    verified_by: actor ? actor.email : "system",
-    notes,
-    created_at: now,
-    updated_at: now,
-  }).select("*").single();
-  if (error) throw new Error(`verification insert failed: ${error.message}`);
-  const result = saved as unknown as VerificationRow;
-
-  if (watchlistStatus === "FLAGGED") {
-    await raiseWatchlistAlert(visitor, result, notes);
-  }
-
-  await writeAudit(actor?.user ?? null, "VERIFY_VISITOR", MODULE, "Visitor", visitor.id,
-    `Verified visitor '${visitor.full_name}' (${resolvedType}): ${watchlistStatus}, score ${result.match_score}. ${notes}`,
-    actor ? actor.ip : null, "INFO");
-
-  return result;
-}
-
-function buildExtractedFields(
-  visitor: VisitorRow,
-  type: string,
-  presented: string,
-  normalized: string,
-  parses: boolean,
-): Record<string, unknown> {
-  const fields: Record<string, unknown> = {
-    idType: type,
-    rawIdNumber: presented,
-    normalizedIdNumber: normalized,
-    formatValid: parses,
-    detectedFormat: parses
-      ? (type === "DRIVERS_LICENSE" ? "PH_DRIVERS_LICENSE" : "ALPHANUMERIC")
-      : "UNRECOGNIZED",
-  };
-  if (parses && normalized.length > 0) {
-    fields["prefix"] = normalized.substring(0, 1);
-    fields["serial"] = normalized.substring(1);
-  }
-  fields["visitorFullName"] = visitor.full_name;
-  fields["visitorCompany"] = visitor.company;
-  fields["source"] = "HEURISTIC_PARSER";
-  return fields;
-}
-
-async function raiseWatchlistAlert(visitor: VisitorRow, verification: VerificationRow, notes: string) {
-  try {
-    await db.from("security_alerts").insert({
-      title: "Visitor watchlist match",
-      description: `Visitor '${visitor.full_name}' (id ${visitor.id}) matched an active watchlist entry during verification ${verification.id}. ${notes}`,
-      severity: "HIGH",
-      alert_type: "VISITOR_WATCHLIST",
-      target_ip: "",
-      status: "UNRESOLVED",
-    });
-  } catch (e) {
-    console.error("watchlist security alert insert failed:", (e as Error).message);
   }
 }
 
@@ -563,24 +495,23 @@ async function notifyHostOfArrival(visitor: VisitorRow): Promise<boolean> {
     }
     message += ` arrived at ${when}. Purpose: ${visitor.purpose_of_visit ?? "not stated"}.`;
 
-    const { data: saved, error } = await db.from("employee_notifications").insert({
+    const { error } = await db.from("employee_notifications").insert({
       recipient_id: host.id,
       title: `Visitor arrived: ${visitor.full_name}`,
       message,
       type: "VISITOR_ARRIVAL",
       related_entity_type: "Visitor",
       related_entity_id: visitor.id,
+      dedup_key: `phase5:visitor:${visitor.id}:host-arrival`,
       is_read: false,
       created_at: naiveIso(),
       updated_at: naiveIso(),
-    }).select("id").single();
+    });
     if (error) {
+      if (error.code === "23505") return true;
       console.error("VISITOR_ARRIVAL notification insert failed:", error.message);
       return false;
     }
-    console.log(
-      `Notification created: type=VISITOR_ARRIVAL recipient=${host.id} title=Visitor arrived: ${visitor.full_name}`,
-    );
     return true;
   } catch (e) {
     console.error(`Failed to notify host of visitor arrival (${visitor.id}):`, (e as Error).message);
@@ -601,18 +532,21 @@ function parseIdType(raw: unknown): string | null {
     : "OTHER";
 }
 
-const VISITOR_ROLES = ["FACILITIES_OFFICER", "SUPER_ADMIN", "FACILITIES_MANAGER"];
+const VISITOR_VIEW_ROLES = ["FACILITIES_OFFICER", "FACILITIES_MANAGER"];
+const VISITOR_OPERATIONS_ROLES = ["FACILITIES_OFFICER"];
 
 const routes = [
-  { method: "GET", path: "/visitors", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleListVisitors },
-  { method: "POST", path: "/visitors/register", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleRegister },
-  { method: "POST", path: "/visitors/:id/check-in", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleCheckIn },
-  { method: "POST", path: "/visitors/:id/check-out", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleCheckOut },
-  { method: "POST", path: "/visitors/:id/verify", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleVerify },
-  { method: "GET", path: "/visitors/:id/verifications", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleVerifications },
-  { method: "GET", path: "/visitors/watchlist", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleListWatchlist },
-  { method: "POST", path: "/visitors/watchlist", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleAddWatchlist },
-  { method: "POST", path: "/visitors/watchlist/:id/status", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleWatchlistStatus },
+  { method: "GET", path: "/visitors", guard: { kind: "roles", roles: VISITOR_VIEW_ROLES }, handler: handleListVisitors },
+  { method: "POST", path: "/visitors/register", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleRegister },
+  { method: "POST", path: "/visitors/:id/check-in", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleCheckIn },
+  { method: "POST", path: "/visitors/:id/check-out", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleCheckOut },
+  { method: "POST", path: "/visitors/:id/verify", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleVerify },
+  { method: "POST", path: "/visitors/:id/verifications/:verificationId/review", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleReview },
+  { method: "GET", path: "/visitors/:id/verifications", guard: { kind: "roles", roles: VISITOR_VIEW_ROLES }, handler: handleVerifications },
+  { method: "GET", path: "/visitors/:id/history", guard: { kind: "roles", roles: VISITOR_VIEW_ROLES }, handler: handleVisitorHistory },
+  { method: "GET", path: "/visitors/watchlist", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleListWatchlist },
+  { method: "POST", path: "/visitors/watchlist", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleAddWatchlist },
+  { method: "POST", path: "/visitors/watchlist/:id/status", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleWatchlistStatus },
 ] as const;
 
 Deno.serve(createHandler(routes as never, { name: "visitor" }));

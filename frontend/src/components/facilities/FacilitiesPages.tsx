@@ -107,6 +107,7 @@ export const ReservationsPage: React.FC = () => {
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-600">
             <option value="">All Status</option>
             <option value="PENDING">Pending</option>
+            <option value="PENDING_MANAGER_APPROVAL">Waiting for Manager</option>
             <option value="APPROVED">Approved</option>
             <option value="REJECTED">Rejected</option>
             <option value="CANCELLED">Cancelled</option>
@@ -187,12 +188,13 @@ export const ApprovalPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const d = await facilitiesService.getReservations({ status: 'PENDING' });
+      const d = await facilitiesService.getReservations({ status: 'PENDING_MANAGER_APPROVAL' });
       setReservations(d.reservations || []);
     } catch (err: any) {
       setError(err?.message || 'Failed to load');
@@ -207,13 +209,25 @@ export const ApprovalPage: React.FC = () => {
   useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
 
   const handleApprove = async (id: string) => {
-    await facilitiesService.approveReservation(id);
-    setReservations(prev => prev.filter(r => r.id !== id));
+    setActionError(null);
+    try {
+      await facilitiesService.approveReservation(id, 'Final availability and operational review confirmed.');
+      setReservations(prev => prev.filter(r => r.id !== id));
+    } catch (err: any) {
+      setActionError(err?.response?.data?.message || 'Approval was rejected by the current availability check.');
+    }
   };
 
   const handleReject = async (id: string) => {
-    await facilitiesService.rejectReservation(id);
-    setReservations(prev => prev.filter(r => r.id !== id));
+    const reason = window.prompt('Enter the rejection reason:');
+    if (!reason?.trim()) return;
+    setActionError(null);
+    try {
+      await facilitiesService.rejectReservation(id, reason.trim());
+      setReservations(prev => prev.filter(r => r.id !== id));
+    } catch (err: any) {
+      setActionError(err?.response?.data?.message || 'Reservation could not be rejected.');
+    }
   };
 
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, any>>({});
@@ -248,7 +262,7 @@ export const ApprovalPage: React.FC = () => {
       <div className="glass-panel flex items-center justify-between gap-3 p-5">
         <div>
           <h2 className="text-lg font-bold text-slate-900">Reservation Approval Queue</h2>
-          <p className="text-xs text-slate-500">Review each request and approve or reject it</p>
+          <p className="text-xs text-slate-500">Final decisions for requests already validated by a Facilities Officer</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600">
@@ -257,6 +271,8 @@ export const ApprovalPage: React.FC = () => {
           <button onClick={() => setRetry(r => r + 1)} className="rounded-lg border border-slate-200 bg-slate-100 p-2 transition hover:bg-slate-200" title="Refresh"><RefreshCw className="h-4 w-4 text-slate-400" /></button>
         </div>
       </div>
+
+      {actionError && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{actionError}</div>}
 
       {reservations.length === 0 ? (
         <div className="card-stat flex min-h-40 flex-col items-center justify-center border-dashed px-4 text-center">

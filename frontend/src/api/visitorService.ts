@@ -38,8 +38,9 @@ export const visitorService = {
     fullName: string,
     idNumber?: string,
     reason?: string,
+    severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' = 'HIGH',
   ): Promise<VisitorWatchlistEntry> {
-    const { data } = await apiClient.post('/visitors/watchlist', { fullName, idNumber, reason });
+    const { data } = await apiClient.post('/visitors/watchlist', { fullName, idNumber, reason, severity });
     return data?.data;
   },
 
@@ -54,5 +55,28 @@ export const visitorService = {
   async checkIn(id: string): Promise<any> {
     const { data } = await apiClient.post(`/visitors/${id}/check-in`);
     return data?.data;
+  },
+
+  async checkOut(id: string): Promise<any> {
+    const { data } = await apiClient.post(`/visitors/${id}/check-out`);
+    return data?.data;
+  },
+
+  async reviewVisitor(
+    visitorId: string,
+    verificationId: string,
+    decision: 'CLEAR' | 'BLOCK',
+    notes: string,
+  ): Promise<VisitorVerification> {
+    const { data } = await apiClient.post(
+      `/visitors/${visitorId}/verifications/${verificationId}/review`,
+      { decision, notes },
+    );
+    return data?.data;
+  },
+
+  async history(id: string): Promise<any[]> {
+    const { data } = await apiClient.get(`/visitors/${id}/history`);
+    return data?.data ?? [];
   },
 };

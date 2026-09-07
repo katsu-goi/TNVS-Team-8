@@ -139,6 +139,12 @@ function toContractDto(c: Row) {
     status: c.status ?? null,
     aiAssessedRiskLevel: c.ai_assessed_risk_level ?? null,
     aiRiskSummary: c.ai_risk_summary ?? null,
+    aiAnalysisReviewStatus: c.ai_analysis_review_status ?? "NOT_ANALYZED",
+    associatedDocumentId: c.document_id ?? null,
+    approvedBy: c.approved_by ?? null,
+    approvedAt: c.approved_at ?? null,
+    activatedBy: c.activated_by ?? null,
+    activatedAt: c.activated_at ?? null,
     createdAt: createdAtUtc(c.created_at),
   };
 }
@@ -571,14 +577,12 @@ async function handleCreateContract(ctx: AuthContext | null, req: Request, body:
   }
 
   let type: string;
-  let risk: string | null;
   let startDate: string | null;
   let endDate: string | null;
   let renewal: string | null;
   let value: string | null;
   try {
     type = parseType(b.type);
-    risk = parseRisk(b.aiAssessedRiskLevel);
     startDate = parseDate(b.startDate);
     endDate = parseDate(b.endDate);
     renewal = parseDate(b.renewalNoticeDate);
@@ -598,8 +602,10 @@ async function handleCreateContract(ctx: AuthContext | null, req: Request, body:
     end_date: endDate,
     renewal_notice_date: renewal,
     status: "DRAFT",
-    ai_assessed_risk_level: risk,
-    ai_risk_summary: str(b.aiRiskSummary),
+    ai_assessed_risk_level: null,
+    ai_risk_summary: null,
+    ai_analysis_review_status: "NOT_ANALYZED",
+    created_by: ctx ? ctx.email : "SYSTEM",
     updated_at: now,
     updated_by: ctx ? ctx.email : "SYSTEM",
   }).select("*").single();
@@ -639,8 +645,6 @@ async function handleUpdateContract(ctx: AuthContext | null, req: Request, body:
     if ("startDate" in b) patch["start_date"] = parseDate(b.startDate);
     if ("endDate" in b) patch["end_date"] = parseDate(b.endDate);
     if ("renewalNoticeDate" in b) patch["renewal_notice_date"] = parseDate(b.renewalNoticeDate);
-    if ("aiAssessedRiskLevel" in b) patch["ai_assessed_risk_level"] = parseRisk(b.aiAssessedRiskLevel);
-    if ("aiRiskSummary" in b) patch["ai_risk_summary"] = str(b.aiRiskSummary);
   } catch (e) {
     return businessRule((e as Error).message);
   }

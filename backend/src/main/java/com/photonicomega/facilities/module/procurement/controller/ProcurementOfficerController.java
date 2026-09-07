@@ -236,14 +236,6 @@ public class ProcurementOfficerController {
         return ResponseEntity.ok(ApiResponse.success(toContractDto(c), "Contract submitted for review"));
     }
 
-    @PostMapping("/contracts/{id}/approve")
-    @Operation(summary = "Approve a contract under review")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> approveContract(
-            @PathVariable UUID id, @AuthenticationPrincipal UserDetails userDetails) {
-        Contract c = procurementService.approveContract(id, resolveUser(userDetails));
-        return ResponseEntity.ok(ApiResponse.success(toContractDto(c), "Contract approved"));
-    }
-
     @PostMapping("/contracts/{id}/activate")
     @Operation(summary = "Activate an approved contract")
     public ResponseEntity<ApiResponse<Map<String, Object>>> activateContract(

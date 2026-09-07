@@ -600,7 +600,7 @@ function toConfigDto(module: any, cfg: Record<string, unknown> | null, providers
 
 async function httpGetJson(url: string, headers: Record<string, string>): Promise<any> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15000);
+  const timer = setTimeout(() => ctrl.abort(), 20000);
   try {
     const res = await fetch(url, { headers, signal: ctrl.signal, redirect: "follow" });
     if (!res.ok) {
@@ -788,7 +788,7 @@ async function verifyOpenAiCompatibleCredential(provider: ProviderDto): Promise<
 
 async function httpPostJson(url: string, headers: Record<string, string>, payload: unknown): Promise<any> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 20000);
+  const timer = setTimeout(() => ctrl.abort(), 45000);
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -848,27 +848,6 @@ function connectionFailureMessage(e: unknown): string {
   if (message.toLowerCase().includes("api key")) return message;
   if (message.toLowerCase().includes("aborted")) return "Provider connection timed out.";
   return "Provider connectivity could not be verified. Check the provider type, Base URL, and credential.";
-}
-
-function analyzeContract(): any {
-  return {
-    overallRisk: "LOW",
-    summary: "AI Risk Assessment: Contract contains standard commercial terms with acceptable risk parameters.",
-    extractedClauses: [
-      {
-        clauseType: "Indemnification & Liability",
-        content: "Party A shall indemnify Party B up to maximum damages of $1,000,000.",
-        riskLevel: "MEDIUM",
-        notes: "Standard liability cap included.",
-      },
-      {
-        clauseType: "Termination Clause",
-        content: "Either party may terminate with 30 days written notice.",
-        riskLevel: "LOW",
-        notes: "Standard 30-day notice window.",
-      },
-    ],
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1124,14 +1103,36 @@ function providerCredentialDiagnostics(body: unknown, providerId?: string) {
 }
 
 async function verifyProviderCredential(p: ProviderDto): Promise<string[]> {
-  const catalog = await fetchModels(p);
-  if (catalog.length === 0) throw new Error("Provider returned no models");
-  const type = p.type.toLowerCase();
-  const local = ["local", "ollama", "lm studio"].some((value) => type.includes(value));
-  if (!local && !["gemini", "claude", "anthropic", "azure"].includes(type)) {
-    await verifyOpenAiCompatibleCredential(p);
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const catalog = await fetchModels(p);
+      if (catalog.length === 0) throw new Error("Provider returned no models");
+      const type = p.type.toLowerCase();
+      const local = ["local", "ollama", "lm studio"].some((value) => type.includes(value));
+      if (!local && !["gemini", "claude", "anthropic", "azure"].includes(type)) {
+        await verifyOpenAiCompatibleCredential(p);
+      }
+      return catalog;
+    } catch (error) {
+      lastError = error;
+      if (attempt === 2 || !isTransientProviderError(error)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
   }
-  return catalog;
+  throw lastError;
+}
+
+function isTransientProviderError(error: unknown): boolean {
+  const value = error as { name?: unknown; status?: unknown; message?: unknown };
+  const status = Number(value?.status);
+  if (Number.isFinite(status)) {
+    return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+  }
+  const name = String(value?.name ?? "").toLowerCase();
+  const message = String(value?.message ?? "").toLowerCase();
+  return name === "aborterror" || name === "typeerror"
+    || message.includes("aborted") || message.includes("timed out") || message.includes("fetch failed");
 }
 
 async function clearOtherDefaults(providerId: string): Promise<void> {
@@ -1422,8 +1423,7 @@ async function toggleModule(_ctx: unknown, _req: Request, _body: unknown, params
   ), 200);
 }
 
-async function updateModuleConfig(ctx: AuthContext | null, req: Request, _body: unknown, params: Record<string, string>) {
-  const body = await req.json().catch(() => null);
+async function updateModuleConfig(ctx: AuthContext | null, req: Request, body: unknown, params: Record<string, string>) {
   const b = (body ?? {}) as Record<string, any>;
   const module = MODULES.find((m) => m.id === params.id);
   if (!module) {
@@ -1431,6 +1431,16 @@ async function updateModuleConfig(ctx: AuthContext | null, req: Request, _body: 
   }
 
   const providerId = b.providerId != null ? String(b.providerId) : null;
+  const requestedModel = b.model != null ? String(b.model).trim() : "";
+  if (["mod-1", "mod-2"].includes(params.id) && (!providerId || providerId.trim() === "" || requestedModel === "")) {
+    const isContractAi = params.id === "mod-2";
+    return jsonResponse({
+      success: false,
+      message: `${isContractAi ? "Contract & Legal Risk Analysis" : "Document Classification & OCR"} requires an explicitly assigned provider and model.`,
+      errorCode: isContractAi ? "CONTRACT_AI_NOT_CONFIGURED" : "DOCUMENT_AI_NOT_CONFIGURED",
+      timestamp: new Date().toISOString(),
+    }, 400);
+  }
   if (providerId != null && providerId.trim() !== "") {
     const providers = await loadProviders();
     if (!providers.some((p) => p.id === providerId)) {
@@ -1458,7 +1468,7 @@ async function updateModuleConfig(ctx: AuthContext | null, req: Request, _body: 
   const newCfg = {
     enabled: b.enabled === true,
     provider_id: providerId,
-    model: b.model != null ? String(b.model) : null,
+    model: requestedModel || null,
     fallback_model: b.fallbackModel != null ? String(b.fallbackModel) : null,
     execution_mode: (b.executionMode != null && String(b.executionMode).trim() !== "") ? String(b.executionMode) : EXECUTION_REALTIME,
     features: Array.isArray(b.enabledFeatures) ? JSON.stringify(b.enabledFeatures.map(String)) : null,
@@ -1631,7 +1641,9 @@ async function testConnection(_ctx: unknown, _req: Request, body: unknown) {
     const target = !suppliedCredential && b.provider != null && String(b.provider).trim() !== ""
       ? providers.find((p) => p.name === String(b.provider) || p.id === String(b.provider)) ?? null
       : null;
-    const candidate = target ?? providerFromRequest(b);
+    const candidate = target == null
+      ? providerFromRequest(b)
+      : { ...target, model: b.model != null && String(b.model).trim() !== "" ? String(b.model).trim() : target.model };
     const catalog = await verifyProviderCredential(candidate);
     const latency = Date.now() - start;
     const modelFound = catalog.includes(model);
@@ -1770,38 +1782,13 @@ async function classifyDocumentHandler(_ctx: unknown, _req: Request, body: unkno
 }
 
 async function analyzeContractHandler(_ctx: unknown, req: Request) {
-  const start = Date.now();
-  const body = await req.json().catch(() => null);
-  const b = (body ?? {}) as Record<string, any>;
-  const contractText = b.contractText != null ? String(b.contractText) : null;
-
-  const providers = await loadProviders();
-  const configs = await loadModuleConfigs();
-  const target = await resolveExecution("mod-2", providers, configs);
-  if (target == null || target.disabled) {
-    return jsonResponse(ok({
-      moduleExecuted: "Contract & Legal Risk Analysis",
-      status: "DISABLED",
-      message: "This AI module is disabled. Enable it in AI Services to execute.",
-    }, "Module disabled"), 200);
-  }
-
-  const analysis = analyzeContract();
-  const latency = Math.max(85, Date.now() - start);
-  const tokens = (contractText != null ? Math.floor(contractText.length / 4) : 100) + 250;
-
-  addLog("Contract & Legal Risk Analysis", target.providerName, "analyze_contract_risk", "SUCCESS", latency, tokens, "System Administrator");
-
-  return jsonResponse(ok({
-    overallRisk: analysis.overallRisk,
-    summary: analysis.summary,
-    extractedClauses: analysis.extractedClauses,
-    modelUsed: target.model,
-    provider: target.providerName,
-    fallbackUsed: target.fallbackUsed,
-    latencyMs: latency,
-    tokensUsed: tokens,
-  }, "Contract analyzed successfully"), 200);
+  void req;
+  return jsonResponse({
+    success: false,
+    message: "Contract AI requires a stored source document. Use POST /v1/contracts/{id}/analyze with an authenticated document ID.",
+    errorCode: "CONTRACT_SOURCE_DOCUMENT_REQUIRED",
+    timestamp: new Date().toISOString(),
+  }, 410);
 }
 
 async function executeLiveAi(_ctx: unknown, _req: Request, body: unknown) {
@@ -1810,6 +1797,15 @@ async function executeLiveAi(_ctx: unknown, _req: Request, body: unknown) {
   const moduleType = b.moduleType != null ? String(b.moduleType) : "CLASSIFICATION";
   const payload = b.payload != null ? String(b.payload) : "";
   const tokensUsed = Math.floor(payload.length / 4) + 150;
+
+  if (moduleType.toUpperCase() === "CONTRACT_ANALYSIS") {
+    return jsonResponse({
+      success: false,
+      message: "Inline Contract AI execution has been retired. Analyze the authenticated private source document through /v1/contracts/{id}/analyze.",
+      errorCode: "CONTRACT_SOURCE_DOCUMENT_REQUIRED",
+      timestamp: new Date().toISOString(),
+    }, 410);
+  }
 
   const responseData: Record<string, unknown> = {};
   let moduleId: string;
@@ -1837,17 +1833,7 @@ async function executeLiveAi(_ctx: unknown, _req: Request, body: unknown) {
   responseData.provider = provider;
   responseData.fallbackUsed = target.fallbackUsed;
 
-  if (moduleType.toUpperCase() === "CONTRACT_ANALYSIS") {
-    const analysis = analyzeContract();
-    responseData.overallRisk = analysis.overallRisk;
-    responseData.summary = analysis.summary;
-    responseData.extractedClauses = analysis.extractedClauses;
-    responseData.moduleExecuted = moduleName;
-    const duration = Date.now() - start + 78;
-    addLog(moduleName, provider, "contract_clause_risk_assessment", "SUCCESS", duration, tokensUsed, "System Administrator");
-    responseData.durationMs = duration;
-    responseData.tokensUsed = tokensUsed;
-  } else if (moduleType.toUpperCase() === "VISITOR_OCR") {
+  if (moduleType.toUpperCase() === "VISITOR_OCR") {
     responseData.idType = "Philippine Driver's License";
     responseData.fullName = "Juan Carlos De La Cruz";
     responseData.idNumber = "N02-18-998412";

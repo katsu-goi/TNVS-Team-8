@@ -5,6 +5,11 @@ import { governanceService, WorkspacePayload } from '../../api/governanceService
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { OversightPanel } from '../oversight';
 import { RecordsDisposalConsole } from '../records/RecordsDisposalConsole';
+import { ComplianceOfficerDashboard } from '../compliance/ComplianceOfficerDashboard';
+import {
+  CoComplianceAlertsPage, CoContractsPage, CoDisposalApprovalsPage,
+  CoDocumentsPage, CoRetentionPoliciesPage,
+} from '../compliance/ComplianceOfficerPages';
 import type { WorkspaceConfig } from './workspaceConfig';
 
 const toneClass = {
@@ -44,6 +49,14 @@ function rowDetails(row: Record<string, any>): Array<[string, string]> {
 
 export const RoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: string }> = ({ config, section }) => {
   if (config.slug === 'records' && section === 'disposal') return <RecordsDisposalConsole />;
+  if (config.slug === 'compliance') {
+    if (section === 'dashboard') return <ComplianceOfficerDashboard />;
+    if (section === 'documents') return <CoDocumentsPage />;
+    if (section === 'contracts') return <CoContractsPage />;
+    if (section === 'retention') return <CoRetentionPoliciesPage />;
+    if (section === 'alerts') return <CoComplianceAlertsPage />;
+    if (section === 'disposal') return <CoDisposalApprovalsPage />;
+  }
   return <GenericRoleWorkspacePage config={config} section={section} />;
 };
 

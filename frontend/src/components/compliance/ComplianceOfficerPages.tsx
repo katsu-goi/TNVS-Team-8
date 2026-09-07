@@ -245,6 +245,7 @@ export const CoDocumentsPage: React.FC = () => {
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Version</th>
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Size</th>
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Retention</th>
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase text-right">Actions</th>
                 </tr>
               </thead>
@@ -270,6 +271,11 @@ export const CoDocumentsPage: React.FC = () => {
                       <td className="p-3 text-xs text-slate-400">{formatSize(d.fileSize)}</td>
                       <td className="p-3"><Badge text={d.status} className={docStatusBadge(d.status)} /></td>
                       <td className="p-3">
+                        <p className="text-[10px] font-mono font-semibold text-slate-600">{(d.retentionStatus || 'UNASSIGNED').replace(/_/g, ' ')}</p>
+                        <p className="text-[10px] text-slate-400">{d.retentionExpiresAt ? `Due ${d.retentionExpiresAt}` : 'No deadline'}</p>
+                        {d.retentionPolicyVersion && <p className="text-[10px] text-slate-400">Policy v{d.retentionPolicyVersion}</p>}
+                      </td>
+                      <td className="p-3">
                         <div className="flex items-center justify-end space-x-1.5">
                           {status === 'PENDING_REVIEW' && (
                             <>
@@ -285,8 +291,17 @@ export const CoDocumentsPage: React.FC = () => {
                           {status !== 'ARCHIVED' && status !== 'DELETED' && (
                             <ActionButton onClick={() => runAction(d.id, 'archive', 'Document archived')} icon={Archive} disabled={busy}>Archive</ActionButton>
                           )}
-                          {status !== 'DELETED' && (
+                          {d.retentionStatus === 'ELIGIBLE_FOR_DISPOSAL' && status !== 'DELETED' && (
                             <ActionButton onClick={() => { setDisposalDoc(d); setDisposalReason(''); }} icon={Trash2} variant="danger" disabled={busy}>Dispose</ActionButton>
+                          )}
+                          {d.retentionStatus !== 'LEGAL_HOLD' && status !== 'DELETED' && (
+                            <ActionButton onClick={() => {
+                              const reason = window.prompt('Legal hold reason');
+                              if (reason?.trim()) void runAction(d.id, 'legal-hold', 'Legal hold placed', { reason: reason.trim() });
+                            }} icon={ShieldAlert} disabled={busy}>Hold</ActionButton>
+                          )}
+                          {d.retentionStatus === 'LEGAL_HOLD' && (
+                            <ActionButton onClick={() => void runAction(d.id, 'legal-hold/release', 'Legal hold released', { reason: 'Released after authorized review' })} icon={CheckCircle2} disabled={busy}>Release Hold</ActionButton>
                           )}
                         </div>
                       </td>
@@ -460,7 +475,7 @@ export const CoRetentionPoliciesPage: React.FC = () => {
   const [retry, setRetry] = useState(0);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editing, setEditing] = useState<any | null>(null); // null=closed, {}=new, {...}=edit
-  const [form, setForm] = useState({ name: '', description: '', retentionPeriodDays: 365, actionOnExpiry: 'REVIEW', active: true });
+  const [form, setForm] = useState({ name: '', description: '', retentionPeriodDays: 365, actionOnExpiry: 'REVIEW', classificationName: '', applicableDepartment: '', triggerBasis: 'FINAL_APPROVAL', alertWindows: '90,30,7', active: true });
   const [saving, setSaving] = useState(false);
   const { show, node: toastNode } = useToast();
 
@@ -486,14 +501,16 @@ export const CoRetentionPoliciesPage: React.FC = () => {
   };
 
   const openNew = () => {
-    setForm({ name: '', description: '', retentionPeriodDays: 365, actionOnExpiry: 'REVIEW', active: true });
+    setForm({ name: '', description: '', retentionPeriodDays: 365, actionOnExpiry: 'REVIEW', classificationName: '', applicableDepartment: '', triggerBasis: 'FINAL_APPROVAL', alertWindows: '90,30,7', active: true });
     setEditing({});
   };
   const openEdit = (p: any) => {
     setForm({
       name: p.name ?? '', description: p.description ?? '',
       retentionPeriodDays: p.retentionPeriodDays ?? 365,
-      actionOnExpiry: p.actionOnExpiry ?? 'REVIEW', active: !!p.active,
+      actionOnExpiry: p.actionOnExpiry ?? 'REVIEW',
+      classificationName: p.classificationName ?? '', applicableDepartment: p.applicableDepartment ?? '',
+      triggerBasis: p.triggerBasis ?? 'FINAL_APPROVAL', alertWindows: (p.alertWindowsDays ?? [90, 30, 7]).join(','), active: !!p.active,
     });
     setEditing(p);
   };
@@ -507,7 +524,9 @@ export const CoRetentionPoliciesPage: React.FC = () => {
       await mutate(url, isEdit ? 'PUT' : 'POST', {
         name: form.name.trim(), description: form.description.trim(),
         retentionPeriodDays: Number(form.retentionPeriodDays) || 0,
-        actionOnExpiry: form.actionOnExpiry, active: form.active,
+        actionOnExpiry: form.actionOnExpiry, classificationName: form.classificationName.trim() || null,
+        applicableDepartment: form.applicableDepartment.trim() || null, triggerBasis: form.triggerBasis,
+        alertWindowsDays: form.alertWindows.split(',').map(value => Number(value.trim())).filter(Number.isFinite), active: form.active,
       });
       show(isEdit ? 'Policy updated' : 'Policy created');
       setEditing(null);
@@ -565,6 +584,7 @@ export const CoRetentionPoliciesPage: React.FC = () => {
                 <Badge text={p.active ? 'ACTIVE' : 'INACTIVE'} className={p.active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'} />
               </div>
               <p className="text-xs text-slate-500 leading-relaxed">{p.description || 'No description'}</p>
+              <p className="text-[10px] font-mono text-slate-500">Match: {p.classificationName || 'UNMAPPED'}{p.applicableDepartment ? ` / ${p.applicableDepartment}` : ''} · v{p.policyVersion ?? 1}</p>
               <div className="flex items-center justify-between pt-2 border-t border-slate-100">
                 <div>
                   <p className="text-[10px] text-slate-400 uppercase font-semibold">Retention</p>
@@ -621,6 +641,32 @@ export const CoRetentionPoliciesPage: React.FC = () => {
                     className="mt-1 w-full text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-200">
                     {actions.map(a => <option key={a} value={a}>{a.replace('_', ' ')}</option>)}
                   </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-500 uppercase">Final classification</label>
+                  <input value={form.classificationName} onChange={e => setForm(f => ({ ...f, classificationName: e.target.value }))} placeholder="FINANCIAL_RECORD"
+                    className="mt-1 w-full text-sm border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-200" />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-500 uppercase">Department (optional)</label>
+                  <input value={form.applicableDepartment} onChange={e => setForm(f => ({ ...f, applicableDepartment: e.target.value }))}
+                    className="mt-1 w-full text-sm border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-200" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-500 uppercase">Trigger basis</label>
+                  <select value={form.triggerBasis} onChange={e => setForm(f => ({ ...f, triggerBasis: e.target.value }))}
+                    className="mt-1 w-full text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white">
+                    {['FINAL_APPROVAL', 'CREATION', 'CONTRACT_EXPIRATION', 'FISCAL_YEAR_END'].map(value => <option key={value} value={value}>{value.replace(/_/g, ' ')}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-500 uppercase">Alert windows (days)</label>
+                  <input value={form.alertWindows} onChange={e => setForm(f => ({ ...f, alertWindows: e.target.value }))} placeholder="90,30,7"
+                    className="mt-1 w-full text-sm border border-slate-200 rounded-xl px-3 py-2" />
                 </div>
               </div>
               <label className="flex items-center space-x-2 text-sm text-slate-600">

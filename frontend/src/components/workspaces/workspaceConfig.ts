@@ -1,5 +1,5 @@
 import {
-  Activity, Archive, BadgeCheck, BarChart3, Building2, Camera, ClipboardCheck,
+  Activity, Archive, BadgeCheck, BarChart3, Bell, Building2, Camera, ClipboardCheck,
   Database, FileCheck2, FileSearch, FileText, Fingerprint, Gavel, HardDrive,
   KeyRound, LayoutDashboard, LockKeyhole, Scale, Settings,
   ShieldAlert, ShieldCheck, Siren, Trash2, UserCheck, UsersRound,
@@ -141,10 +141,11 @@ export const workspaceConfigs: WorkspaceConfig[] = [
     description: 'Records Retention & Compliance Monitoring',
     nav: [
       { section: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { section: 'franchise', label: 'Franchise & Regulatory Tracker', icon: Gavel },
-      { section: 'permits', label: 'Facility Permitting Matrix', icon: Building2 },
-      { section: 'contracts', label: 'Corporate Contracts & SLAs', icon: FileText },
-      { section: 'incidents', label: 'Incident & Risk Management', icon: Siren },
+      { section: 'documents', label: 'Retention Records', icon: FileText },
+      { section: 'retention', label: 'Retention Policies', icon: Archive },
+      { section: 'alerts', label: 'Compliance Alerts', icon: Bell },
+      { section: 'disposal', label: 'Disposal Review', icon: Trash2 },
+      { section: 'contracts', label: 'Contract Deadlines', icon: Gavel },
       { section: 'settings', label: 'Profile & System Settings', icon: Settings },
     ],
   },

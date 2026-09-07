@@ -84,6 +84,12 @@ function extensionOf(fileName: string | null): string {
   return fileName.slice(dot + 1).toLowerCase();
 }
 
+function isSupportedDocumentExtension(
+  extension: string,
+): extension is (typeof SUPPORTED_DOCUMENT_EXTENSIONS)[number] {
+  return SUPPORTED_DOCUMENT_EXTENSIONS.some((candidate) => candidate === extension);
+}
+
 function resolveTitle(title: string | null, originalFilename: string | null): string {
   if (title != null && title.trim() !== "") return title.trim();
   if (originalFilename == null || originalFilename === "") return "Untitled document";
@@ -264,13 +270,20 @@ function toDocumentDto(d: Record<string, unknown>): Record<string, unknown> {
     classificationReviewedBy: str(d.classification_reviewed_by),
     classificationReviewedAt: str(d.classification_reviewed_at),
     classificationReviewNotes: str(d.classification_review_notes),
+    retentionPolicyId: str(d.retention_policy_id),
+    retentionPolicyVersion: num(d.retention_policy_version),
+    retentionAssignedAt: str(d.retention_assigned_at),
+    retentionAssignmentSource: str(d.retention_assignment_source),
+    retentionCalculationBasis: str(d.retention_calculation_basis),
+    retentionTriggerAt: str(d.retention_trigger_at),
+    retentionExpiresAt: str(d.retention_expires_at),
+    retentionStatus: str(d.retention_status),
+    physicalDispositionStatus: str(d.physical_disposition_status),
     tags: ((d.tags ?? []) as unknown[]).map((t: unknown) => {
       const tag = t as Record<string, unknown>;
       return { id: str(tag.id), name: str(tag.name) };
     }),
     versionNumber: num(d.version_number),
-    retentionPolicyId: str(d.retention_policy_id),
-    retentionExpiresAt: naiveStr(d.retention_expires_at),
   };
 }
 
@@ -469,7 +482,7 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
     const extension = extensionOf(file.name);
     if (extension === "") {
       errors.push(`The file has no extension. Allowed types: ${ALLOWED_EXTENSIONS.join(", ")}.`);
-    } else if (!ALLOWED_EXTENSIONS.includes(extension)) {
+    } else if (!isSupportedDocumentExtension(extension)) {
       errors.push(`File type '.${extension}' is not allowed. Allowed types: ${ALLOWED_EXTENSIONS.join(", ")}.`);
     }
   }
@@ -812,6 +825,43 @@ async function handleGetSignedUrl(ctx: AuthContext | null, _req: Request, _body:
   );
 }
 
+async function handleDeleteOwnedDocument(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
+  if (!isUuid(p.id)) return generic500();
+  const row = await loadDocumentRow(p.id);
+  if (!row) return jsonResponse(fail(`Document not found: ${p.id}`, "RESOURCE_NOT_FOUND"), 404);
+  const owner = String(row.created_by ?? row.owner_email ?? "").toLowerCase();
+  if (!ctx || owner !== ctx.email.toLowerCase()) {
+    return jsonResponse(fail("Only the document owner can delete an unlinked source document.", "ACCESS_DENIED"), 403);
+  }
+
+  for (const [table, label] of [["contracts", "a contract"], ["contract_ai_analyses", "a contract analysis"], ["records_archives", "a records archive"]] as const) {
+    const column = table === "contract_ai_analyses" ? "source_document_id" : "document_id";
+    const linked = await db.from(table).select("id", { count: "exact", head: true }).eq(column, p.id);
+    if (linked.error) throw new Error(`${table} reference check failed: ${linked.error.message}`);
+    if ((linked.count ?? 0) > 0) {
+      return jsonResponse(fail(`The document cannot be deleted while linked to ${label}.`, "DOCUMENT_IN_USE"), 409);
+    }
+  }
+
+  const tagDelete = await db.from("document_tags").delete().eq("document_id", p.id);
+  if (tagDelete.error) throw new Error(`document tag cleanup failed: ${tagDelete.error.message}`);
+  const classificationDelete = await db.from("document_ai_classifications").delete().eq("document_id", p.id);
+  if (classificationDelete.error) throw new Error(`document AI cleanup failed: ${classificationDelete.error.message}`);
+  const documentDelete = await db.from("documents").delete().eq("id", p.id);
+  if (documentDelete.error) throw new Error(`document deletion failed: ${documentDelete.error.message}`);
+
+  const filePath = str(row.file_path)?.trim() ?? "";
+  if (isValidStorageObjectPath(filePath)) {
+    const removal = await db.storage.from(BUCKET).remove([filePath]);
+    if (removal.error && !isMissingStorageObjectError(removal.error)) {
+      throw new Error(`document storage cleanup failed: ${removal.error.message}`);
+    }
+  }
+  await writeAudit(ctx.user, "DELETE_UNLINKED_SOURCE_DOCUMENT", MODULE, "Document", p.id,
+    `Deleted unlinked source document: ${str(row.title)}`, resolveClientIp(req).ip, "INFO");
+  return jsonResponse(ok({ documentDeleted: true }, "Unlinked source document deleted"), 200);
+}
+
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
@@ -825,6 +875,7 @@ const routes = [
   { method: "POST", path: "/documents/:id/classification-review", guard: { kind: "roles", roles: REVIEW_ROLES }, handler: handleClassificationReview },
   { method: "GET", path: "/documents/:id/download", guard: { kind: "auth" }, handler: handleDownloadDocument },
   { method: "GET", path: "/documents/:id/signed-url", guard: { kind: "auth" }, handler: handleGetSignedUrl },
+  { method: "DELETE", path: "/documents/:id", guard: { kind: "auth" }, handler: handleDeleteOwnedDocument },
 ] as const;
 
 Deno.serve(createHandler(routes as never, { name: "documents" }));

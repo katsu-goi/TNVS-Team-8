@@ -27,14 +27,6 @@ export const legalService = {
     const { data } = await apiClient.post(`/legal/contracts/${id}/submit-review`);
     return data?.data;
   },
-  async approveContract(id: string) {
-    const { data } = await apiClient.post(`/legal/contracts/${id}/approve`);
-    return data?.data;
-  },
-  async activateContract(id: string) {
-    const { data } = await apiClient.post(`/legal/contracts/${id}/activate`);
-    return data?.data;
-  },
   async renewContract(id: string, body?: Record<string, unknown>) {
     const { data } = await apiClient.post(`/legal/contracts/${id}/renew`, body ?? {});
     return data?.data;

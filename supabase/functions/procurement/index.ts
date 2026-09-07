@@ -164,6 +164,12 @@ function toContractDto(c: Row, vendorNames?: Map<string, string>) {
     status: c.status ?? null,
     aiAssessedRiskLevel: c.ai_assessed_risk_level ?? null,
     aiRiskSummary: c.ai_risk_summary ?? null,
+    aiAnalysisReviewStatus: c.ai_analysis_review_status ?? "NOT_ANALYZED",
+    associatedDocumentId: c.document_id ?? null,
+    approvedBy: c.approved_by ?? null,
+    approvedAt: c.approved_at ?? null,
+    activatedBy: c.activated_by ?? null,
+    activatedAt: c.activated_at ?? null,
     createdAt: createdAtUtc(c.created_at),
   };
 }
@@ -687,7 +693,6 @@ async function handleCreateContract(ctx: AuthContext | null, req: Request, body:
   }
 
   let type: string;
-  let risk: string | null;
   let startDate: string | null;
   let endDate: string | null;
   let renewal: string | null;
@@ -695,7 +700,6 @@ async function handleCreateContract(ctx: AuthContext | null, req: Request, body:
   let vendorId: string | null;
   try {
     type = parseType(b.type);
-    risk = parseRisk(b.aiAssessedRiskLevel) ?? null;
     startDate = parseDate(b.startDate);
     endDate = parseDate(b.endDate);
     renewal = parseDate(b.renewalNoticeDate);
@@ -717,12 +721,22 @@ async function handleCreateContract(ctx: AuthContext | null, req: Request, body:
     end_date: endDate,
     renewal_notice_date: renewal,
     status: "DRAFT",
-    ai_assessed_risk_level: risk,
-    ai_risk_summary: str(b.aiRiskSummary),
+    ai_assessed_risk_level: null,
+    ai_risk_summary: null,
+    ai_analysis_review_status: "NOT_ANALYZED",
+    created_by: ctx ? ctx.email : "SYSTEM",
     updated_at: now,
     updated_by: ctx ? ctx.email : "SYSTEM",
   }).select("*").single();
   if (error) throw new Error(`contract insert failed: ${error.message}`);
+
+  const { error: workflowError } = await db.from("legal_contract_workflows").upsert({
+    contract_id: (saved as unknown as { id: string }).id,
+    state: "DRAFT",
+    created_at: now,
+    updated_at: now,
+  }, { onConflict: "contract_id" });
+  if (workflowError) throw new Error(`legal workflow creation failed: ${workflowError.message}`);
 
   await writeAudit(ctx?.user ?? null, "CREATE_CONTRACT", MODULE, "Contract",
     (saved as unknown as { id: string }).id, `Created contract: ${title}`,
@@ -748,8 +762,6 @@ async function handleUpdateContract(ctx: AuthContext | null, req: Request, body:
     if ("startDate" in b) patch["start_date"] = parseDate(b.startDate);
     if ("endDate" in b) patch["end_date"] = parseDate(b.endDate);
     if ("renewalNoticeDate" in b) patch["renewal_notice_date"] = parseDate(b.renewalNoticeDate);
-    if ("aiAssessedRiskLevel" in b) patch["ai_assessed_risk_level"] = parseRisk(b.aiAssessedRiskLevel) ?? null;
-    if ("aiRiskSummary" in b) patch["ai_risk_summary"] = str(b.aiRiskSummary);
   } catch (e) {
     return businessRule((e as Error).message);
   }
@@ -791,6 +803,9 @@ async function handleSubmitReview(ctx: AuthContext | null, req: Request, _body: 
   if (c.status !== "DRAFT") {
     return businessRule("Only draft contracts can be submitted for review.");
   }
+  if (c.ai_analysis_review_status === "NOT_ANALYZED") {
+    return businessRule("Attach and analyze the contract source document before submitting it for review.");
+  }
   return transitionContract(ctx, req, p, "UNDER_REVIEW", "SUBMIT_CONTRACT_REVIEW",
     "Contract submitted for review", (title) => `Submitted contract for review: ${title}`);
 }
@@ -811,8 +826,13 @@ async function handleActivateContract(ctx: AuthContext | null, req: Request, _bo
   if (c.status !== "APPROVED") {
     return businessRule("Only approved contracts can be activated.");
   }
-  return transitionContract(ctx, req, p, "ACTIVE", "ACTIVATE_CONTRACT",
+  if (c.ai_analysis_review_status !== "APPROVED" && c.ai_analysis_review_status !== "CORRECTED") {
+    return businessRule("Contract AI analysis must be reviewed before activation.");
+  }
+  const response = await transitionContract(ctx, req, p, "ACTIVE", "ACTIVATE_CONTRACT",
     "Contract activated", (title) => `Activated contract: ${title}`);
+  await db.from("contracts").update({ activated_by: ctx?.email ?? "SYSTEM", activated_at: new Date().toISOString() }).eq("id", p.id);
+  return response;
 }
 
 async function handleRenewContract(ctx: AuthContext | null, req: Request, body: unknown, p: RouteParams) {
@@ -1388,7 +1408,6 @@ const routes = [
   { method: "POST", path: "/procurement/contracts", guard: { kind: "roles", roles: CONTRACT_ROLES }, handler: handleCreateContract },
   { method: "PUT", path: "/procurement/contracts/:id", guard: { kind: "roles", roles: CONTRACT_ROLES }, handler: handleUpdateContract },
   { method: "POST", path: "/procurement/contracts/:id/submit-review", guard: { kind: "roles", roles: CONTRACT_ROLES }, handler: handleSubmitReview },
-  { method: "POST", path: "/procurement/contracts/:id/approve", guard: { kind: "roles", roles: CONTRACT_ROLES }, handler: handleApproveContract },
   { method: "POST", path: "/procurement/contracts/:id/activate", guard: { kind: "roles", roles: CONTRACT_ROLES }, handler: handleActivateContract },
   { method: "POST", path: "/procurement/contracts/:id/renew", guard: { kind: "roles", roles: CONTRACT_ROLES }, handler: handleRenewContract },
   { method: "POST", path: "/procurement/contracts/:id/terminate", guard: { kind: "roles", roles: CONTRACT_ROLES }, handler: handleTerminateContract },

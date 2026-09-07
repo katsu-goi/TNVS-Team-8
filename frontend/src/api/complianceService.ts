@@ -63,6 +63,22 @@ export const complianceService = {
     const { data } = await apiClient.post(`/compliance/disposals/${id}/reject`, { notes });
     return data?.data;
   },
+  async getLegalHolds() {
+    const { data } = await apiClient.get('/compliance/legal-holds');
+    return data?.data ?? [];
+  },
+  async placeLegalHold(documentId: string, reason: string) {
+    const { data } = await apiClient.post(`/compliance/documents/${documentId}/legal-hold`, { reason });
+    return data?.data;
+  },
+  async releaseLegalHold(documentId: string, reason?: string) {
+    const { data } = await apiClient.post(`/compliance/documents/${documentId}/legal-hold/release`, { reason });
+    return data?.data;
+  },
+  async getAutomationHealth() {
+    const { data } = await apiClient.get('/compliance/automation-health');
+    return data?.data ?? [];
+  },
 
   // --- Compliance alerts ---
   async getAlerts() {

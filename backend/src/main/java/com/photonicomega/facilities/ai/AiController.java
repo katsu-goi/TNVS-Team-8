@@ -37,7 +37,6 @@ import java.util.stream.Collectors;
 public class AiController {
 
     private final DocumentClassificationAiService classificationAiService;
-    private final ContractAnalyticsAiService contractAnalyticsAiService;
     private final AiStateManagementService aiStateService;
     private final ModuleInstructionService moduleInstructionService;
     private final ModuleDataContextService moduleDataContextService;
@@ -397,40 +396,9 @@ public class AiController {
 
     @PostMapping("/analyze-contract")
     public ResponseEntity<ApiResponse<Map<String, Object>>> analyzeContract(@RequestBody ContractAnalysisRequest req) {
-        long start = System.currentTimeMillis();
-        ModuleAiConfigService.ExecutionTarget target = moduleAiConfigService.resolveExecution("mod-2");
-        if (target == null || target.isDisabled()) {
-            return ResponseEntity.ok(ApiResponse.success(
-                    Map.of("moduleExecuted", "Contract & Legal Risk Analysis",
-                            "status", "DISABLED",
-                            "message", "This AI module is disabled. Enable it in AI Services to execute."),
-                    "Module disabled"));
-        }
-        ContractAnalyticsAiService.ContractAnalysisResponse response = contractAnalyticsAiService.analyzeContract(req.getContractText());
-        long latency = Math.max(85, System.currentTimeMillis() - start);
-        long tokens = (req.getContractText() != null ? req.getContractText().length() / 4 : 100) + 250;
-
-        aiStateService.addLog(
-                "Contract & Legal Risk Analysis",
-                target.getProviderName(),
-                "analyze_contract_risk",
-                "SUCCESS",
-                latency,
-                tokens,
-                "System Administrator"
-        );
-
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("overallRisk", response.getOverallRisk());
-        result.put("summary", response.getSummary());
-        result.put("extractedClauses", response.getExtractedClauses());
-        result.put("modelUsed", target.getModel());
-        result.put("provider", target.getProviderName());
-        result.put("fallbackUsed", target.isFallbackUsed());
-        result.put("latencyMs", latency);
-        result.put("tokensUsed", tokens);
-
-        return ResponseEntity.ok(ApiResponse.success(result, "Contract analyzed successfully"));
+        return ResponseEntity.status(HttpStatus.GONE).body(ApiResponse.failure(
+                "Direct text Contract AI has been retired. Upload a private source document and analyze the stored contract through the contract workflow.",
+                "CONTRACT_SOURCE_DOCUMENT_REQUIRED"));
     }
 
     @PostMapping("/execute")
@@ -459,6 +427,12 @@ public class AiController {
             }
         }
 
+        if ("CONTRACT_ANALYSIS".equalsIgnoreCase(moduleType)) {
+            return ResponseEntity.status(HttpStatus.GONE).body(ApiResponse.failure(
+                    "Direct text Contract AI has been retired. Use the stored-source contract workflow.",
+                    "CONTRACT_SOURCE_DOCUMENT_REQUIRED"));
+        }
+
         ModuleAiConfigService.ExecutionTarget target = moduleAiConfigService.resolveExecution(moduleId);
         if (target == null || target.isDisabled()) {
             responseData.put("moduleExecuted", moduleName);
@@ -471,19 +445,7 @@ public class AiController {
         responseData.put("provider", provider);
         responseData.put("fallbackUsed", target.isFallbackUsed());
 
-        if ("CONTRACT_ANALYSIS".equalsIgnoreCase(moduleType)) {
-            var analysis = contractAnalyticsAiService.analyzeContract(payload);
-            responseData.put("overallRisk", analysis.getOverallRisk());
-            responseData.put("summary", analysis.getSummary());
-            responseData.put("extractedClauses", analysis.getExtractedClauses());
-            responseData.put("moduleExecuted", moduleName);
-
-            long duration = System.currentTimeMillis() - start + 78;
-            aiStateService.addLog(moduleName, provider, "contract_clause_risk_assessment", "SUCCESS", duration, tokensUsed, "System Administrator");
-
-            responseData.put("durationMs", duration);
-            responseData.put("tokensUsed", tokensUsed);
-        } else if ("VISITOR_OCR".equalsIgnoreCase(moduleType)) {
+        if ("VISITOR_OCR".equalsIgnoreCase(moduleType)) {
             responseData.put("idType", "Philippine Driver's License");
             responseData.put("fullName", "Juan Carlos De La Cruz");
             responseData.put("idNumber", "N02-18-998412");
