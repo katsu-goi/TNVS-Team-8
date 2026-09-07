@@ -277,7 +277,7 @@ export const AuditLogsPage: React.FC = () => {
   );
 };
 
-export { BackupPage } from './BackupPage';
+export { BackupRecoveryConsole as BackupPage } from './BackupRecoveryConsole';
 
 export const SettingsPage: React.FC = () => {
   const { data: configs, loading, error, retry } = useQuery(loadConfigs);

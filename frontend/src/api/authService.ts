@@ -20,8 +20,13 @@ export interface AuthTokenResponse {
  * existence stay private to prevent enumeration.
  */
 export interface LoginLockoutInfo {
+  failedAttempts?: number;
+  maxAttempts?: number;
+  remainingAttempts?: number;
   lockSecondsRemaining: number;
-  retryAt: string | null;
+  permanentlyLocked?: boolean;
+  lockedUntil?: string;
+  retryAt?: string | null;
 }
 
 export interface HrAssistanceRequest {
@@ -65,9 +70,8 @@ export function extractLoginLockout(error: unknown): LoginLockoutInfo | null {
   const errObj = error as Record<string, any>;
   const payload = errObj?.response?.data?.data;
   if (!payload || typeof payload !== 'object') return null;
-  const retryAt = typeof payload.retryAt === 'string' ? payload.retryAt : null;
-  const lockSecondsRemaining = typeof payload.lockSecondsRemaining === 'number'
-    ? payload.lockSecondsRemaining
-    : 0;
-  return { retryAt, lockSecondsRemaining };
+  return {
+    ...payload,
+    lockSecondsRemaining: typeof payload.lockSecondsRemaining === 'number' ? payload.lockSecondsRemaining : 0,
+  } as LoginLockoutInfo;
 }

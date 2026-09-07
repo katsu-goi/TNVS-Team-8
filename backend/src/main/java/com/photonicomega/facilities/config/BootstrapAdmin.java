@@ -53,6 +53,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -92,6 +93,7 @@ public class BootstrapAdmin implements CommandLineRunner {
     private String systemAdminPassword;
 
     @Override
+    @Transactional
     public void run(String... args) {
         seedAdmin();
         seedFacilitiesManager();

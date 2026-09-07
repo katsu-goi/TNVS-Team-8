@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, LogOut, Timer } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import {
   getCurrentOversightSession,
   OversightSession,
@@ -10,6 +11,7 @@ import { getOversightSessionId } from '../../utils/oversightSession';
 
 export const OversightBanner: React.FC = () => {
   const actor = useAuthStore((state) => state.user);
+  const navigate = useNavigate();
   const [session, setSession] = useState<OversightSession | null>(null);
   const [stopping, setStopping] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -49,7 +51,7 @@ export const OversightBanner: React.FC = () => {
     setStopping(true);
     try {
       await stopOversightSession();
-      window.location.assign(getDashboardPath(actor));
+      navigate(getDashboardPath(actor), { replace: true });
     } finally {
       setStopping(false);
     }

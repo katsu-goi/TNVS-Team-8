@@ -7,9 +7,11 @@ alter table public.facilities
   add column if not exists region text,
   add column if not exists daily_driver_capacity integer,
   add column if not exists active_queue_count integer not null default 0;
+
 create unique index if not exists uq_facilities_hub_code
   on public.facilities(hub_code)
   where hub_code is not null;
+
 create table if not exists public.hub_inventory_assets (
   id uuid primary key default gen_random_uuid(),
   facility_id uuid not null references public.facilities(id) on delete cascade,
@@ -29,8 +31,10 @@ create table if not exists public.hub_inventory_assets (
   constraint chk_hub_inventory_threshold check (low_stock_threshold >= 0),
   constraint uq_hub_inventory_sku unique (facility_id, sku)
 );
+
 create index if not exists idx_hub_inventory_reorder
   on public.hub_inventory_assets(facility_id, current_stock, low_stock_threshold);
+
 create table if not exists public.facility_compliance_documents (
   id uuid primary key default gen_random_uuid(),
   facility_id uuid not null references public.facilities(id) on delete cascade,
@@ -50,8 +54,10 @@ create table if not exists public.facility_compliance_documents (
     review_status in ('DRAFT', 'PENDING_REVIEW', 'APPROVED', 'REJECTED', 'EXPIRED')
   )
 );
+
 create index if not exists idx_facility_documents_review
   on public.facility_compliance_documents(review_status, expires_on);
+
 create table if not exists public.legal_contract_workflows (
   id uuid primary key default gen_random_uuid(),
   contract_id uuid not null unique references public.contracts(id) on delete cascade,
@@ -73,8 +79,10 @@ create table if not exists public.legal_contract_workflows (
     state <> 'REJECTED_REVISION' or length(btrim(coalesce(counsel_comments, ''))) >= 5
   )
 );
+
 create index if not exists idx_legal_contract_workflow_state
   on public.legal_contract_workflows(state, submitted_at);
+
 create table if not exists public.records_archives (
   id uuid primary key default gen_random_uuid(),
   document_id uuid not null unique references public.documents(id) on delete restrict,
@@ -93,8 +101,10 @@ create table if not exists public.records_archives (
     archive_status in ('PENDING_VALIDATION', 'VAULTED', 'EXPIRED', 'DISPOSAL_AUTHORIZED', 'DISPOSED')
   )
 );
+
 create index if not exists idx_records_archives_status_expiry
   on public.records_archives(archive_status, retention_expires_at);
+
 create table if not exists public.records_custody_events (
   id uuid primary key default gen_random_uuid(),
   archive_id uuid not null references public.records_archives(id) on delete restrict,
@@ -104,8 +114,10 @@ create table if not exists public.records_custody_events (
   source_ip varchar(45),
   occurred_at timestamptz not null default now()
 );
+
 create index if not exists idx_records_custody_archive_time
   on public.records_custody_events(archive_id, occurred_at desc);
+
 create table if not exists public.privacy_reveal_audits (
   id uuid primary key default gen_random_uuid(),
   actor_user_id uuid not null references public.users(id) on delete restrict,
@@ -117,8 +129,10 @@ create table if not exists public.privacy_reveal_audits (
   occurred_at timestamptz not null default now(),
   constraint chk_privacy_reveal_justification check (length(btrim(justification)) >= 10)
 );
+
 create index if not exists idx_privacy_reveal_subject_time
   on public.privacy_reveal_audits(subject_type, subject_id, occurred_at desc);
+
 create table if not exists public.data_subject_requests (
   id uuid primary key default gen_random_uuid(),
   request_reference text not null unique,
@@ -139,8 +153,10 @@ create table if not exists public.data_subject_requests (
     status in ('RECEIVED', 'IDENTITY_VERIFICATION', 'IN_PROGRESS', 'COMPLETED', 'REJECTED')
   )
 );
+
 create index if not exists idx_dsr_status_due
   on public.data_subject_requests(status, due_at);
+
 create table if not exists public.cctv_export_requests (
   id uuid primary key default gen_random_uuid(),
   facility_id uuid references public.facilities(id) on delete set null,
@@ -167,8 +183,10 @@ create table if not exists public.cctv_export_requests (
     )
   )
 );
+
 create index if not exists idx_cctv_export_status
   on public.cctv_export_requests(status, created_at desc);
+
 create table if not exists public.department_scope_assignments (
   id uuid primary key default gen_random_uuid(),
   department_head_user_id uuid not null references public.users(id) on delete cascade,
@@ -178,6 +196,7 @@ create table if not exists public.department_scope_assignments (
   created_at timestamptz not null default now(),
   constraint uq_department_head_scope unique (department_head_user_id, department_name)
 );
+
 create or replace function public.enforce_legal_contract_transition()
 returns trigger
 language plpgsql
@@ -205,10 +224,12 @@ begin
   raise exception 'invalid legal workflow transition: % -> %', old.state, new.state;
 end;
 $$;
+
 drop trigger if exists enforce_legal_contract_transition on public.legal_contract_workflows;
 create trigger enforce_legal_contract_transition
 before update on public.legal_contract_workflows
 for each row execute function public.enforce_legal_contract_transition();
+
 create or replace function public.reject_immutable_workflow_log_change()
 returns trigger
 language plpgsql
@@ -219,15 +240,19 @@ begin
   raise exception 'workflow audit records are immutable';
 end;
 $$;
+
 revoke all on function public.reject_immutable_workflow_log_change() from public;
+
 drop trigger if exists protect_records_custody_events on public.records_custody_events;
 create trigger protect_records_custody_events
 before update or delete on public.records_custody_events
 for each row execute function public.reject_immutable_workflow_log_change();
+
 drop trigger if exists protect_privacy_reveal_audits on public.privacy_reveal_audits;
 create trigger protect_privacy_reveal_audits
 before update or delete on public.privacy_reveal_audits
 for each row execute function public.reject_immutable_workflow_log_change();
+
 do $$
 declare
   table_name text;
@@ -243,6 +268,7 @@ begin
     execute format('revoke all privileges on table public.%I from anon, authenticated', table_name);
   end loop;
 end $$;
+
 do $$
 declare
   table_name text;

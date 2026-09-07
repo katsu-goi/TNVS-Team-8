@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Eye, Loader2, ShieldCheck } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import {
   listOversightTargets,
   OversightMode,
@@ -11,7 +12,9 @@ import { getAssignedRoles, getDashboardPath, useAuthStore } from '../../stores/a
 
 export const OversightPanel: React.FC = () => {
   const actor = useAuthStore((state) => state.user);
+  const navigate = useNavigate();
   const mode: OversightMode = getAssignedRoles(actor).includes('COMPLIANCE_MANAGER') ? 'SHADOW' : 'IMPERSONATION';
+  const justificationInputRef = useRef<HTMLInputElement>(null);
   const [targets, setTargets] = useState<OversightTarget[]>([]);
   const [justification, setJustification] = useState('');
   const [durationMinutes, setDurationMinutes] = useState(15);
@@ -38,17 +41,24 @@ export const OversightPanel: React.FC = () => {
   }, [targets]);
 
   const start = async (targetUserId: string) => {
-    if (justification.trim().length < 10 || starting) return;
+    if (starting) return;
+    const trimmedJustification = justification.trim();
+    if (trimmedJustification.length < 10) {
+      setError('Enter at least 10 characters in the audit justification before starting oversight.');
+      justificationInputRef.current?.focus();
+      return;
+    }
     setStarting(true);
     setError(null);
     try {
       const session = await startOversightSession({
         targetUserId,
         mode,
-        justification: justification.trim(),
+        justification: trimmedJustification,
         durationMinutes,
       });
-      window.location.assign(getDashboardPath(session.targetUser));
+      const dashboardPath = getDashboardPath(session.targetUser);
+      navigate(dashboardPath === '/' ? '/login' : dashboardPath, { replace: true });
     } catch (err) {
       setError(extractErrorMessage(err));
       setStarting(false);
@@ -61,7 +71,7 @@ export const OversightPanel: React.FC = () => {
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-2"><Eye className="h-5 w-5 text-amber-700" /></div>
         <div>
           <h2 className="text-base font-bold text-slate-900">{mode === 'IMPERSONATION' ? 'User Oversight' : 'Subordinate Shadow Mode'}</h2>
-          <p className="text-xs text-slate-500">Short-lived, read-only, and immutably audited.</p>
+          <p className="text-xs text-slate-500">Short-lived, read-only, and immutably audited. Offline accounts remain eligible.</p>
         </div>
       </div>
 
@@ -72,7 +82,10 @@ export const OversightPanel: React.FC = () => {
           <div className="mb-5 grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
             <label className="text-xs font-semibold text-slate-600">
               Audit justification
-              <input value={justification} onChange={(event) => setJustification(event.target.value)} placeholder="Required audit justification" className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+              <input ref={justificationInputRef} value={justification} onChange={(event) => { setJustification(event.target.value); setError(null); }} placeholder="Required audit justification (minimum 10 characters)" aria-describedby="oversight-justification-help" className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+              <span id="oversight-justification-help" className={`mt-1 block text-[11px] ${justification.trim().length < 10 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                {justification.trim().length}/10 characters minimum
+              </span>
             </label>
             <label className="text-xs font-semibold text-slate-600">
               Session duration
@@ -98,12 +111,12 @@ export const OversightPanel: React.FC = () => {
                           <p className="truncate text-xs text-slate-500">{item.email}</p>
                           <div className="mt-2 flex flex-wrap items-center gap-2">
                             {(item.assignedRoles?.length ? item.assignedRoles : item.roles).map((role) => <span key={role} className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">{role.replace(/_/g, ' ')}</span>)}
-                            <span className={`inline-flex items-center gap-1 text-[10px] font-semibold ${item.isOnline ? 'text-emerald-600' : 'text-slate-400'}`}><span className={`h-1.5 w-1.5 rounded-full ${item.isOnline ? 'animate-pulse bg-emerald-500' : 'bg-slate-300'}`} />{item.isOnline ? 'Online' : 'Offline'}</span>
+                            <span className={`inline-flex items-center gap-1 text-[10px] font-semibold ${item.isOnline ? 'text-emerald-600' : 'text-slate-500'}`}><span className={`h-1.5 w-1.5 rounded-full ${item.isOnline ? 'animate-pulse bg-emerald-500' : 'bg-slate-400'}`} />{item.isOnline ? 'Online' : 'Offline · eligible'}</span>
                           </div>
                         </div>
                       </div>
                       <p className="mt-3 min-h-8 text-[11px] text-slate-500">{item.lastActiveOperation || 'No recent operation recorded.'}{item.lastActiveOperationAt ? ` · ${new Date(item.lastActiveOperationAt).toLocaleString()}` : ''}</p>
-                      <button onClick={() => start(item.id)} disabled={justification.trim().length < 10 || starting} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#D02F34] px-3 py-2 text-xs font-bold text-white hover:bg-[#A9252A] disabled:cursor-not-allowed disabled:opacity-50">
+                      <button type="button" onClick={() => start(item.id)} disabled={starting} title={item.isOnline ? 'Start a read-only impersonation session' : 'Start a read-only impersonation session for this offline account'} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#D02F34] px-3 py-2 text-xs font-bold text-white hover:bg-[#A9252A] disabled:cursor-not-allowed disabled:opacity-50">
                         {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}{mode === 'IMPERSONATION' ? 'Impersonate Session' : 'Audit Workspace'}
                       </button>
                     </article>

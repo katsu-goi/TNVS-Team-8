@@ -7,6 +7,7 @@ begin
       message = 'SUPER_ADMIN and SYSTEM_ADMIN roles must exist before applying the SoD constraint.';
   end if;
 end $$;
+
 insert into public.role_conflicts (
   first_role_id,
   second_role_id,
@@ -39,6 +40,7 @@ on conflict (code) do update set
   deleted_at = null,
   deleted_by = null,
   updated_at = now();
+
 do $$
 declare
   violating_users text;
@@ -65,6 +67,7 @@ begin
       hint = 'Remove one of the two roles from each listed user before applying this migration.';
   end if;
 end $$;
+
 create or replace function public.enforce_super_system_admin_sod()
 returns trigger
 language plpgsql
@@ -113,7 +116,9 @@ begin
   return new;
 end;
 $$;
+
 revoke all on function public.enforce_super_system_admin_sod() from public;
+
 drop trigger if exists enforce_super_system_admin_sod on public.user_roles;
 create trigger enforce_super_system_admin_sod
 before insert or update of user_id, role_id on public.user_roles

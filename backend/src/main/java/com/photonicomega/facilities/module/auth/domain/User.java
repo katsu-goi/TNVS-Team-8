@@ -127,6 +127,10 @@ public class User extends BaseEntity {
         this.lockedUntil = LocalDateTime.now().plusSeconds(durationSeconds);
     }
 
+    public void lockAccountPermanently(long durationDays) {
+        this.lockedUntil = LocalDateTime.now().plusDays(durationDays);
+    }
+
     public long remainingLockSeconds() {
         if (lockedUntil == null) {
             return 0;

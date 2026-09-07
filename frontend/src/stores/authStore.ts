@@ -12,10 +12,11 @@ interface AuthState {
 }
 
 export function getDashboardPath(user: User | null): string {
-  const routeUser = getOversightTargetUser() || user;
-  if (!routeUser?.roles) return '/';
-  if (!getOversightTargetUser() && isActorSuperAdmin(user)) return '/super-admin';
-  if (!getOversightTargetUser() && isActorSystemAdmin(user)) return '/system-admin';
+  const oversightTarget = getOversightTargetUser();
+  const routeUser = oversightTarget || user;
+  if (!routeUser || (!routeUser.roles?.length && !routeUser.assignedRoles?.length)) return '/';
+  if (!oversightTarget && isActorSuperAdmin(user)) return '/super-admin';
+  if (!oversightTarget && isActorSystemAdmin(user)) return '/system-admin';
   const roles = getAssignedRoles(routeUser);
   if (roles.includes('COMPLIANCE_MANAGER')) return '/compliance-management';
   if (roles.includes('DATA_PROTECTION_OFFICER')) return '/privacy';
@@ -62,9 +63,7 @@ export function hasAssignedRole(user: User | null, role: string): boolean {
 export function hasRole(user: User | null, role: string): boolean {
   const effectiveUser = getOversightTargetUser() || user;
   const normalizedRole = role.toUpperCase().replace(/^ROLE_/, '');
-  return effectiveUser?.roles?.some((candidate) =>
-    candidate.toUpperCase().replace(/^ROLE_/, '') === normalizedRole
-  ) ?? false;
+  return getAssignedRoles(effectiveUser).includes(normalizedRole);
 }
 
 export function hasPermission(user: User | null, permission: string): boolean {
