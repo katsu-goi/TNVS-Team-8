@@ -1,19 +1,32 @@
 import { apiClient } from './client';
 import type { AnalyticsData } from '../types';
 
-export async function fetchAnalytics(from?: Date, to?: Date): Promise<AnalyticsData> {
+export type AnalyticsQuery = {
+  preset?: 'today' | 'last_7_days' | 'last_30_days' | 'this_month' | 'previous_month' | 'custom';
+  from?: string;
+  to?: string;
+  status?: string;
+};
+
+export async function fetchAnalytics(query: AnalyticsQuery = {}): Promise<AnalyticsData> {
+  const { data } = await apiClient.get('/analytics', { params: query });
+  return data?.data ?? data;
+}
+
+export async function exportAnalyticsCsv(query: AnalyticsQuery = {}): Promise<void> {
+  const response = await apiClient.get('/analytics/export.csv', { params: query, responseType: 'blob' });
+  const disposition = String(response.headers['content-disposition'] ?? '');
+  const match = disposition.match(/filename="([^"]+)"/i);
+  const fileName = match?.[1] ?? `analytics-${new Date().toISOString().slice(0, 10)}.csv`;
+  const url = URL.createObjectURL(response.data);
   try {
-    const params: Record<string, string> = {};
-    if (from) params.from = from.toISOString();
-    if (to) params.to = to.toISOString();
-    const { data } = await apiClient.get('/analytics/admin/analytics', { params });
-    return data?.data ?? data;
-  } catch (err) {
-    console.warn('Analytics API unavailable, returning empty analytics structure:', err);
-    return {
-      overview: { totalUsers: 0, totalFacilities: 0, totalReservations: 0, totalVisitors: 0 },
-      timeSeries: [],
-      breakdown: [],
-    } as any;
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    URL.revokeObjectURL(url);
   }
 }

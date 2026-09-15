@@ -295,8 +295,8 @@ function GaugeStack({ gauges }: { gauges: Gauge[] }) {
 
 function PoolGauges({ sub }: { sub: SubsystemHealth }) {
   const gauges: Gauge[] = [
-    { label: 'DB Pool Utilization', value: `${sub.dbPoolUtilizationPct}%`, pct: sub.dbPoolUtilizationPct },
-    { label: 'WS Message Load', value: `${sub.wsMessageLoadPct}%`, pct: sub.wsMessageLoadPct },
+    { label: 'Observed API Latency', value: `${sub.latencyAvgMs} ms`, pct: Math.min(100, sub.latencyAvgMs) },
+    { label: 'Recorded Errors', value: `${sub.errorCount}`, pct: Math.min(100, sub.errorCount * 10) },
   ];
   return <GaugeStack gauges={gauges} />;
 }
@@ -579,8 +579,8 @@ function DetailModal({ sub, onClose }: { sub: SubsystemHealth; onClose: () => vo
             </h4>
             <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-slate-600 font-mono">
               <div><span className="text-slate-400">Subsystem:</span> {sub.key}</div>
-              <div><span className="text-slate-400">DB Connection Pool:</span> {sub.dbPoolActive} / {sub.dbPoolMax} active</div>
-              <div><span className="text-slate-400">Pool Utilization:</span> {sub.dbPoolUtilizationPct}%</div>
+              <div><span className="text-slate-400">Database transport:</span> Managed Supabase serverless client</div>
+              <div><span className="text-slate-400">Realtime transport:</span> Sanitized invalidation markers</div>
               <div><span className="text-slate-400">Unresolved Errors:</span> {sub.errorCount}</div>
             </div>
           </div>
@@ -646,28 +646,21 @@ function DetailModal({ sub, onClose }: { sub: SubsystemHealth; onClose: () => vo
 /* Main grid                                                          */
 /* ------------------------------------------------------------------ */
 
-import { supabaseMonitoringService } from '../../api/supabaseMonitoringService';
-
 export const SubsystemHealthGrid: React.FC = () => {
   const subsystemHealth = useRealtimeSyncStore(s => s.subsystemHealth);
   const [snapshot, setSnapshot] = useState<SubsystemHealthSnapshot | null>(null);
   const [selectedSubsystem, setSelectedSubsystem] = useState<SubsystemHealth | null>(null);
   const [now, setNow] = useState(Date.now());
-  const [connectivity, setConnectivity] = useState<any[]>([]);
 
   useEffect(() => {
-    supabaseMonitoringService.checkSubsystemConnectivity().then(results => {
-      setConnectivity(results);
-    });
     systemMonitoringService.loadSubsystemHealth().then(s => { if (s) setSnapshot(s); });
     const id = setInterval(() => {
       setNow(Date.now());
-      supabaseMonitoringService.checkSubsystemConnectivity().then(setConnectivity);
+      systemMonitoringService.loadSubsystemHealth().then(s => { if (s) setSnapshot(s); });
     }, 10000);
     return () => clearInterval(id);
   }, []);
 
-  console.debug('[SubsystemHealthGrid] Connectivity status:', connectivity.length);
 
   const live = subsystemHealth ?? snapshot;
   const subsystems = live?.subsystems ?? [];

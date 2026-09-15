@@ -239,23 +239,6 @@ const THREAT_TYPES = [
   "SQL_INJECTION", "XSS", "PORT_SCAN", "FAILED_LOGIN", "RATE_LIMIT", "ACCOUNT_LOCKED", "BLOCKED_IP",
 ];
 
-// Synthetic public IPs with plausible geolocation used by the admin Test
-// Security Event action. The map needs public addresses the geolocation layer
-// can place, so demo sources are drawn from this pool.
-const DEMO_THREAT_SOURCES = [
-  { ip: "45.155.205.233", country: "Russian Federation", countryCode: "RU", city: "Moscow", latitude: 55.7558, longitude: 37.6173, isp: "Sia Nano IT", asn: "AS197068" },
-  { ip: "185.220.101.34", country: "Germany", countryCode: "DE", city: "Frankfurt", latitude: 50.1109, longitude: 8.6821, isp: "EVANZO", asn: "AS50472" },
-  { ip: "103.99.10.20", country: "Vietnam", countryCode: "VN", city: "Ho Chi Minh City", latitude: 10.8231, longitude: 106.6297, isp: "Phuc Long Telecom", asn: "AS45195" },
-  { ip: "197.210.0.89", country: "Nigeria", countryCode: "NG", city: "Lagos", latitude: 6.5244, longitude: 3.3792, isp: "MTN Nigeria", asn: "AS37240" },
-  { ip: "111.90.150.90", country: "Malaysia", countryCode: "MY", city: "Kuala Lumpur", latitude: 3.139, longitude: 101.6869, isp: "GlobalConnect", asn: "AS45011" },
-  { ip: "218.92.0.15", country: "China", countryCode: "CN", city: "Shanghai", latitude: 31.2304, longitude: 121.4737, isp: "China Telecom", asn: "AS4134" },
-  { ip: "186.250.64.10", country: "Brazil", countryCode: "BR", city: "Sao Paulo", latitude: -23.5505, longitude: -46.6333, isp: "WHSR", asn: "AS53013" },
-];
-
-function pickRandom<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
 function normalizeWindow(raw: string | null): string {
   return raw && raw in WINDOW_MS ? raw : "24h";
 }
@@ -477,67 +460,6 @@ async function handleThreatDiagnostics(_ctx: AuthContext | null, req: Request, _
   });
 }
 
-async function handleTestThreatEvent(ctx: AuthContext | null, _req: Request, _body: unknown, _p: RouteParams) {
-  const actor = ctx?.email ?? "admin@photonic-omega.com";
-  const source = pickRandom(DEMO_THREAT_SOURCES);
-  const threatType = normalizeThreatType(pickRandom(THREAT_TYPES));
-  const severity = pickRandom(["MEDIUM", "HIGH", "CRITICAL"]);
-  const status = Math.random() < 0.5 ? "BLOCKED" : "DETECTED";
-  const nowIso = new Date().toISOString();
-  const id = crypto.randomUUID();
-
-  const { error: threatError } = await db.from("ip_threats").insert({
-    id,
-    created_at: nowIso,
-    ip: source.ip,
-    country: source.country,
-    city: source.city,
-    latitude: source.latitude,
-    longitude: source.longitude,
-    threat_type: threatType,
-    severity,
-    requests: 1,
-    status,
-    first_seen: nowIso,
-    last_seen: nowIso,
-    asn: source.asn,
-    isp: source.isp,
-    flag: source.countryCode,
-  });
-  if (threatError) throw new Error(`test threat insert failed: ${threatError.message}`);
-
-  const { error: logError } = await db.from("security_logs").insert({
-    timestamp: nowIso,
-    created_at: nowIso,
-    action: "THREAT_TEST",
-    module: "THREAT_MAP",
-    username: actor,
-    full_name: actor,
-    role: "SUPER_ADMIN",
-    ip_address: source.ip,
-    risk_level: severity,
-    status: status === "BLOCKED" ? "BLOCKED" : "DETECTED",
-    reason: `Test security event: ${threatType} from ${source.ip} (${source.city}, ${source.country})`,
-    geo_location: `${source.city}, ${source.country}`,
-  });
-  if (logError) throw new Error(`test log insert failed: ${logError.message}`);
-
-  return raw({
-    eventId: id,
-    ip: source.ip,
-    privateIp: false,
-    geolocation: {
-      country: source.country,
-      countryCode: source.countryCode,
-      city: source.city,
-      latitude: source.latitude,
-      longitude: source.longitude,
-      isp: source.isp,
-      asn: source.asn,
-    },
-  });
-}
-
 // ---------------------------------------------------------------------------
 
 const routes = [
@@ -553,7 +475,6 @@ const routes = [
   { method: "GET", path: "/security/ip-threats/vector-map", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleVectorMap },
   { method: "GET", path: "/security/ip-threats/stats", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleThreatStats },
   { method: "GET", path: "/security/ip-threats/diagnostics", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleThreatDiagnostics },
-  { method: "POST", path: "/security/ip-threats/test-event", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleTestThreatEvent },
 ] as const;
 
 Deno.serve(createHandler(routes as never, { name: "security" }));

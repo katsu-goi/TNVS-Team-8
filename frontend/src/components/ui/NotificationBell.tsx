@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Bell, Check, CheckCheck, Trash2, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { notificationService, AppNotification } from '../../api/notificationService';
-import { isSuperAdmin, useAuthStore } from '../../stores/authStore';
+import { getAssignedRoles, useAuthStore } from '../../stores/authStore';
 import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
 
 /** Colored dot by notification type — mirrors the employee Notifications page. */
@@ -46,6 +46,28 @@ const POLL_MS = 30000;
 const byDateDesc = (a: AppNotification, b: AppNotification) =>
   new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
 
+function authorizedNotificationPath(notification: AppNotification, roles: string[]): string | null {
+  const entity = notification.relatedEntityType?.toLowerCase();
+  if (entity === 'reservation') {
+    if (roles.includes('FACILITIES_MANAGER')) return '/facilities/reservations';
+    if (roles.includes('FACILITIES_OFFICER')) return '/facilities-officer/reservations';
+    if (roles.includes('EMPLOYEE')) return '/employee/reservations';
+  }
+  if (entity === 'visitor') {
+    if (roles.includes('FACILITIES_OFFICER')) return '/facilities-officer/visitors';
+    if (roles.includes('EMPLOYEE')) return '/employee/visitors';
+  }
+  if (entity === 'employeerequest') {
+    if (roles.includes('LEGAL_OFFICER')) return '/legal/requests-review';
+    if (roles.includes('CONTRACT_OFFICER')) return '/procurement/requests-review';
+    if (roles.includes('EMPLOYEE')) return '/employee/requests';
+  }
+  if (entity === 'contract' && roles.includes('LEGAL_OFFICER')) return '/legal/contracts';
+  if (entity === 'contract' && roles.includes('CONTRACT_OFFICER')) return '/procurement/contracts';
+  if ((entity === 'document' || entity === 'retention') && roles.includes('COMPLIANCE_OFFICER')) return '/compliance/dashboard';
+  return null;
+}
+
 /**
  * Role-agnostic notification bell for the header of every portal layout.
  *
@@ -56,13 +78,12 @@ const byDateDesc = (a: AppNotification, b: AppNotification) =>
  *
  * Realtime: subscribes to sanitized Supabase change markers and then
  * {@link useNotificationRealtimeStore}, so new notifications appear instantly
- * without a page refresh. SUPER_ADMINs also see their per-admin notifications
- * from `/v1/admin/notifications` merged into the same list.
+ * without a page refresh. The durable recipient-scoped feed is the only source.
  */
 export const NotificationBell: React.FC<{ className?: string }> = ({ className = '' }) => {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
-  const isAdmin = isSuperAdmin(user);
+  const roles = getAssignedRoles(user);
 
   const [open, setOpen] = useState(false);
   const [unread, setUnread] = useState(0);
@@ -75,25 +96,26 @@ export const NotificationBell: React.FC<{ className?: string }> = ({ className =
 
   const refreshCount = useCallback(async () => {
     try {
-      const userCount = await notificationService.getUnreadCount();
-      const adminCount = isAdmin ? await notificationService.getAdminUnreadCount() : 0;
-      setUnread(userCount + adminCount);
+      setUnread(await notificationService.getUnreadCount());
     } catch { /* silent — badge is best-effort */ }
-  }, [isAdmin]);
+  }, []);
 
   const loadList = useCallback(async () => {
     setLoading(true);
     try {
-      const [userRows, adminRows] = await Promise.all([
-        notificationService.getNotifications(),
-        isAdmin ? notificationService.getAdminNotifications() : Promise.resolve([]),
-      ]);
-      const merged = [...adminRows, ...userRows].sort(byDateDesc);
-      setRows(merged);
-      setUnread(merged.filter(n => !n.read).length);
+      const userRows = (await notificationService.getNotifications()).sort(byDateDesc);
+      setRows(userRows);
+      setUnread(userRows.filter(n => !n.read).length);
     } catch { /* keep prior rows */ }
     finally { setLoading(false); }
-  }, [isAdmin]);
+  }, []);
+
+  useEffect(() => {
+    setRows([]);
+    setUnread(0);
+    setOpen(false);
+    if (user?.id) void refreshCount();
+  }, [user?.id, refreshCount]);
 
   // Open a realtime connection for the whole time the bell is mounted.
   useEffect(() => {
@@ -158,11 +180,6 @@ export const NotificationBell: React.FC<{ className?: string }> = ({ className =
     setBusy('all');
     try {
       await notificationService.markAllNotificationsRead();
-      if (isAdmin) {
-        for (const r of rows) {
-          if (r.severity) await notificationService.markAdminNotificationRead(r.id);
-        }
-      }
       setRows(rs => rs.map(r => ({ ...r, read: true })));
       setUnread(0);
     } catch { /* ignore */ } finally { setBusy(null); }
@@ -170,8 +187,8 @@ export const NotificationBell: React.FC<{ className?: string }> = ({ className =
 
   const openNotification = (n: AppNotification) => {
     if (!n.read) markRead(n);
-    if (n.relatedEntityType === 'EmployeeRequest') navigate('/employee/requests');
-    else if (n.relatedEntityType === 'Visitor') navigate('/employee/visitors');
+    const path = authorizedNotificationPath(n, roles);
+    if (path) navigate(path);
   };
 
   const badge = unread > 99 ? '99+' : String(unread);
@@ -234,7 +251,7 @@ export const NotificationBell: React.FC<{ className?: string }> = ({ className =
             ) : (
               <ul className="divide-y divide-slate-50">
                 {rows.map(n => {
-                  const clickable = n.relatedEntityType === 'EmployeeRequest' || n.relatedEntityType === 'Visitor';
+                  const clickable = authorizedNotificationPath(n, roles) !== null;
                   return (
                     <li
                       key={n.id}

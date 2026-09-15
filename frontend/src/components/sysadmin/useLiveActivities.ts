@@ -37,7 +37,7 @@ function initialsOf(name: string): string {
 function sessionToActivity(row: Record<string, any>, isNew: boolean): LiveActivity {
   const name = row.full_name || row.username || 'Unknown User';
   return {
-    id: `session-${row.id || row.username || Math.random()}`,
+    id: `session-${row.id || `${row.username || 'unknown'}-${row.login_time || row.created_at || 'undated'}`}`,
     user: {
       name,
       email: row.username || '',
@@ -58,7 +58,7 @@ function sessionToActivity(row: Record<string, any>, isNew: boolean): LiveActivi
 function securityLogToActivity(row: Record<string, any>, isNew: boolean): LiveActivity {
   const name = row.full_name || row.username || 'System';
   return {
-    id: `log-${row.id || Math.random()}`,
+    id: `log-${row.id || `${row.action || 'event'}-${row.created_at || row.timestamp || 'undated'}`}`,
     user: {
       name,
       email: row.email || '',
@@ -127,7 +127,7 @@ export function useLiveActivities() {
         return [...seeds, ...kept].slice(0, 50);
       });
     } catch (err) {
-      console.warn('[LiveActivity] seed online failed:', err);
+      console.warn('[LiveActivity] initial presence request failed.');
     }
   }, [updateOnline]);
 
@@ -151,7 +151,7 @@ export function useLiveActivities() {
         });
       }
     } catch (err) {
-      console.warn('[LiveActivity] seed logs failed:', err);
+      console.warn('[LiveActivity] initial security-log request failed.');
     }
   }, []);
 
@@ -177,9 +177,7 @@ export function useLiveActivities() {
             void Promise.all([seedOnline(isDisposed), seedRecentLogs(isDisposed)]);
           }
         )
-        .subscribe((status) => {
-          console.log('[LiveActivity] Realtime subscription status:', status);
-        });
+        .subscribe();
       channelRef.current = channel;
     }
 

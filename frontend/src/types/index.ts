@@ -138,6 +138,22 @@ export interface BackupRecord {
   moduleScope?: string[];
   exportFormat?: string;
   notes?: string;
+  verificationState?: string;
+  verifiedAt?: string;
+  retentionExpiresAt?: string;
+  protected?: boolean;
+  protectedAt?: string;
+  sourceEnvironment?: string;
+  schemaVersion?: string;
+  manifestVersion?: number;
+  manifestPath?: string;
+  tableCount?: number;
+  rowCount?: number;
+  storageObjectCount?: number;
+  failureReason?: string;
+  restoreTestStatus?: string;
+  lastRestoreTestAt?: string;
+  cleanupStatus?: string;
 }
 
 export interface AdminNotification {
@@ -228,142 +244,50 @@ export interface SecurityOverview {
 }
 
 /* ------------------------------------------------------------------ */
-/* Analytics (System Administrator)                                    */
+/* Phase 6 role-scoped analytics                                      */
 /* ------------------------------------------------------------------ */
 
-export interface AnalyticsPeriod {
-  from: string;
-  to: string;
-  label: string;
+export interface AnalyticsTrend {
+  current: number;
+  previous: number;
+  kind: 'UP' | 'DOWN' | 'FLAT' | 'NEW' | 'N_A';
+  percent: number | null;
 }
 
-export interface AnalyticsKpi {
-  key: string;
-  label: string;
-  value: string;
-  description: string;
-  previous?: number | null;
-  deltaPct?: number | null;
-  trend?: 'up' | 'down' | 'flat' | null;
-  status?: 'good' | 'warning' | 'bad' | 'neutral' | null;
-  hasComparison: boolean;
-}
-
-export interface AnalyticsSeries {
-  key: string;
+export interface RuntimeHealthCheck {
   name: string;
-  color: string;
-  values: number[];
-}
-
-export interface AnalyticsActivity {
-  labels: string[];
-  series: AnalyticsSeries[];
-}
-
-export interface LabelValue {
-  label: string;
-  value: number;
-}
-
-export interface AnalyticsSecurity {
-  total: number;
-  critical: number;
-  high: number;
-  medium: number;
-  low: number;
-  failedLogins: number;
-  blockedIps: number;
-  byRiskLevel: LabelValue[];
-  overTime: LabelValue[];
-}
-
-export interface AnalyticsAiProvider {
-  id: string;
-  name: string;
-  model?: string;
-  status?: string;
-  responseTime?: string;
-  isDefault: boolean;
-  type?: string;
-}
-
-export interface AnalyticsAi {
-  totalRequests: number;
-  successful: number;
-  failed: number;
-  successRate?: number | null;
-  avgResponseTimeMs?: number | null;
-  source: string;
-  providers: AnalyticsAiProvider[];
-  requestsByProvider: LabelValue[];
-}
-
-export interface AnalyticsHealthComponent {
-  id: string;
-  name: string;
-  status: string;
-  uptimePercent: number;
-  errorCount: number;
-}
-
-export interface AnalyticsHealth {
-  overallStatus: string;
-  healthyCount: number;
-  warningCount: number;
-  offlineCount: number;
-  errorCount: number;
-  components: AnalyticsHealthComponent[];
-}
-
-export interface AnalyticsAudit {
-  total: number;
-  byModule: LabelValue[];
-  byAction: LabelValue[];
-  mostActiveModule?: string | null;
-  mostCommonAction?: string | null;
-}
-
-export interface AnalyticsDocuments {
-  total: number;
-  uploaded: number;
-  archived: number;
-  aiClassified: number;
-}
-
-export interface AnalyticsContracts {
-  total: number;
-  active: number;
-  expiringSoon: number;
-  expired: number;
-  renewed: number;
-}
-
-export interface AnalyticsBackups {
-  total: number;
-  successCount: number;
-  failedCount: number;
-  successRate?: number | null;
-  lastSuccessfulAt?: string | null;
-  lastBackupAt?: string | null;
-}
-
-export interface AnalyticsInsight {
-  severity: 'info' | 'good' | 'warning' | 'critical';
-  title: string;
-  description: string;
+  status: 'LIVE' | 'EMPTY' | 'DISCONNECTED';
+  latencyMs: number;
+  detail: string;
 }
 
 export interface AnalyticsData {
-  period: AnalyticsPeriod;
-  kpis: AnalyticsKpi[];
-  activity: AnalyticsActivity;
-  security: AnalyticsSecurity;
-  ai: AnalyticsAi;
-  health: AnalyticsHealth;
-  audit: AnalyticsAudit;
-  documents: AnalyticsDocuments;
-  contracts: AnalyticsContracts;
-  backups: AnalyticsBackups;
-  insights: AnalyticsInsight[];
+  scope: string;
+  timezone: 'Asia/Manila';
+  generatedAt: string;
+  period: { from: string; toExclusive: string };
+  filter: { preset: string; semantics: 'from-inclusive/to-exclusive' };
+  operational?: {
+    failedEvents: number;
+    failedEventsTrend: AnalyticsTrend;
+    activeSessions: number;
+    automation: { successfulRuns: number; failedRuns: number; lastRunAt: string | null };
+    notificationDeliveryFailures: number;
+    realtimeMarkers: number;
+    blockedIps: number;
+    activeSecurityAlerts: number;
+    unreadNotifications: number;
+  };
+  systemHealth?: {
+    checkedAt: string;
+    overallStatus: 'LIVE' | 'EMPTY' | 'DISCONNECTED';
+    checks: RuntimeHealthCheck[];
+  };
+  facilities?: Record<string, unknown>;
+  visitors?: Record<string, unknown>;
+  documents?: Record<string, unknown>;
+  contracts?: Record<string, unknown>;
+  compliance?: Record<string, unknown>;
+  legal?: Record<string, unknown>;
+  employee?: Record<string, unknown>;
 }

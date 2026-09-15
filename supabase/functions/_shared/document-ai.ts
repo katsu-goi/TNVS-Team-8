@@ -1,3 +1,5 @@
+import { assertSafeProviderUrl } from "./provider-url.ts";
+
 type DatabaseClient = any;
 
 export type BusinessCategory = {
@@ -293,9 +295,10 @@ export async function classifyDocumentContent(
   });
 
   let response: Response;
+  let timeout: number | undefined;
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 55_000);
+    timeout = setTimeout(() => controller.abort(), 55_000);
     const credential = provider.credential.trim();
     const requestHeaders: Record<string, string> = {
       "Content-Type": "application/json",
@@ -325,15 +328,22 @@ export async function classifyDocumentContent(
     }
     if (isAgentRouterBase(provider.baseUrl)) requestHeaders["x-api-key"] = credential;
     else requestBody.temperature = 0;
-    response = await fetch(endpointFor(provider), {
+    const endpoint = endpointFor(provider);
+    await assertSafeProviderUrl(endpoint);
+    response = await fetch(endpoint, {
       method: "POST",
       headers: requestHeaders,
       body: JSON.stringify(requestBody),
       signal: controller.signal,
+      redirect: "manual",
     });
-    clearTimeout(timeout);
+    if (response.status >= 300 && response.status < 400) {
+      throw new Error("Provider redirects are not accepted");
+    }
   } catch {
     throw new DocumentAiError("AI_PROVIDER_REQUEST_FAILED", "The configured AI provider could not process the document.");
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
   if (!response.ok) {
     throw new DocumentAiError("AI_PROVIDER_REQUEST_FAILED", `The configured AI provider rejected document processing (HTTP ${response.status}).`);

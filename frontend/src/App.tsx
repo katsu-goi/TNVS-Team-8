@@ -231,9 +231,9 @@ export const App: React.FC = () => {
            <Route path="admin/account-lockouts" element={<SystemAdminRoute><AccountLockoutsPage /></SystemAdminRoute>} />
 
           {/* Super Administrator business, RBAC, and security oversight */}
-          <Route path="admin/analytics" element={<SuperAdminRoute><AnalyticsPage /></SuperAdminRoute>} />
+          <Route path="admin/analytics" element={<AdminPortalRoute><AnalyticsPage /></AdminPortalRoute>} />
           {/* Legacy path preserved for bookmarks/links to the renamed Analytics page */}
-          <Route path="admin/reports" element={<SuperAdminRoute><Navigate to="/admin/analytics" replace /></SuperAdminRoute>} />
+          <Route path="admin/reports" element={<AdminPortalRoute><Navigate to="/admin/analytics" replace /></AdminPortalRoute>} />
           <Route path="admin/rbac" element={<SuperAdminRoute><RbacAdminPage /></SuperAdminRoute>} />
 
           {/* Security Center */}

@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { safeFetchJson } from '../../api/client';
 import { facilitiesService } from '../../api/facilitiesService';
+import { notificationService, type AppNotification } from '../../api/notificationService';
 import { DocumentUploadPanel } from '../documents/DocumentUploadPanel';
 import { visitorService } from '../../api/visitorService';
 import { ID_TYPES } from '../../types/visitors';
@@ -12,6 +13,7 @@ import type {
   IdType, VisitorVerification, VisitorWatchlistEntry,
 } from '../../types/visitors';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
+import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -700,19 +702,23 @@ export const FoDocumentsPage: React.FC = () => {
 };
 
 export const FoNotificationsPage: React.FC = () => {
-  const [notifications, setNotifications] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const revision = useNotificationRealtimeStore(state => state.revision);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
-      const json = await safeFetchJson('/api/v1/notifications');
-      setNotifications(json?.data ?? []);
-    } catch {} finally { setLoading(false); }
+      setNotifications(await notificationService.getNotifications());
+    } catch (e: any) { setError(e?.response?.data?.message || e?.message || 'Failed to load notifications.'); }
+    finally { setLoading(false); }
   }, [retry]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (revision > 0) setRetry(value => value + 1); }, [revision]);
 
   if (loading && notifications.length === 0) return <LoadingSkeleton />;
 
@@ -734,17 +740,18 @@ export const FoNotificationsPage: React.FC = () => {
         <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
       </div>
 
-      {notifications.length === 0 ? (
+      {error ? <ErrorState message={error} onRetry={() => setRetry(value => value + 1)} /> : notifications.length === 0 ? (
         <EmptyState icon={Bell} title="No Notifications" desc="No facility notifications yet." />
       ) : (
         <div className="space-y-2">
-          {notifications.map((n: any) => (
+          {notifications.map((n) => (
             <div key={n.id} className={`card-stat p-3 flex items-start space-x-3 border-l-4 ${typeColors[n.type] || 'border-l-slate-300'}`}>
               <div className="flex-1">
-                <p className="text-sm text-slate-900">{n.message || n.title}</p>
-                <p className="text-xs text-slate-500 mt-0.5">{n.details || n.relatedEntityType || ''}</p>
-                <p className="text-[10px] text-slate-400 mt-1 font-mono">{n.timestamp || n.createdAt ? new Date(n.timestamp || n.createdAt).toLocaleString() : ''}</p>
+                <p className="text-sm font-semibold text-slate-900">{n.title}</p>
+                <p className="text-xs text-slate-500 mt-0.5">{n.message}</p>
+                <p className="text-[10px] text-slate-400 mt-1 font-mono">{new Date(n.createdAt).toLocaleString('en-PH')}</p>
               </div>
+              {!n.read && <button onClick={async () => { await notificationService.markNotificationRead(n.id); setNotifications(rows => rows.map(row => row.id === n.id ? { ...row, read: true } : row)); }} className="rounded-lg border border-emerald-200 px-2 py-1 text-[11px] font-bold text-emerald-700">Mark read</button>}
             </div>
           ))}
         </div>

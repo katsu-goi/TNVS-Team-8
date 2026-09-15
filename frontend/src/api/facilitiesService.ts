@@ -45,12 +45,8 @@ export const facilitiesService = {
     const { data } = await apiClient.get('/facilities-manager/calendar', { params: { year, month } });
     return data?.data ?? [];
   },
-  async getAnalytics() {
-    const { data } = await apiClient.get('/facilities-manager/analytics');
-    return data?.data ?? {};
-  },
-  async getReports(type?: string, startDate?: string, endDate?: string) {
-    const { data } = await apiClient.get('/facilities-manager/reports', { params: { type, startDate, endDate } });
+  async getAnalytics(params?: Record<string, string>) {
+    const { data } = await apiClient.get('/analytics', { params });
     return data?.data ?? {};
   },
   async createRoom(payload: Record<string, any>) {

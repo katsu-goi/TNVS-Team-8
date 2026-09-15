@@ -205,7 +205,7 @@ export async function safeFetchJson<T = any>(url: string, options?: RequestInit)
     });
     return response.data ?? null;
   } catch (err) {
-    console.warn(`Safe fetch JSON failed for ${url}:`, err);
+    console.warn('An application API request failed; details were withheld from the browser console.');
     return null;
   }
 }

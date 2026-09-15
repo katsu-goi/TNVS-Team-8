@@ -37,6 +37,10 @@ function integer(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function percentage(numerator: number, denominator: number): number | null {
+  return denominator === 0 ? null : Math.round((numerator * 1000) / denominator) / 10;
+}
+
 async function countRows(table: string, apply?: (query: any) => any): Promise<number> {
   let query: any = db.from(table).select("id", { count: "exact", head: true });
   if (apply) query = apply(query);
@@ -133,7 +137,7 @@ async function workspacePayload(workspace: string, section: string): Promise<Rec
   if (workspace === "compliance-management") {
     if (section === "dashboard") {
       payload.metrics = [
-        { label: "Overall Compliance Score", value: 94, suffix: "%", tone: "success" },
+        { label: "Active Permit Rate", value: percentage(await countRows("facility_permits", (query) => query.eq("status", "ACTIVE")), await countRows("facility_permits")), suffix: "%", tone: "success" },
         { label: "Critical Expiring Permits", value: await countRows("facility_permits", (query) => query.eq("status", "CRITICAL")), tone: "danger" },
         { label: "Awaiting Sign-off", value: await countRows("management_signoffs", (query) => query.eq("status", "AWAITING_MANAGER_SIGNOFF")), tone: "warning" },
         { label: "Active Incident Escalations", value: await countRows("compliance_incidents", (query) => query.neq("status", "RESOLVED")), tone: "danger" },
@@ -223,7 +227,7 @@ async function workspacePayload(workspace: string, section: string): Promise<Rec
   if (workspace === "privacy") {
     if (section === "dashboard") {
       payload.metrics = [
-        { label: "Privacy Risk Index", value: 94, suffix: "%", tone: "success" },
+        { label: "Completed Privacy Request Rate", value: percentage(await countRows("data_subject_requests", (query) => query.eq("status", "COMPLETED")), await countRows("data_subject_requests")), suffix: "%", tone: "success" },
         { label: "Active Data Subject Requests", value: await countRows("data_subject_requests", (query) => query.not("status", "in", "(COMPLETED,REJECTED)")), tone: "warning" },
         { label: "CCTV Export Approvals", value: await countRows("cctv_export_requests", (query) => query.eq("status", "PENDING_PRIVACY_APPROVAL")), tone: "danger" },
         { label: "Retention Expiry Queue", value: await countRows("facility_data_logs", (query) => query.eq("status", "ACTIVE")), tone: "info" },
@@ -294,7 +298,7 @@ async function workspacePayload(workspace: string, section: string): Promise<Rec
   if (workspace === "compliance") {
     if (section === "dashboard") {
       payload.metrics = [
-        { label: "Overall Regional Compliance", value: 92, suffix: "%", tone: "success" },
+        { label: "Active Permit Rate", value: percentage(await countRows("facility_permits", (query) => query.eq("status", "ACTIVE")), await countRows("facility_permits")), suffix: "%", tone: "success" },
         { label: "Permit Expiration Alerts", value: await countRows("facility_permits", (query) => query.in("status", ["WATCH", "CRITICAL", "EXPIRED"])), tone: "warning" },
         { label: "Vendor Contracts on Hold", value: await countRows("vendor_risk_assessments", (query) => query.eq("status", "FLAGGED_HOLD")), tone: "danger" },
         { label: "Government Action Items", value: await countRows("compliance_incidents", (query) => query.neq("status", "RESOLVED")), tone: "danger" },

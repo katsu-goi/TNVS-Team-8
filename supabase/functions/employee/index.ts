@@ -126,7 +126,7 @@ function toVisitorDto(v: VisitorRow) {
     email: v.email,
     phoneNumber: v.phone_number,
     company: v.company,
-    idNumber: v.id_number,
+    idNumber: maskIdentifier(v.id_number),
     purposeOfVisit: v.purpose_of_visit,
     expectedArrival: v.expected_arrival,
     actualArrival: v.actual_arrival,
@@ -135,6 +135,12 @@ function toVisitorDto(v: VisitorRow) {
     badgeNumber: v.badge_number,
     createdAt: v.created_at,
   };
+}
+
+function maskIdentifier(value: string | null): string | null {
+  if (!value) return null;
+  const suffix = value.replace(/\s+/g, "").slice(-4);
+  return suffix ? `****${suffix}` : "****";
 }
 
 type DocumentRow = {
@@ -249,7 +255,8 @@ async function loadReservations(userId: string): Promise<ReservationRow[]> {
     .from("reservations")
     .select("*, rooms(name, room_number, floor_number, facility_id, facilities(name, code))")
     .eq("user_id", userId)
-    .order("created_at", { ascending: false, nullsFirst: false });
+    .order("created_at", { ascending: false, nullsFirst: false })
+    .limit(200);
   if (error) throw new Error(`reservations load failed: ${error.message}`);
   return (data as unknown as ReservationRow[]) ?? [];
 }
@@ -661,7 +668,8 @@ async function loadVisitors(userId: string): Promise<VisitorRow[]> {
     .from("visitors")
     .select("*")
     .eq("host_id", userId)
-    .order("created_at", { ascending: false, nullsFirst: false });
+    .order("created_at", { ascending: false, nullsFirst: false })
+    .limit(200);
   if (error) throw new Error(`visitors load failed: ${error.message}`);
   return (data as unknown as VisitorRow[]) ?? [];
 }
@@ -748,7 +756,8 @@ async function handleListDocuments(ctx: AuthContext | null, _req: Request) {
     .select("id, title, file_name, file_type, file_size, status, classification_level, supabase_storage_url, version_number, created_at")
     .eq("created_by", ctx!.email)
     .eq("is_deleted", false)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(200);
   if (error) throw new Error(`documents load failed: ${error.message}`);
   return jsonResponse(ok(((data as unknown as DocumentRow[]) ?? []).map(toDocumentDto), "Documents retrieved"), 200);
 }
@@ -798,7 +807,8 @@ async function handleListRequests(ctx: AuthContext | null, _req: Request) {
     .select("*")
     .eq("requester_id", ctx!.userId)
     .eq("is_deleted", false)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(200);
   if (error) throw new Error(`employee_requests load failed: ${error.message}`);
   return jsonResponse(ok(((data as unknown as RequestRow[]) ?? []).map(toRequestDto), "Requests retrieved"), 200);
 }
@@ -867,7 +877,8 @@ async function handleListNotifications(ctx: AuthContext | null, _req: Request) {
     .select("*")
     .eq("recipient_id", ctx!.userId)
     .eq("is_deleted", false)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(200);
   if (error) throw new Error(`employee_notifications load failed: ${error.message}`);
   return jsonResponse(ok(((data as unknown as NotificationRow[]) ?? []).map(toNotificationDto), "Notifications retrieved"), 200);
 }

@@ -1900,8 +1900,6 @@ const routes = [
   { method: "GET", path: "/facilities-manager/inventory-alerts", guard: { kind: "assignedRoles", roles: ["FACILITIES_MANAGER"] }, handler: handleInventoryAlerts },
   { method: "POST", path: "/facilities-manager/inventory-alerts/reorder", guard: { kind: "assignedRoles", roles: ["FACILITIES_MANAGER"] }, handler: handleInitiateReorder },
   { method: "GET", path: "/facilities-manager/calendar", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleCalendar },
-  { method: "GET", path: "/facilities-manager/analytics", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleAnalytics },
-  { method: "GET", path: "/facilities-manager/reports", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleReports },
 
   // Facilities Officer
   { method: "POST", path: "/facilities-officer/rooms/available", guard: { kind: "roles", roles: ["FACILITIES_OFFICER"] }, handler: handleOfficerRoomsAvailable },

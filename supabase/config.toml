@@ -22,6 +22,35 @@ verify_jwt = false
 [functions.facilities]
 verify_jwt = false
 
+# Application JWTs are verified by the shared guard so account state,
+# auth_version session revocation, and database-backed RBAC are enforced.
+[functions.analytics]
+verify_jwt = false
+[functions.compliance]
+verify_jwt = false
+[functions.contracts]
+verify_jwt = false
+[functions.dashboard]
+verify_jwt = false
+[functions.documents]
+verify_jwt = false
+[functions.document-title-suggest]
+verify_jwt = false
+[functions.employee]
+verify_jwt = false
+[functions.monitoring]
+verify_jwt = false
+[functions.notifications]
+verify_jwt = false
+[functions.procurement]
+verify_jwt = false
+[functions.reservation-portal]
+verify_jwt = false
+[functions.security]
+verify_jwt = false
+[functions.visitor]
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.

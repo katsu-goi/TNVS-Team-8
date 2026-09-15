@@ -8,6 +8,7 @@ import { resolveClientIp } from "../_shared/ip.ts";
 import {
   DocumentExtractionError,
   extractDocumentContent,
+  validateDocumentUpload,
   MAX_EXTRACTABLE_FILE_BYTES,
   SUPPORTED_DOCUMENT_EXTENSIONS,
 } from "../_shared/document-content.ts";
@@ -342,7 +343,10 @@ async function loadDocumentRow(id: string): Promise<Record<string, unknown> | nu
 // ---------------------------------------------------------------------------
 
 async function handleListDocuments(ctx: AuthContext | null) {
-  const { data, error } = await db.from("documents").select("*, categories(name), folders(name, path)");
+  const { data, error } = await db.from("documents")
+    .select("*, categories(name), folders(name, path)")
+    .order("created_at", { ascending: false })
+    .limit(500);
   if (error) throw new Error(`documents query failed: ${error.message}`);
   const rows = (data as unknown as Record<string, unknown>[]) ?? [];
   const ids = rows.map((r) => String(r.id ?? ""));
@@ -365,7 +369,9 @@ async function handleSearchDocuments(ctx: AuthContext | null, req: Request) {
     );
   }
   const { data, error } = await db.from("documents").select("*, categories(name), folders(name, path)")
-    .or(`title.ilike.%${query}%,ocr_extracted_text.ilike.%${query}%,ai_summary.ilike.%${query}%`);
+    .or(`title.ilike.%${query}%,ocr_extracted_text.ilike.%${query}%,ai_summary.ilike.%${query}%`)
+    .order("created_at", { ascending: false })
+    .limit(200);
   if (error) throw new Error(`documents search failed: ${error.message}`);
   const rows = (data as unknown as Record<string, unknown>[]) ?? [];
   const ids = rows.map((r) => String(r.id ?? ""));
@@ -500,9 +506,18 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
   const extension = extensionOf(uploadFile.name);
   const storedName = crypto.randomUUID() + "." + extension;
   const bytes = new Uint8Array(await uploadFile.arrayBuffer());
+  let serverMime: string;
+  try {
+    serverMime = validateDocumentUpload(extension, uploadFile.type, bytes);
+  } catch (e) {
+    if (e instanceof DocumentExtractionError) {
+      return jsonResponse(fail("Upload rejected", e.code, [e.message]), 400);
+    }
+    throw e;
+  }
   const { error: upError } = await db.storage.from(BUCKET).upload(storedName, bytes, {
-    contentType: uploadFile.type || "application/octet-stream",
-    upsert: true,
+    contentType: serverMime,
+    upsert: false,
   });
   if (upError) throw new Error(`storage upload failed: ${upError.message}`);
 
@@ -527,7 +542,7 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
     const { data: saved, error: insError } = await db.from("documents").insert({
       title: resolveTitle(titleParam, uploadFile.name),
       file_name: uploadFile.name,
-      file_type: uploadFile.type || `application/${extension}`,
+      file_type: serverMime,
       file_size: uploadFile.size,
       file_path: storedName,
       owner_email: userEmail,

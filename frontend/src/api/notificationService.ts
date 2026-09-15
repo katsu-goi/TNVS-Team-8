@@ -38,16 +38,4 @@ export const notificationService = {
     const { data } = await apiClient.post(`/notifications/${id}/dismiss`);
     return data?.data;
   },
-  async getAdminNotifications(): Promise<AppNotification[]> {
-    const { data } = await apiClient.get('/admin/notifications');
-    return data?.data ?? [];
-  },
-  async getAdminUnreadCount(): Promise<number> {
-    const { data } = await apiClient.get('/admin/notifications/unread-count');
-    return data?.data ?? 0;
-  },
-  async markAdminNotificationRead(id: string) {
-    const { data } = await apiClient.put(`/admin/notifications/${id}/read`);
-    return data?.data;
-  },
 };

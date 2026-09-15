@@ -21,6 +21,7 @@ export type AuthUserRow = {
   password_reset_token: string | null;
   password_reset_expires_at: string | null;
   is_email_verified: boolean;
+  auth_version: number;
 };
 
 export type AuthUser = {

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { employeeService } from '../../api/employeeService';
 import { DocumentUploadPanel } from '../documents/DocumentUploadPanel';
+import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -667,6 +668,7 @@ export const EmpNotificationsPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const { show, node } = useToast();
+  const notificationRevision = useNotificationRealtimeStore(state => state.revision);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -675,6 +677,7 @@ export const EmpNotificationsPage: React.FC = () => {
     finally { setLoading(false); }
   }, [retry]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (notificationRevision > 0) setRetry(value => value + 1); }, [notificationRevision]);
 
   const markRead = async (n: any) => {
     try { await employeeService.markNotificationRead(n.id); setRetry(r => r + 1); }

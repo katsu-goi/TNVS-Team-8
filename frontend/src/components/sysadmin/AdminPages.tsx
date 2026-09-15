@@ -5,7 +5,8 @@ import {
   FileText, Bell, Settings, Layers,
   RefreshCw, Wifi, WifiOff,
   Search, ChevronLeft, ChevronRight,} from 'lucide-react';
-import { loadConfigs, updateConfig, loadIntegrations, loadNotifications, markNotificationRead } from '../../api/adminService';
+import { loadConfigs, updateConfig, loadIntegrations } from '../../api/adminService';
+import { notificationService } from '../../api/notificationService';
 import { securityService } from '../../api/securityService';
 import { SecurityThreatSection } from '../security/SecurityThreatSection';
 import { SubsystemHealthGrid } from './SubsystemHealthGrid';
@@ -346,7 +347,7 @@ export const SettingsPage: React.FC = () => {
 };
 
 export const NotificationsPage: React.FC = () => {
-  const { data, loading, error, retry } = useQuery(loadNotifications);
+  const { data, loading, error, retry } = useQuery(() => notificationService.getNotifications());
   const [filter, setFilter] = useState('');
 
   if (loading) return <LoadingSkeleton />;
@@ -377,7 +378,7 @@ export const NotificationsPage: React.FC = () => {
                 n.severity === 'CRITICAL' ? 'bg-rose-50 border-rose-200' :
                 n.severity === 'WARNING' ? 'bg-amber-50 border-amber-200' :
                 'bg-slate-50 border-slate-200'
-              }`} onClick={() => { if (!n.read) { markNotificationRead(n.id); retry(); } }}>
+              }`} onClick={() => { if (!n.read) void notificationService.markNotificationRead(n.id).then(retry); }}>
                 {n.severity === 'CRITICAL' ? <AlertCircle className="w-5 h-5 text-rose-500 mt-0.5 shrink-0" /> :
                  n.severity === 'WARNING' ? <AlertTriangle className="w-5 h-5 text-amber-500 mt-0.5 shrink-0" /> :
                  <Bell className="w-5 h-5 text-slate-400 mt-0.5 shrink-0" />}

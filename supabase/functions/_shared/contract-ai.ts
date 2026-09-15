@@ -1,3 +1,5 @@
+import { assertSafeProviderUrl } from "./provider-url.ts";
+
 type DatabaseClient = any;
 
 export type ContractAiResult = {
@@ -465,9 +467,14 @@ export async function analyzeContractContent(
     if (isAgentRouterBase(provider.baseUrl)) headers["x-api-key"] = provider.credential;
     else body.temperature = 0;
     try {
-      response = await fetch(endpointFor(provider), {
-        method: "POST", headers, body: JSON.stringify(body), signal: controller.signal,
+      const endpoint = endpointFor(provider);
+      await assertSafeProviderUrl(endpoint);
+      response = await fetch(endpoint, {
+        method: "POST", headers, body: JSON.stringify(body), signal: controller.signal, redirect: "manual",
       });
+      if (response.status >= 300 && response.status < 400) {
+        throw new Error("Provider redirects are not accepted");
+      }
     } catch (error) {
       const timedOut = error instanceof DOMException && error.name === "AbortError";
       lastError = new ContractAiError(

@@ -11,21 +11,6 @@ import type {
 // lives at `response.data.data`. Fall back defensively in case a caller
 // (or future endpoint) returns the payload directly.
 
-export interface TestEventResult {
-  eventId: string;
-  ip: string;
-  privateIp: boolean;
-  geolocation: {
-    country: string | null;
-    countryCode: string | null;
-    city: string | null;
-    latitude: number | null;
-    longitude: number | null;
-    isp: string | null;
-    asn: string | null;
-  } | null;
-}
-
 export const securityThreatService = {
   async fetchMap(window: ThreatWindow): Promise<ThreatMapResponse | null> {
     try {
@@ -52,15 +37,6 @@ export const securityThreatService = {
   async fetchDiagnostics(): Promise<ThreatMapDiagnostics | null> {
     try {
       const { data } = await apiClient.get('/security/ip-threats/diagnostics');
-      return data?.data ?? data ?? null;
-    } catch {
-      return null;
-    }
-  },
-
-  async triggerTestEvent(): Promise<TestEventResult | null> {
-    try {
-      const { data } = await apiClient.post('/security/ip-threats/test-event');
       return data?.data ?? data ?? null;
     } catch {
       return null;

@@ -1,8 +1,9 @@
 import { createHandler, AuthContext } from "../_shared/guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
-import { ok } from "../_shared/envelope.ts";
+import { fail, ok } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
 import { classifyDocumentContent, DocumentAiError } from "../_shared/document-ai.ts";
+import { assertSafeProviderUrl } from "../_shared/provider-url.ts";
 
 const db = adminDb();
 const PLACEHOLDER_KEY = "sk-proj-default";
@@ -599,10 +600,12 @@ function toConfigDto(module: any, cfg: Record<string, unknown> | null, providers
 // ---------------------------------------------------------------------------
 
 async function httpGetJson(url: string, headers: Record<string, string>): Promise<any> {
+  await assertSafeProviderUrl(url);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 20000);
   try {
-    const res = await fetch(url, { headers, signal: ctrl.signal, redirect: "follow" });
+    const res = await fetch(url, { headers, signal: ctrl.signal, redirect: "manual" });
+    if (res.status >= 300 && res.status < 400) throw new Error("Provider redirects are not accepted");
     if (!res.ok) {
       const body = await res.text();
       const err: any = new Error(`Provider returned HTTP ${res.status}. ${body.slice(0, 300)}`);
@@ -786,17 +789,19 @@ async function verifyOpenAiCompatibleCredential(provider: ProviderDto): Promise<
   if (!Array.isArray(response?.choices)) throw new Error("Provider verification response was invalid");
 }
 
-async function httpPostJson(url: string, headers: Record<string, string>, payload: unknown): Promise<any> {
+async function httpPostJson(url: string, headers: Record<string, string>, payload: unknown, timeoutMs = 45000): Promise<any> {
+  await assertSafeProviderUrl(url);
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 45000);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
       method: "POST",
       headers: { ...headers, "Content-Type": "application/json" },
       body: JSON.stringify(payload),
       signal: ctrl.signal,
-      redirect: "follow",
+      redirect: "manual",
     });
+    if (res.status >= 300 && res.status < 400) throw new Error("Provider redirects are not accepted");
     if (!res.ok) {
       const body = await res.text();
       const err: any = new Error(`Provider returned HTTP ${res.status}. ${body.slice(0, 300)}`);
@@ -920,13 +925,31 @@ function getActiveContent(moduleKey: string): string | null {
 // Chat (compose context, then graceful fallback when no usable provider)
 // ---------------------------------------------------------------------------
 
+const CHAT_MODULE_ROLES: Record<string, string[]> = {
+  reservations: ["EMPLOYEE", "FACILITIES_OFFICER", "FACILITIES_MANAGER"],
+  visitor_management: ["FACILITIES_OFFICER", "FACILITIES_MANAGER"],
+  document_management: ["RECORDS_OFFICER", "COMPLIANCE_OFFICER", "DATA_PROTECTION_OFFICER"],
+  records_management: ["RECORDS_OFFICER", "COMPLIANCE_OFFICER", "COMPLIANCE_MANAGER", "DATA_PROTECTION_OFFICER"],
+  legal_management: ["LEGAL_OFFICER", "LEGAL_COUNSEL"],
+  contract_management: ["CONTRACT_OFFICER", "LEGAL_OFFICER", "LEGAL_COUNSEL"],
+};
+
+function canUseChatModule(ctx: AuthContext | null, module: string): boolean {
+  if (module === "global") return true;
+  if (!ctx) return false;
+  const allowed = CHAT_MODULE_ROLES[module] ?? [];
+  return allowed.some((role) => ctx.roles.includes(role));
+}
+
 async function chatCompose(ctx: AuthContext | null, message: string, module: string | null, relatedModules: string[] | null, route: string | null): Promise<any> {
+  const startedAt = performance.now();
   ensureInstructions();
   let mod = module;
   if (mod == null || mod.trim() === "") {
     mod = route != null && route.trim() !== "" ? detectModule(route) ?? "global" : "global";
   }
   if (!instructionCache.has(mod)) mod = "global";
+  if (!canUseChatModule(ctx, mod)) mod = "global";
 
   const moduleApplied = getActiveContent(mod) != null;
   const moduleName = instructionCache.get(mod)?.name ?? "Global";
@@ -943,7 +966,8 @@ async function chatCompose(ctx: AuthContext | null, message: string, module: str
   const related: string[] = [];
   if (relatedModules != null) {
     for (const rel of relatedModules) {
-      if (rel != null && rel !== "" && rel !== mod && getActiveContent(rel) != null) related.push(rel);
+      if (rel != null && rel !== "" && rel !== mod && canUseChatModule(ctx, rel)
+        && getActiveContent(rel) != null && related.length < 3) related.push(rel);
     }
   }
   if (related.length > 0) {
@@ -962,7 +986,10 @@ async function chatCompose(ctx: AuthContext | null, message: string, module: str
   }
   context.push("Never grant, imply, or suggest privileges outside this list.\n\n");
 
-  const data = await dataContext(mod);
+  // Ordinary Employees can use scheduling assistance, but do not receive
+  // organization-wide aggregate context. Privileged business roles receive
+  // only the module aligned with their server-side role.
+  const data = ctx && !ctx.user.assignedRoles.includes("EMPLOYEE") ? await dataContext(mod) : null;
   if (data != null) {
     context.push("## LIVE SYSTEM DATA (REAL, NOT FABRICATED)\n");
     context.push(data + "\n");
@@ -1015,48 +1042,39 @@ async function chatCompose(ctx: AuthContext | null, message: string, module: str
           { role: "user", content: message },
         ],
       };
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 15000);
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: {
+      const json = await httpPostJson(
+        endpoint,
+        {
           ...openAiCompatibleAuthHeaders(usableKey, baseUrl),
-          "Content-Type": "application/json",
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "User-Agent": "Photonic-Omega/1.0",
         },
-        body: JSON.stringify(body),
-        signal: ctrl.signal,
-      });
-      clearTimeout(timer);
-      if (res.ok) {
-        const json = await res.json();
-        const content = json?.choices?.[0]?.message?.content ?? null;
-        if (content != null && String(content).trim() !== "") {
-          reply = String(content).trim();
-          liveLlm = true;
-        }
+        body,
+        15000,
+      );
+      const content = json?.choices?.[0]?.message?.content ?? null;
+      if (content != null && String(content).trim() !== "") {
+        reply = String(content).trim();
+        liveLlm = true;
       }
     } catch {
       // fall back to graceful reply
     }
   }
 
-  const latency = Math.max(1, 1);
-  const tokens = Math.floor(message.length / 4) + 180;
+  const latency = Math.max(1, Math.round(performance.now() - startedAt));
   addLog(
     "AI Context Chat",
     target != null && target.providerName != null ? target.providerName : null,
     "context_chat_" + mod,
     liveLlm ? "SUCCESS" : "FAILED",
     latency,
-    tokens,
+    0,
     ctx != null ? ctx.email : "System Administrator",
   );
 
   return {
     reply, module: mod, moduleName, moduleApplied, liveLlm,
-    latencyMs: latency, tokensUsed: tokens,
-    composedContext,
+    latencyMs: latency, tokensUsed: null,
     modelUsed: target != null ? target.model : null,
     provider: target != null ? target.providerName : null,
     fallbackUsed: target != null && target.fallbackUsed === true,
@@ -1563,8 +1581,7 @@ async function getSystemPrompt() {
   return jsonResponse(ok({ prompt: systemPrompt }, "AI System prompt retrieved"), 200);
 }
 
-async function updateSystemPrompt(_ctx: unknown, req: Request) {
-  const body = await req.json().catch(() => null);
+async function updateSystemPrompt(_ctx: unknown, _req: Request, body: unknown) {
   const prompt = (body as Record<string, any>)?.prompt;
   if (prompt != null) systemPrompt = String(prompt);
   return jsonResponse(ok({ prompt: systemPrompt }, "AI System prompt updated successfully"), 200);
@@ -1574,59 +1591,50 @@ async function getLogs() {
   return jsonResponse(ok(logs, "AI Request logs retrieved"), 200);
 }
 
-function getHealthAnalytics() {
-  const requestsToday = counters.requestsToday;
-  const avgLatency = logs.length === 0 ? 58 : Math.round(logs.reduce((a, l) => a + (Number(String(l.duration).replace(" ms", "")) || 60), 0) / logs.length);
-  const successCount = logs.filter((l) => l.status === "SUCCESS").length;
-  const successRate = logs.length === 0 ? 100.0 : (successCount / logs.length) * 100.0;
-
-  const maxv = (a: number, b: number) => (a > b ? a : b);
-  const requestsPerDay = [
-    { day: "Mon", requests: maxv(12, Math.floor((requestsToday * 2) / 5)) },
-    { day: "Tue", requests: maxv(18, Math.floor((requestsToday * 3) / 5)) },
-    { day: "Wed", requests: maxv(25, Math.floor((requestsToday * 4) / 5)) },
-    { day: "Thu", requests: maxv(31, Math.floor((requestsToday * 9) / 10)) },
-    { day: "Today", requests: requestsToday },
-  ];
-  const tokenConsumption = [
-    { day: "Mon", tokens: 14.2 },
-    { day: "Tue", tokens: 22.8 },
-    { day: "Wed", tokens: 35.1 },
-    { day: "Thu", tokens: 48.5 },
-    { day: "Today", tokens: Math.max(5.0, counters.totalTokens / 1000.0) },
-  ];
-  const responseTimeTrend = [
-    { time: "08:00", latency: 45 },
-    { time: "10:00", latency: 62 },
-    { time: "12:00", latency: 58 },
-    { time: "14:00", latency: 71 },
-    { time: "16:00", latency: avgLatency },
-  ];
-  const moduleUsageDistribution = [
-    { name: "Document & OCR", value: maxv(40, counters.docsProcessed * 10) },
-    { name: "Contract Risk", value: maxv(30, counters.contractsReviewed * 10) },
-    { name: "Visitor Clearance", value: maxv(20, counters.visitorsVerified * 10) },
-    { name: "Other Modules", value: 10 },
-  ];
-
+async function getHealthAnalytics() {
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const since = today.toISOString();
+  const [documents, contracts, visitors, providers] = await Promise.all([
+    db.from("document_ai_classifications").select("id", { count: "exact", head: true }).gte("processed_at", since),
+    db.from("contract_ai_analyses").select("id", { count: "exact", head: true }).gte("analyzed_at", since),
+    db.from("visitor_verifications").select("id", { count: "exact", head: true }).gte("created_at", since),
+    db.from("ai_providers").select("id,status,is_deleted").eq("is_deleted", false),
+  ]);
+  const firstError = [documents.error, contracts.error, visitors.error, providers.error].find(Boolean);
+  if (firstError) throw new Error(`AI provenance analytics failed: ${firstError.message}`);
+  const docsProcessed = documents.count ?? 0;
+  const contractsReviewed = contracts.count ?? 0;
+  const visitorsVerified = visitors.count ?? 0;
+  const total = docsProcessed + contractsReviewed + visitorsVerified;
+  const providerRows = providers.data ?? [];
   return {
-    requestsToday,
-    docsProcessed: counters.docsProcessed,
-    contractsReviewed: counters.contractsReviewed,
-    visitorsVerified: counters.visitorsVerified,
-    avgLatencyMs: avgLatency,
-    successRate: Math.round(successRate * 10) / 10,
-    totalTokensUsed: counters.totalTokens,
-    queueLength: 0,
-    apiConnectionStatus: "Healthy",
-    modelStatus: "Operational",
-    errorRate: 0.00,
-    requestsPerDay, tokenConsumption, responseTimeTrend, moduleUsageDistribution,
+    requestsToday: total,
+    docsProcessed,
+    contractsReviewed,
+    visitorsVerified,
+    avgLatencyMs: null,
+    successRate: null,
+    totalTokensUsed: null,
+    queueLength: null,
+    apiConnectionStatus: providerRows.length === 0 ? "EMPTY" : "CONFIGURED",
+    modelStatus: providerRows.some((provider) => provider.status === "ACTIVE") ? "CONFIGURED" : "EMPTY",
+    errorRate: null,
+    requestsPerDay: [],
+    tokenConsumption: [],
+    responseTimeTrend: [],
+    moduleUsageDistribution: [
+      { name: "Document & OCR", value: docsProcessed },
+      { name: "Contract Risk", value: contractsReviewed },
+      { name: "Visitor Clearance", value: visitorsVerified },
+    ],
+    source: "PERSISTED_AI_PROVENANCE",
+    unavailableMetrics: ["latency", "token consumption", "success rate"],
   };
 }
 
 async function getAnalytics() {
-  return jsonResponse(ok(getHealthAnalytics(), "AI Health Analytics retrieved"), 200);
+  return jsonResponse(ok(await getHealthAnalytics(), "AI Health Analytics retrieved"), 200);
 }
 
 async function testConnection(_ctx: unknown, _req: Request, body: unknown) {
@@ -1806,6 +1814,14 @@ async function executeLiveAi(_ctx: unknown, _req: Request, body: unknown) {
       timestamp: new Date().toISOString(),
     }, 410);
   }
+  if (moduleType.toUpperCase() === "VISITOR_OCR") {
+    return jsonResponse({
+      success: false,
+      message: "Inline Visitor OCR simulation has been retired. Use the authenticated visitor verification workflow.",
+      errorCode: "VISITOR_WORKFLOW_REQUIRED",
+      timestamp: new Date().toISOString(),
+    }, 410);
+  }
 
   const responseData: Record<string, unknown> = {};
   let moduleId: string;
@@ -1833,18 +1849,7 @@ async function executeLiveAi(_ctx: unknown, _req: Request, body: unknown) {
   responseData.provider = provider;
   responseData.fallbackUsed = target.fallbackUsed;
 
-  if (moduleType.toUpperCase() === "VISITOR_OCR") {
-    responseData.idType = "Philippine Driver's License";
-    responseData.fullName = "Juan Carlos De La Cruz";
-    responseData.idNumber = "N02-18-998412";
-    responseData.securityWatchlistStatus = "CLEARED";
-    responseData.matchScore = "99.4%";
-    responseData.moduleExecuted = moduleName;
-    const duration = Date.now() - start + 62;
-    addLog(moduleName, provider, "ocr_ph_id_verification", "SUCCESS", duration, tokensUsed, "Security Officer");
-    responseData.durationMs = duration;
-    responseData.tokensUsed = tokensUsed;
-  } else {
+  {
     if (payload.trim().length < 20) {
       return jsonResponse({ success: false, message: "Extracted document content is required.", errorCode: "DOCUMENT_CONTENT_REQUIRED", timestamp: new Date().toISOString() }, 400);
     }
@@ -1890,13 +1895,12 @@ async function getModuleInstruction(_ctx: unknown, _req: Request, _body: unknown
   return jsonResponse(ok(dto, "Module AI instruction retrieved"), 200);
 }
 
-async function updateModuleInstruction(ctx: AuthContext | null, req: Request, _body: unknown, params: Record<string, string>) {
+async function updateModuleInstruction(ctx: AuthContext | null, _req: Request, body: unknown, params: Record<string, string>) {
   ensureInstructions();
   const current = instructionCache.get(params.moduleKey);
   if (!current) {
     return jsonResponse({ success: false, message: "Module instruction not found", errorCode: "MODULE_NOT_FOUND", timestamp: new Date().toISOString() }, 404);
   }
-  const body = await req.json().catch(() => null);
   const b = (body ?? {}) as Record<string, any>;
   const author = ctx ? ctx.email : "System Administrator";
   const now = nowString();
@@ -1980,18 +1984,19 @@ async function detectModuleHandler(_ctx: unknown, req: Request) {
   return jsonResponse(ok(result, "Module detected"), 200);
 }
 
-async function getModuleDataContext(_ctx: unknown, req: Request) {
-  const body = await req.json().catch(() => null);
+async function getModuleDataContext(_ctx: unknown, _req: Request, body: unknown) {
   const b = (body ?? {}) as Record<string, any>;
   const module = b.module != null ? String(b.module) : "global";
   const data = await dataContext(module);
   return jsonResponse(ok({ module, context: data ?? "" }, "Module data context retrieved"), 200);
 }
 
-async function chatHandler(ctx: AuthContext | null, req: Request) {
-  const body = await req.json().catch(() => null);
+async function chatHandler(ctx: AuthContext | null, _req: Request, body: unknown) {
   const b = (body ?? {}) as Record<string, any>;
   const message = b.message != null ? String(b.message).trim() : "";
+  if (message.length < 1 || message.length > 4_000) {
+    return jsonResponse(fail("AI chat messages must contain between 1 and 4,000 characters.", "VALIDATION_ERROR"), 400);
+  }
   const result = await chatCompose(
     ctx,
     message,

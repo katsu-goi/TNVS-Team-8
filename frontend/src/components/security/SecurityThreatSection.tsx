@@ -5,7 +5,7 @@ import SecurityTelemetry from './SecurityTelemetry';
 import GatewayLogs from './GatewayLogs';
 import { isSuperAdmin, useAuthStore } from '../../stores/authStore';
 import type { ThreatFilterType } from '../../types/threatMap';
-import { Wifi, WifiOff, Bug, FlaskConical } from 'lucide-react';
+import { Wifi, WifiOff, Bug } from 'lucide-react';
 
 /**
  * Real-time Geographic IP Threat Vector Map section for the Security Center.
@@ -28,13 +28,10 @@ export const SecurityThreatSection: React.FC = () => {
     lastEventType,
     lastEventLog,
     diagnostics,
-    testingEvent,
-    testResult,
     connect,
     disconnect,
     loadInitial,
     loadDiagnostics,
-    triggerTestEvent,
   } = useSecurityThreatStore();
 
   const [filter, setFilter] = useState<ThreatFilterType>('ALL');
@@ -47,12 +44,6 @@ export const SecurityThreatSection: React.FC = () => {
     return () => disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const handleTestEvent = () => {
-    void triggerTestEvent();
-    // Refresh the snapshot so the new log + threat appear immediately.
-    setTimeout(() => void loadInitial(), 700);
-  };
 
   const toggleDebug = () => {
     const next = !debugOpen;
@@ -80,15 +71,6 @@ export const SecurityThreatSection: React.FC = () => {
         {isSuperAdmin(user) && (
           <div className="flex items-center space-x-2">
             <button
-              onClick={handleTestEvent}
-              disabled={testingEvent}
-              className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors"
-              title="Admin test: persist a real security event and broadcast it live"
-            >
-              <FlaskConical className="w-3.5 h-3.5" />
-              <span>{testingEvent ? 'Creating…' : 'Test Security Event'}</span>
-            </button>
-            <button
               onClick={toggleDebug}
               className={`inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${debugOpen ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'}`}
             >
@@ -98,12 +80,6 @@ export const SecurityThreatSection: React.FC = () => {
           </div>
         )}
       </div>
-
-      {testResult && (
-        <div className="mb-4 p-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-700 text-xs font-mono">
-          {testResult}
-        </div>
-      )}
 
       {debugOpen && isSuperAdmin(user) && (
         <div className="mb-4 p-4 rounded-xl bg-slate-900 text-slate-200 text-[11px] font-mono border border-slate-700">

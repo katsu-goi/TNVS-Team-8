@@ -152,7 +152,7 @@ export const FoReservationsPage: React.FC = () => {
           setReservations(json.data.map((r: any) => mapBackendReservation(r)));
         }
       } catch (e) {
-        console.warn('Backend reservations offline, default to empty list', e);
+        console.warn('Reservation request failed; response details were withheld.');
       }
   }, []);
 

@@ -72,7 +72,13 @@ function hostOf(v: VisitorRow): HostUser | null {
   return v.users ?? null;
 }
 
-function toVisitorDto(v: VisitorRow, verification?: VerificationRow | null) {
+function maskIdentifier(value: string | null): string | null {
+  if (!value) return null;
+  const suffix = value.replace(/\s+/g, "").slice(-4);
+  return suffix ? `****${suffix}` : "****";
+}
+
+function toVisitorDto(v: VisitorRow, verification?: VerificationRow | null, includeSensitiveId = true) {
   const h = hostOf(v);
   return {
     id: v.id,
@@ -87,7 +93,7 @@ function toVisitorDto(v: VisitorRow, verification?: VerificationRow | null) {
     email: v.email,
     phoneNumber: v.phone_number,
     company: v.company,
-    idNumber: v.id_number,
+    idNumber: includeSensitiveId ? v.id_number : maskIdentifier(v.id_number),
     host: h
       ? {
           id: h.id,
@@ -250,19 +256,22 @@ function workflowResponse(result: WorkflowRpcResult, successMessage: string) {
 // Handlers
 // ---------------------------------------------------------------------------
 
-async function handleListVisitors() {
+async function handleListVisitors(ctx: AuthContext | null) {
   const { data, error } = await db
     .from("visitors")
     .select(
       "*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)",
     )
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(500);
   if (error) throw new Error(`visitors load failed: ${error.message}`);
   const rows = (data as unknown as VisitorRow[]) ?? [];
   const clearances = await currentClearanceMap(rows);
+  const includeSensitiveId = ctx!.user.assignedRoles.includes("FACILITIES_OFFICER");
   return jsonResponse(ok(rows.map((row) => toVisitorDto(
     row,
     row.current_verification_id ? clearances.get(row.current_verification_id) ?? null : null,
+    includeSensitiveId,
   )), "Visitors list retrieved"), 200);
 }
 
@@ -514,7 +523,7 @@ async function notifyHostOfArrival(visitor: VisitorRow): Promise<boolean> {
     }
     return true;
   } catch (e) {
-    console.error(`Failed to notify host of visitor arrival (${visitor.id}):`, (e as Error).message);
+    console.error("Failed to notify the visitor host:", (e as Error).message);
     return false;
   }
 }

@@ -21,7 +21,10 @@ function nowIso(): string {
 }
 
 const BACKUP_BUCKET = "backup-archives";
-const BACKUP_ROW_LIMIT = 5000;
+const BACKUP_PAGE_SIZE = 1000;
+const BACKUP_MAX_TABLE_ROWS = 50_000;
+const BACKUP_RETENTION_DAYS = 30;
+const BACKUP_MANIFEST_VERSION = 2;
 const BACKUP_TABLES: Record<string, string[]> = {
   audit_logs: ["audit_logs", "admin_audit_logs"],
   facilities: [
@@ -48,7 +51,6 @@ const BACKUP_TABLES: Record<string, string[]> = {
     "security_alerts",
     "ip_threats",
     "blocked_ips",
-    "active_sessions",
     "security_role_incidents",
     "privacy_breach_incidents",
     "login_history",
@@ -57,6 +59,13 @@ const BACKUP_TABLES: Record<string, string[]> = {
 };
 const FULL_BACKUP_TABLES = [
   ...new Set([
+    "roles",
+    "permissions",
+    "users",
+    "role_conflicts",
+    "role_hierarchy",
+    "user_roles",
+    "role_permissions",
     ...BACKUP_TABLES.audit_logs,
     ...BACKUP_TABLES.facilities,
     ...BACKUP_TABLES.compliance_permits,
@@ -83,22 +92,33 @@ const FULL_BACKUP_TABLES = [
     "retention_disposal_queue",
     "visitor_verifications",
     "visitor_watchlist",
+    "visitor_clearance_reviews",
+    "visitor_workflow_events",
     "hr_assistance_requests",
     "user_activity_events",
-    "online_users",
     "oversight_sessions",
     "department_scope_assignments",
     "data_subject_requests",
     "cctv_export_requests",
     "governance_settings",
     "department_approvals",
-    "users",
-    "roles",
-    "permissions",
-    "user_roles",
-    "role_permissions",
-    "role_hierarchy",
-    "role_conflicts",
+    "document_ai_classifications",
+    "document_grants",
+    "document_legal_holds",
+    "document_retention_assignments",
+    "retention_policy_versions",
+    "contract_ai_analyses",
+    "contract_clauses",
+    "contract_obligations",
+    "legal_contract_workflows",
+    "lifecycle_alert_rules",
+    "lifecycle_automation_runs",
+    "lifecycle_notification_failures",
+    "records_archives",
+    "records_custody_events",
+    "vendor_risk_assessments",
+    "ai_module_config",
+    "ai_providers",
     "backup_records",
     "backup_schedules",
   ]),
@@ -883,73 +903,6 @@ async function handleUpdateHrStatus(_ctx: AuthContext | null, req: Request, _bod
 }
 
 // ---------------------------------------------------------------------------
-// Admin notifications
-// ---------------------------------------------------------------------------
-
-type AdminNotifRow = {
-  id: string;
-  title: string;
-  message: string | null;
-  type: string;
-  severity: string;
-  read: boolean;
-  expires_at: string | null;
-  related_entity_id: string | null;
-  related_entity_type: string | null;
-  recipient_id: string | null;
-  created_at: string;
-};
-
-function adminNotifDto(n: AdminNotifRow): Record<string, unknown> {
-  return {
-    id: n.id,
-    title: n.title,
-    message: n.message,
-    type: n.type,
-    severity: n.severity,
-    relatedEntityType: n.related_entity_type,
-    relatedEntityId: n.related_entity_id,
-    read: n.read,
-    createdAt: n.created_at,
-    expiresAt: n.expires_at,
-  };
-}
-
-async function handleListAdminNotifications(ctx: AuthContext | null, _req: Request, _body: unknown, _p: RouteParams) {
-  const { data, error } = await db
-    .from("admin_notifications")
-    .select("*")
-    .or(`recipient_id.is.null,recipient_id.eq.${ctx!.userId}`)
-    .order("created_at", { ascending: false });
-  if (error) throw new Error(`admin notifications load failed: ${error.message}`);
-  return jsonResponse(ok((data as unknown as AdminNotifRow[]).map(adminNotifDto)), 200);
-}
-
-async function handleUnreadCount(ctx: AuthContext | null, _req: Request, _body: unknown, _p: RouteParams) {
-  const { count, error } = await db
-    .from("admin_notifications")
-    .select("id", { count: "exact", head: true })
-    .eq("read", false)
-    .or(`recipient_id.is.null,recipient_id.eq.${ctx!.userId}`);
-  if (error) throw new Error(`admin notifications count failed: ${error.message}`);
-  return jsonResponse(ok(count ?? 0), 200);
-}
-
-async function handleMarkNotifRead(ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
-  const { data, error } = await db
-    .from("admin_notifications")
-    .select("id, recipient_id")
-    .eq("id", p.id)
-    .maybeSingle();
-  if (error) throw new Error(`admin notification lookup failed: ${error.message}`);
-  if (data && ((data as { recipient_id: string | null }).recipient_id === null ||
-    (data as { recipient_id: string | null }).recipient_id === ctx!.userId)) {
-    await db.from("admin_notifications").update({ read: true }).eq("id", p.id);
-  }
-  return jsonResponse(ok("Notification marked as read"), 200);
-}
-
-// ---------------------------------------------------------------------------
 // Backups
 // ---------------------------------------------------------------------------
 
@@ -971,6 +924,41 @@ type BackupRow = {
   module_scope: string[] | null;
   export_format: string | null;
   notes: string | null;
+  verification_state: string;
+  verified_at: string | null;
+  retention_expires_at: string | null;
+  is_protected: boolean;
+  protected_at: string | null;
+  protected_by: string | null;
+  source_environment: string;
+  schema_version: string | null;
+  manifest_version: number;
+  manifest_path: string | null;
+  data_artifact_path: string | null;
+  restore_artifact_path: string | null;
+  artifact_objects: ArtifactDescriptor[] | null;
+  table_count: number | null;
+  row_count: number | null;
+  storage_object_count: number | null;
+  failure_reason: string | null;
+  restore_test_status: string;
+  last_restore_test_at: string | null;
+  artifact_deleted_at: string | null;
+  cleanup_status: string;
+};
+
+type ArtifactDescriptor = {
+  path: string;
+  kind: "MANIFEST" | "DATA_SQL" | "RESTORE_JSON" | "STORAGE_OBJECT";
+  size: number;
+  sha256: string;
+  contentType: string;
+};
+
+type StorageManifestEntry = ArtifactDescriptor & {
+  sourceBucket: string;
+  sourcePath: string;
+  linkedDocumentIds: string[];
 };
 
 function backupDto(b: BackupRow): Record<string, unknown> {
@@ -991,6 +979,22 @@ function backupDto(b: BackupRow): Record<string, unknown> {
     moduleScope: b.module_scope ?? [],
     exportFormat: b.export_format,
     notes: b.notes,
+    verificationState: b.verification_state,
+    verifiedAt: b.verified_at,
+    retentionExpiresAt: b.retention_expires_at,
+    protected: b.is_protected,
+    protectedAt: b.protected_at,
+    sourceEnvironment: b.source_environment,
+    schemaVersion: b.schema_version,
+    manifestVersion: b.manifest_version,
+    manifestPath: b.manifest_path,
+    tableCount: b.table_count,
+    rowCount: b.row_count,
+    storageObjectCount: b.storage_object_count,
+    failureReason: b.failure_reason,
+    restoreTestStatus: b.restore_test_status,
+    lastRestoreTestAt: b.last_restore_test_at,
+    cleanupStatus: b.cleanup_status,
   };
 }
 
@@ -1015,7 +1019,7 @@ const ALLOWED_BACKUP_MODULES = new Set([
 ]);
 
 type BackupTableRows = { table: string; rows: Record<string, unknown>[] };
-type LoadedBackupTables = { tables: BackupTableRows[]; skippedTables: string[] };
+type LoadedBackupTables = { tables: BackupTableRows[]; totalRows: number; excludedSecretConfigurations: number };
 
 function tablesForBackup(backupType: string, modules: string[] | null | undefined): string[] {
   if (backupType === "GRANULAR_EXPORT") {
@@ -1031,30 +1035,31 @@ function tablesForBackup(backupType: string, modules: string[] | null | undefine
 
 async function loadBackupTables(tableNames: string[]): Promise<LoadedBackupTables> {
   const result: BackupTableRows[] = [];
-  const skippedTables: string[] = [];
-  const batchSize = 8;
-
-  for (let offset = 0; offset < tableNames.length; offset += batchSize) {
-    const batch = tableNames.slice(offset, offset + batchSize);
-    const settled = await Promise.allSettled(batch.map(async (table) => {
-      const { data, error } = await db.from(table).select("*").limit(BACKUP_ROW_LIMIT);
-      if (error) throw new Error(error.message);
-      return { table, rows: (data ?? []) as Record<string, unknown>[] };
-    }));
-
-    settled.forEach((entry, index) => {
-      if (entry.status === "fulfilled") {
-        result.push(entry.value);
-      } else {
-        const table = batch[index];
-        skippedTables.push(table);
-        console.warn(`Skipping unavailable backup table ${table}: ${entry.reason instanceof Error ? entry.reason.message : String(entry.reason)}`);
+  let totalRows = 0;
+  let excludedSecretConfigurations = 0;
+  for (const table of tableNames) {
+    const rows: Record<string, unknown>[] = [];
+    for (let offset = 0; ; offset += BACKUP_PAGE_SIZE) {
+      const { data, error } = await db.from(table).select("*").range(offset, offset + BACKUP_PAGE_SIZE - 1);
+      if (error) throw new Error(`required backup table ${table} could not be read: ${error.message}`);
+      const page = (data ?? []) as Record<string, unknown>[];
+      rows.push(...page);
+      if (rows.length > BACKUP_MAX_TABLE_ROWS) {
+        throw new Error(`required backup table ${table} exceeds the ${BACKUP_MAX_TABLE_ROWS}-row Edge backup safety limit; use the documented pg_dump procedure`);
       }
-    });
+      if (page.length < BACKUP_PAGE_SIZE) break;
+    }
+    let safeRows = rows;
+    if (table === "system_configurations") {
+      const unsafe = /(?:secret|token|password|credential|private[_-]?key|service[_-]?role|jwt|api[_-]?key)/i;
+      safeRows = rows.filter((row) => !unsafe.test(String(row.config_key ?? "")));
+      excludedSecretConfigurations += rows.length - safeRows.length;
+    }
+    result.push({ table, rows: safeRows });
+    totalRows += safeRows.length;
   }
-
   if (result.length === 0) throw new Error("No backup tables were available to export.");
-  return { tables: result, skippedTables };
+  return { tables: result, totalRows, excludedSecretConfigurations };
 }
 
 function quoteSqlIdentifier(value: string): string {
@@ -1078,9 +1083,11 @@ function csvValue(value: unknown): string {
 
 function createSqlArtifact(tables: BackupTableRows[]): string {
   const lines = [
-    "-- Photonic Omega logical backup generated by the Backup & Disaster Recovery console",
+    "-- Photonic Omega verified logical application-data backup",
     `-- Generated at: ${nowIso()}`,
     "-- Restore this file after applying the current Supabase schema migrations.",
+    "-- Secrets from external secret stores and secret-like system configuration keys are intentionally excluded.",
+    "BEGIN;",
     "",
   ];
   for (const { table, rows } of tables) {
@@ -1097,6 +1104,7 @@ function createSqlArtifact(tables: BackupTableRows[]): string {
     }
     lines.push("");
   }
+  lines.push("COMMIT;", "");
   return `${lines.join("\n")}\n`;
 }
 
@@ -1110,65 +1118,192 @@ function createCsvArtifact(tables: BackupTableRows[]): string {
 
 function createJsonArtifact(tables: BackupTableRows[]): string {
   const payload = Object.fromEntries(tables.map(({ table, rows }) => [table, rows]));
-  return `${JSON.stringify({ generatedAt: nowIso(), tables: payload }, null, 2)}\n`;
+  return `${JSON.stringify({ manifestVersion: BACKUP_MANIFEST_VERSION, generatedAt: nowIso(), tables: payload })}\n`;
+}
+
+async function sha256(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer as ArrayBuffer);
+  return Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function uploadVerified(path: string, bytes: Uint8Array, contentType: string, kind: ArtifactDescriptor["kind"]): Promise<ArtifactDescriptor> {
+  if (bytes.byteLength === 0) throw new Error(`${kind} artifact is empty`);
+  const expected = await sha256(bytes);
+  const { error: uploadError } = await db.storage.from(BACKUP_BUCKET).upload(path, bytes, { contentType, upsert: false });
+  if (uploadError) throw new Error(`${kind} upload failed: ${uploadError.message}`);
+  const { data: downloaded, error: downloadError } = await db.storage.from(BACKUP_BUCKET).download(path);
+  if (downloadError || !downloaded) throw new Error(`${kind} verification download failed: ${downloadError?.message ?? "no bytes"}`);
+  const restoredBytes = new Uint8Array(await downloaded.arrayBuffer());
+  const actual = await sha256(restoredBytes);
+  if (restoredBytes.byteLength !== bytes.byteLength || actual !== expected) throw new Error(`${kind} integrity verification failed`);
+  return { path, kind, size: bytes.byteLength, sha256: expected, contentType };
+}
+
+async function downloadVerified(descriptor: ArtifactDescriptor): Promise<Uint8Array> {
+  const { data, error } = await db.storage.from(BACKUP_BUCKET).download(descriptor.path);
+  if (error || !data) throw new Error(`${descriptor.kind} artifact is unavailable`);
+  const bytes = new Uint8Array(await data.arrayBuffer());
+  if (bytes.byteLength !== descriptor.size || await sha256(bytes) !== descriptor.sha256) {
+    throw new Error(`${descriptor.kind} artifact checksum mismatch`);
+  }
+  return bytes;
+}
+
+async function copyStorageObjects(backupId: string, tables: BackupTableRows[]): Promise<StorageManifestEntry[]> {
+  const { data: inventory, error } = await db.rpc("phase7_storage_inventory");
+  if (error) throw new Error(`storage inventory failed: ${error.message}`);
+  const documentRows = tables.find((entry) => entry.table === "documents")?.rows ?? [];
+  const copied: StorageManifestEntry[] = [];
+  for (const object of (inventory ?? []) as Array<{ bucket_id: string; object_name: string; object_size: number }>) {
+    const { data: source, error: sourceError } = await db.storage.from(object.bucket_id).download(object.object_name);
+    if (sourceError || !source) throw new Error(`required private Storage object could not be read`);
+    const bytes = new Uint8Array(await source.arrayBuffer());
+    if (Number(object.object_size ?? 0) > 0 && bytes.byteLength !== Number(object.object_size)) {
+      throw new Error("private Storage source size changed during backup");
+    }
+    const path = `backups/${backupId}/storage/${object.bucket_id}/${encodeURIComponent(object.object_name)}`;
+    const artifact = await uploadVerified(path, bytes, source.type || "application/octet-stream", "STORAGE_OBJECT");
+    copied.push({
+      ...artifact,
+      sourceBucket: object.bucket_id,
+      sourcePath: object.object_name,
+      linkedDocumentIds: documentRows.filter((row) => row.file_path === object.object_name).map((row) => String(row.id)),
+    });
+  }
+  return copied;
+}
+
+function artifactList(record: BackupRow): ArtifactDescriptor[] {
+  return Array.isArray(record.artifact_objects) ? record.artifact_objects : [];
+}
+
+async function updateScheduleOutcome(success: boolean) {
+  const patch = success
+    ? { last_success_at: nowIso(), consecutive_failures: 0 }
+    : { last_failure_at: nowIso() };
+  if (!success) {
+    const { data } = await db.from("backup_schedules").select("consecutive_failures").eq("schedule_key", "BACKUP_DAILY").maybeSingle();
+    (patch as Record<string, unknown>).consecutive_failures = Number(data?.consecutive_failures ?? 0) + 1;
+  }
+  await db.from("backup_schedules").update({ ...patch, updated_at: nowIso() }).eq("schedule_key", "BACKUP_DAILY");
 }
 
 async function materializeBackup(id: string, existing?: BackupRow): Promise<BackupRow> {
   const record = existing ?? (await db.from("backup_records").select("*").eq("id", id).single()).data as BackupRow;
   if (!record) throw new Error("Backup record not found");
-
+  const uploadedPaths: string[] = [];
   try {
     await ensureBackupBucket();
-    await db.from("backup_records").update({ status: "RUNNING", notes: "Generating backup archive..." }).eq("id", id);
-
+    const { error: runningError } = await db.from("backup_records").update({
+      status: "RUNNING", notes: "Capturing required tables and private Storage objects.", failure_reason: null,
+    }).eq("id", id);
+    if (runningError) throw new Error(`backup could not enter RUNNING: ${runningError.message}`);
     const loaded = await loadBackupTables(tablesForBackup(record.backup_type, record.module_scope));
     const tables = loaded.tables;
-    const legacyGranularFallback = record.backup_type === "GRANULAR_EXPORT" && (record.module_scope ?? []).length === 0;
-    const skippedNote = loaded.skippedTables.length > 0
-      ? ` Skipped unavailable tables: ${loaded.skippedTables.join(", ")}.`
-      : "";
-    const legacyNote = legacyGranularFallback
-      ? " Legacy granular record had no saved module scope; available granular tables were included."
-      : "";
     const isGranular = record.backup_type === "GRANULAR_EXPORT";
     const format = isGranular && record.export_format === "JSON" ? "JSON" : isGranular ? "CSV" : "SQL";
-    const content = format === "JSON" ? createJsonArtifact(tables) : format === "CSV" ? createCsvArtifact(tables) : createSqlArtifact(tables);
-    const bytes = new TextEncoder().encode(content);
-    const digestBytes = await crypto.subtle.digest("SHA-256", bytes);
-    const checksum = Array.from(new Uint8Array(digestBytes)).map((value) => value.toString(16).padStart(2, "0")).join("");
-    const extension = format.toLowerCase();
-    const objectPath = `backups/${id}/${record.backup_type.toLowerCase()}-${id}.${extension}`;
-    const contentType = format === "JSON" ? "application/json" : format === "CSV" ? "text/csv" : "application/sql";
-    const { error: uploadError } = await db.storage.from(BACKUP_BUCKET).upload(objectPath, bytes, {
-      contentType,
-      upsert: true,
-    });
-    if (uploadError) throw new Error(`backup archive upload failed: ${uploadError.message}`);
-
-    const { data: signed, error: signedError } = await db.storage.from(BACKUP_BUCKET).createSignedUrl(objectPath, 900);
-    if (signedError || !signed?.signedUrl) throw new Error(`backup signed URL creation failed: ${signedError?.message ?? "no URL returned"}`);
+    const dataContent = format === "JSON" ? createJsonArtifact(tables) : format === "CSV" ? createCsvArtifact(tables) : createSqlArtifact(tables);
+    const dataPath = `backups/${id}/data.${format.toLowerCase()}`;
+    const dataArtifact = await uploadVerified(dataPath, new TextEncoder().encode(dataContent),
+      format === "JSON" ? "application/json" : format === "CSV" ? "text/csv" : "application/sql", "DATA_SQL");
+    uploadedPaths.push(dataArtifact.path);
+    const restoreArtifact = await uploadVerified(`backups/${id}/restore.json`, new TextEncoder().encode(createJsonArtifact(tables)), "application/json", "RESTORE_JSON");
+    uploadedPaths.push(restoreArtifact.path);
+    const storageObjects = isGranular ? [] : await copyStorageObjects(id, tables);
+    uploadedPaths.push(...storageObjects.map((entry) => entry.path));
+    const { data: schemaInventory, error: schemaError } = await db.rpc("phase7_schema_inventory");
+    if (schemaError) throw new Error(`schema inventory failed: ${schemaError.message}`);
+    const generatedAt = nowIso();
+    const manifest = {
+      manifestVersion: BACKUP_MANIFEST_VERSION,
+      backupId: id,
+      backupType: record.backup_type,
+      generatedAt,
+      sourceEnvironment: "production",
+      schema: schemaInventory,
+      database: {
+        tableCount: tables.length,
+        rowCount: loaded.totalRows,
+        tables: tables.map((entry) => ({ table: entry.table, rows: entry.rows.length })),
+        downloadableArtifact: dataArtifact,
+        restoreArtifact,
+        excludedSecretConfigurations: loaded.excludedSecretConfigurations,
+      },
+      storage: { bucketCount: 1, objectCount: storageObjects.length, objects: storageObjects },
+      exclusions: ["Supabase/Vercel/AI secret stores", "refresh tokens", "active sessions", "online-presence state", "secret-like system configuration values"],
+    };
+    const manifestPath = `backups/${id}/manifest.json`;
+    const manifestArtifact = await uploadVerified(manifestPath, new TextEncoder().encode(`${JSON.stringify(manifest, null, 2)}\n`), "application/json", "MANIFEST");
+    uploadedPaths.push(manifestArtifact.path);
+    const artifacts: ArtifactDescriptor[] = [dataArtifact, restoreArtifact, ...storageObjects, manifestArtifact];
+    const totalSize = artifacts.reduce((total, artifact) => total + artifact.size, 0);
 
     const { data: saved, error: saveError } = await db.from("backup_records").update({
       status: "COMPLETED",
-      completed_at: nowIso(),
-      file_size: bytes.byteLength,
-      file_path: objectPath,
-      file_url: signed.signedUrl,
-      checksum,
+      completed_at: generatedAt,
+      file_size: totalSize,
+      file_path: manifestPath,
+      file_url: null,
+      checksum: manifestArtifact.sha256,
       integrity_check: "PASSED",
-      notes: `Backup completed. ${bytes.byteLength} bytes across ${tables.length} table(s).${legacyNote}${skippedNote}`,
+      verification_state: "INTEGRITY_VERIFIED",
+      verified_at: generatedAt,
+      retention_expires_at: new Date(Date.now() + BACKUP_RETENTION_DAYS * 86_400_000).toISOString(),
+      source_environment: "production",
+      schema_version: String((schemaInventory as Record<string, unknown>)?.schemaVersion ?? "unknown"),
+      manifest_version: BACKUP_MANIFEST_VERSION,
+      manifest_path: manifestPath,
+      data_artifact_path: dataPath,
+      restore_artifact_path: restoreArtifact.path,
+      artifact_objects: artifacts,
+      table_count: tables.length,
+      row_count: loaded.totalRows,
+      storage_object_count: storageObjects.length,
+      failure_reason: null,
+      cleanup_status: "RETAINED",
+      notes: `Verified backup completed: ${loaded.totalRows} rows in ${tables.length} required table(s), ${storageObjects.length} private Storage object(s), ${totalSize} bytes.`,
     }).eq("id", id).select("*").single();
     if (saveError) throw new Error(`backup metadata update failed: ${saveError.message}`);
+    if (record.triggered_by === "pg_cron") await updateScheduleOutcome(true);
     return saved as unknown as BackupRow;
   } catch (error) {
+    if (uploadedPaths.length > 0) await db.storage.from(BACKUP_BUCKET).remove(uploadedPaths);
     await db.from("backup_records").update({
       status: "FAILED",
       completed_at: nowIso(),
       integrity_check: "FAILED",
-      notes: `Backup failed: ${error instanceof Error ? error.message : "unknown error"}`,
+      verification_state: "FAILED",
+      failure_reason: error instanceof Error ? error.message : "unknown backup error",
+      file_path: null,
+      file_url: null,
+      manifest_path: null,
+      data_artifact_path: null,
+      restore_artifact_path: null,
+      artifact_objects: [],
+      notes: `Backup failed without a verified artifact.`,
     }).eq("id", id);
+    if (record.triggered_by === "pg_cron") await updateScheduleOutcome(false);
     throw error;
   }
+}
+
+async function createBackupRecord(ctx: AuthContext | null, backupType: string, modules: string[], format: string, triggeredBy: string) {
+  const now = nowIso();
+  return await db.from("backup_records").insert({
+    backup_type: backupType,
+    status: "REQUESTED",
+    started_at: now,
+    triggered_by: triggeredBy,
+    created_by: ctx?.userId ?? null,
+    created_by_email: ctx?.email ?? triggeredBy,
+    module_scope: modules,
+    export_format: backupType === "GRANULAR_EXPORT" ? format : null,
+    integrity_check: "NOT_VERIFIED",
+    verification_state: "NOT_VERIFIED",
+    source_environment: "production",
+    retention_expires_at: new Date(Date.now() + BACKUP_RETENTION_DAYS * 86_400_000).toISOString(),
+    notes: "Backup requested; no success is recorded until every artifact is re-downloaded and hashed.",
+  }).select("*").single();
 }
 
 async function handleCreateBackup(ctx: AuthContext | null, _req: Request, body: unknown, _p: RouteParams) {
@@ -1186,24 +1321,45 @@ async function handleCreateBackup(ctx: AuthContext | null, _req: Request, body: 
     return jsonResponse(fail("At least one export module is required.", "VALIDATION_ERROR"), 400);
   }
 
-  const now = nowIso();
-  const { data, error } = await db
-    .from("backup_records")
-    .insert({
-      backup_type: granular ? "GRANULAR_EXPORT" : "FULL_SQL",
-      status: "QUEUED",
-      started_at: now,
-      triggered_by: ctx!.email,
-      created_by: ctx!.userId,
-      created_by_email: ctx!.email,
-      module_scope: modules,
-      export_format: granular ? format : null,
-      notes: "Backup request queued for the configured backup worker.",
-    })
-    .select("*")
-    .single();
-  if (error) throw new Error(`backup insert failed: ${error.message}`);
-  const completed = await materializeBackup(String((data as { id: string }).id), data as unknown as BackupRow);
+  const { data, error } = await createBackupRecord(ctx, granular ? "GRANULAR_EXPORT" : "FULL_SQL", modules, format, ctx!.email);
+  if (error) {
+    if (error.code === "23505") return jsonResponse(fail("Another backup is already REQUESTED or RUNNING.", "BACKUP_ALREADY_RUNNING"), 409);
+    throw new Error(`backup request failed: ${error.message}`);
+  }
+  try {
+    const completed = await materializeBackup(String((data as { id: string }).id), data as unknown as BackupRow);
+    return jsonResponse(ok(backupDto(completed)), 200);
+  } catch (error) {
+    return jsonResponse(fail("Backup failed; no verified artifact was recorded.", "BACKUP_FAILED", [error instanceof Error ? error.message : "unknown failure"]), 500);
+  }
+}
+
+async function schedulerAuthorized(req: Request): Promise<boolean> {
+  const token = req.headers.get("x-backup-scheduler-token") ?? "";
+  if (!token) return false;
+  const { data, error } = await db.from("backup_schedules").select("scheduler_token_hash").eq("schedule_key", "BACKUP_DAILY").maybeSingle();
+  if (error || !data?.scheduler_token_hash) return false;
+  return await sha256(new TextEncoder().encode(token)) === data.scheduler_token_hash;
+}
+
+async function handleScheduledBackup(_ctx: AuthContext | null, req: Request) {
+  if (!await schedulerAuthorized(req)) return notFound("Not found");
+  const { data, error } = await createBackupRecord(null, "FULL_SQL", [], "SQL", "pg_cron");
+  if (error) {
+    if (error.code === "23505") return jsonResponse(ok({ skipped: true, reason: "BACKUP_ALREADY_RUNNING" }), 202);
+    throw new Error(`scheduled backup request failed: ${error.message}`);
+  }
+  let completed: BackupRow;
+  try {
+    completed = await materializeBackup(String((data as { id: string }).id), data as unknown as BackupRow);
+  } catch (error) {
+    return jsonResponse(fail("Scheduled backup failed without a verified artifact.", "BACKUP_FAILED", [error instanceof Error ? error.message : "unknown failure"]), 500);
+  }
+  try {
+    await handleBackupRetentionCleanup(null, req, null);
+  } catch (cleanupError) {
+    console.error("scheduled retention cleanup failed:", cleanupError instanceof Error ? cleanupError.message : "unknown cleanup failure");
+  }
   return jsonResponse(ok(backupDto(completed)), 200);
 }
 
@@ -1228,6 +1384,10 @@ async function handleGetBackupSchedule(_ctx: AuthContext | null, _req: Request, 
     enabled: data.enabled,
     updatedAt: data.updated_at,
     updatedBy: data.updated_by,
+    lastDispatchedAt: data.last_dispatched_at,
+    lastSuccessAt: data.last_success_at,
+    lastFailureAt: data.last_failure_at,
+    consecutiveFailures: data.consecutive_failures,
   }), 200);
 }
 
@@ -1254,6 +1414,10 @@ async function handleSaveBackupSchedule(ctx: AuthContext | null, _req: Request, 
     enabled: data.enabled,
     updatedAt: data.updated_at,
     updatedBy: ctx!.email,
+    lastDispatchedAt: data.last_dispatched_at,
+    lastSuccessAt: data.last_success_at,
+    lastFailureAt: data.last_failure_at,
+    consecutiveFailures: data.consecutive_failures,
   }), 200);
 }
 
@@ -1267,25 +1431,18 @@ async function handleDownloadBackup(ctx: AuthContext | null, _req: Request, _bod
   if (!record) return notFound("Backup record not found");
 
   const target = record as unknown as BackupRow;
-  let fileUrl: string | null = null;
-  let storageObjectAvailable = false;
-  if (target.file_path) {
-    await ensureBackupBucket();
-    const { data: signed, error: signedError } = await db.storage.from(BACKUP_BUCKET).createSignedUrl(target.file_path, 900);
-    if (!signedError && signed?.signedUrl) {
-      fileUrl = signed.signedUrl;
-      storageObjectAvailable = true;
-    }
+  if (target.status !== "COMPLETED" || !["INTEGRITY_VERIFIED", "RESTORE_VERIFIED"].includes(target.verification_state)) {
+    return jsonResponse(fail("Only a completed, integrity-verified backup can be downloaded.", "BACKUP_FILE_NOT_READY"), 409);
   }
-  if (!storageObjectAvailable) {
-    const materialized = await materializeBackup(p.id, target);
-    fileUrl = materialized.file_url;
-  }
-  if (!fileUrl) return jsonResponse(fail("The backup archive is not available yet.", "BACKUP_FILE_NOT_READY"), 409);
+  const artifactPath = target.data_artifact_path;
+  if (!artifactPath) return jsonResponse(fail("The verified data artifact is unavailable.", "BACKUP_FILE_NOT_READY"), 409);
+  const descriptor = artifactList(target).find((entry) => entry.path === artifactPath);
+  if (!descriptor) return jsonResponse(fail("The data artifact is not present in the integrity manifest.", "BACKUP_FILE_NOT_READY"), 409);
+  await downloadVerified(descriptor);
+  const { data: signed, error: signedError } = await db.storage.from(BACKUP_BUCKET).createSignedUrl(artifactPath, 300);
+  if (signedError || !signed?.signedUrl) return jsonResponse(fail("The verified backup could not be authorized for download.", "BACKUP_FILE_NOT_READY"), 409);
 
-  await db.from("backup_records").update({ file_url: fileUrl }).eq("id", p.id);
-
-  const { data, error } = await db.rpc("record_backup_download", {
+  const { error } = await db.rpc("record_backup_download", {
     p_backup_id: p.id,
     p_user_id: ctx!.userId,
     p_user_email: ctx!.email,
@@ -1293,11 +1450,179 @@ async function handleDownloadBackup(ctx: AuthContext | null, _req: Request, _bod
     p_user_agent: ctx!.userAgent,
   });
   if (error) throw new Error(`backup download audit failed: ${error.message}`);
-  const result = Array.isArray(data) ? data[0] : data;
-  if (!result?.file_url && !fileUrl) {
-    return jsonResponse(fail("The backup service did not return a valid file URL.", "BACKUP_FILE_NOT_READY"), 409);
+  return jsonResponse(ok({ fileUrl: signed.signedUrl, backupId: p.id, expiresInSeconds: 300 }), 200);
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`).join(",")}}`;
   }
-  return jsonResponse(ok({ fileUrl: fileUrl ?? result.file_url, backupId: p.id }), 200);
+  return JSON.stringify(value) ?? "null";
+}
+
+async function recordHash(value: unknown): Promise<string> {
+  return await sha256(new TextEncoder().encode(stableJson(value)));
+}
+
+async function handleVerifyBackupRestore(ctx: AuthContext | null, _req: Request, body: unknown, p: RouteParams) {
+  const { data, error } = await db.from("backup_records").select("*").eq("id", p.id).maybeSingle();
+  if (error) throw new Error(`backup restore lookup failed: ${error.message}`);
+  if (!data) return notFound("Backup record not found");
+  const record = data as unknown as BackupRow;
+  if (record.status !== "COMPLETED" || !record.manifest_path || !record.restore_artifact_path) {
+    return jsonResponse(fail("Restore verification requires a completed backup with verified artifacts.", "RESTORE_NOT_READY"), 409);
+  }
+  const descriptors = artifactList(record);
+  const manifestDescriptor = descriptors.find((entry) => entry.path === record.manifest_path);
+  const restoreDescriptor = descriptors.find((entry) => entry.path === record.restore_artifact_path);
+  if (!manifestDescriptor || !restoreDescriptor) return jsonResponse(fail("Backup integrity manifest is incomplete.", "RESTORE_NOT_READY"), 409);
+
+  const testId = crypto.randomUUID();
+  const { error: testInsertError } = await db.from("backup_restore_tests").insert({
+    id: testId, backup_id: record.id, status: "RUNNING", created_by: ctx!.userId, created_by_email: ctx!.email,
+  });
+  if (testInsertError) throw new Error(`restore test record failed: ${testInsertError.message}`);
+  const restoreTempPaths: string[] = [];
+  try {
+    const manifestBytes = await downloadVerified(manifestDescriptor);
+    if ((body as Record<string, unknown> | null)?.corruptTest === true) {
+      const corrupt = manifestBytes.slice();
+      corrupt[0] = corrupt[0] ^ 1;
+      if (await sha256(corrupt) === manifestDescriptor.sha256) throw new Error("controlled corruption was not detected");
+      await db.from("backup_restore_tests").update({
+        status: "FAILED_EXPECTED", completed_at: nowIso(), failure_reason: "Controlled manifest checksum mismatch rejected before restore.",
+      }).eq("id", testId);
+      return jsonResponse(ok({ expectedFailure: true, reason: "CHECKSUM_MISMATCH", productionChanged: false, restoreTestId: testId }), 200);
+    }
+    const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as { storage?: { objects?: StorageManifestEntry[] } };
+    const restoreBytes = await downloadVerified(restoreDescriptor);
+    const archive = JSON.parse(new TextDecoder().decode(restoreBytes)) as { tables?: Record<string, Record<string, unknown>[]> };
+    const ids = ((body as Record<string, unknown> | null)?.fixtureIds ?? {}) as Record<string, unknown>;
+    const names: Record<string, string> = { facility: "facilities", room: "rooms", reservation: "reservations", visitor: "visitors", document: "documents", contract: "contracts" };
+    const fixture: Record<string, Record<string, unknown>> = {};
+    for (const [key, table] of Object.entries(names)) {
+      const requestedId = typeof ids[key] === "string" ? String(ids[key]) : "";
+      const row = (archive.tables?.[table] ?? []).find((candidate) => String(candidate.id) === requestedId);
+      if (!row) throw new Error(`required restore fixture ${table} was not found in the verified artifact`);
+      fixture[key] = row;
+    }
+    const { data: restored, error: restoreError } = await db.rpc("phase7_restore_fixture", { p_run_id: testId, p_payload: fixture });
+    if (restoreError) throw new Error(`isolated schema restore failed: ${restoreError.message}`);
+    const relationResult = restored as Record<string, unknown>;
+    const relationshipsVerified = relationResult.facilityRoomLinked === true
+      && relationResult.roomReservationLinked === true
+      && relationResult.documentContractLinked === true;
+    if (!relationshipsVerified) throw new Error("isolated schema relationship verification failed");
+
+    const storageEntry = (manifest.storage?.objects ?? []).find((entry) => entry.linkedDocumentIds?.includes(String(fixture.document.id)));
+    if (!storageEntry) throw new Error("linked private Storage object is absent from the backup manifest");
+    const originalCopy = await downloadVerified(storageEntry);
+    const restoredPath = `restore-tests/${testId}/${encodeURIComponent(storageEntry.sourcePath)}`;
+    const restoredArtifact = await uploadVerified(restoredPath, originalCopy, storageEntry.contentType, "STORAGE_OBJECT");
+    restoreTempPaths.push(restoredPath);
+    const restoredCopy = await downloadVerified(restoredArtifact);
+    const originalSha = await sha256(originalCopy);
+    const restoredSha = await sha256(restoredCopy);
+    if (originalSha !== restoredSha) throw new Error("isolated Storage restore checksum mismatch");
+
+    const signatures: Record<string, string> = {};
+    for (const [key, row] of Object.entries(fixture)) signatures[key] = await recordHash(row);
+    await db.from("backup_restore_tests").update({
+      status: "VERIFIED", completed_at: nowIso(), checksum_verified: true, restored_record_count: 6,
+      relationships_verified: true, storage_verified: true, original_sha256: originalSha, restored_sha256: restoredSha,
+    }).eq("id", testId);
+    await db.from("backup_records").update({
+      verification_state: "RESTORE_VERIFIED", restore_test_status: "VERIFIED", last_restore_test_at: nowIso(), verified_at: nowIso(),
+    }).eq("id", record.id);
+    return jsonResponse(ok({
+      restoreTestId: testId, checksumVerified: true, restoredRecordCount: 6, relationshipsVerified: true,
+      storageVerified: true, originalSha256: originalSha, restoredSha256: restoredSha,
+      restoredIds: Object.fromEntries(Object.entries(fixture).map(([key, row]) => [key, row.id])),
+      restoredRecordHashes: signatures,
+      documentStorageLinked: storageEntry.sourcePath === fixture.document.file_path,
+    }), 200);
+  } catch (restoreError) {
+    await db.from("backup_restore_tests").update({
+      status: "FAILED", completed_at: nowIso(), failure_reason: restoreError instanceof Error ? restoreError.message : "restore verification failed",
+    }).eq("id", testId);
+    await db.from("backup_records").update({ restore_test_status: "FAILED", last_restore_test_at: nowIso() }).eq("id", record.id);
+    return jsonResponse(fail("Isolated restore verification failed; production was not modified.", "RESTORE_VERIFICATION_FAILED", [restoreError instanceof Error ? restoreError.message : "unknown failure"]), 422);
+  } finally {
+    await db.rpc("phase7_cleanup_restore_fixture", { p_run_id: testId });
+    if (restoreTempPaths.length > 0) await db.storage.from(BACKUP_BUCKET).remove(restoreTempPaths);
+  }
+}
+
+async function handleBackupProtection(ctx: AuthContext | null, _req: Request, body: unknown, p: RouteParams) {
+  const isProtected = (body as Record<string, unknown> | null)?.protected === true;
+  const { data, error } = await db.from("backup_records").update({
+    is_protected: isProtected,
+    protected_at: isProtected ? nowIso() : null,
+    protected_by: ctx!.userId,
+  }).eq("id", p.id).select("*").maybeSingle();
+  if (error) throw new Error(`backup protection update failed: ${error.message}`);
+  if (!data) return notFound("Backup record not found");
+  return jsonResponse(ok(backupDto(data as unknown as BackupRow)), 200);
+}
+
+async function removeBackupArtifacts(record: BackupRow): Promise<void> {
+  const paths = artifactList(record).map((entry) => entry.path);
+  if (paths.length === 0) return;
+  const { error } = await db.storage.from(BACKUP_BUCKET).remove(paths);
+  if (error) throw new Error(`backup artifact deletion failed: ${error.message}`);
+  for (const path of paths) {
+    const probe = await db.storage.from(BACKUP_BUCKET).download(path);
+    if (!probe.error) throw new Error("backup artifact deletion could not be verified");
+  }
+}
+
+async function handleBackupRetentionCleanup(_ctx: AuthContext | null, _req: Request, body: unknown) {
+  const requestedIds = Array.isArray((body as Record<string, unknown> | null)?.backupIds)
+    ? ((body as Record<string, unknown>).backupIds as unknown[])
+      .filter((value): value is string => typeof value === "string").slice(0, 50)
+    : [];
+  let query = db.from("backup_records").select("*")
+    .eq("is_protected", false).lt("retention_expires_at", nowIso()).neq("cleanup_status", "DELETED").limit(50);
+  if (requestedIds.length > 0) query = query.in("id", requestedIds);
+  const { data, error } = await query;
+  if (error) throw new Error(`backup retention lookup failed: ${error.message}`);
+  let deleted = 0;
+  let failed = 0;
+  for (const raw of data ?? []) {
+    const record = raw as unknown as BackupRow;
+    await db.from("backup_records").update({ cleanup_status: "DELETE_RUNNING" }).eq("id", record.id);
+    try {
+      await removeBackupArtifacts(record);
+      await db.from("backup_records").update({
+        cleanup_status: "DELETED", artifact_deleted_at: nowIso(), file_path: null, file_url: null,
+        manifest_path: null, data_artifact_path: null, restore_artifact_path: null, artifact_objects: [],
+      }).eq("id", record.id);
+      deleted += 1;
+    } catch (cleanupError) {
+      await db.from("backup_records").update({ cleanup_status: "DELETE_FAILED", failure_reason: cleanupError instanceof Error ? cleanupError.message : "cleanup failed" }).eq("id", record.id);
+      failed += 1;
+    }
+  }
+  return jsonResponse(ok({ eligible: data?.length ?? 0, deleted, failed }), failed > 0 ? 207 : 200);
+}
+
+async function handleBackupHealth() {
+  const [latestSuccess, latestFailure, schedule] = await Promise.all([
+    db.from("backup_records").select("id,completed_at,verification_state").eq("status", "COMPLETED").order("completed_at", { ascending: false }).limit(1).maybeSingle(),
+    db.from("backup_records").select("id,completed_at,failure_reason").eq("status", "FAILED").order("completed_at", { ascending: false }).limit(1).maybeSingle(),
+    db.from("backup_schedules").select("*").eq("schedule_key", "BACKUP_DAILY").maybeSingle(),
+  ]);
+  for (const result of [latestSuccess, latestFailure, schedule]) if (result.error) throw new Error(`backup health query failed: ${result.error!.message}`);
+  const scheduleRow = schedule.data;
+  return jsonResponse(ok({
+    lastSuccess: latestSuccess.data ?? null,
+    lastFailure: latestFailure.data ?? null,
+    scheduleEnabled: scheduleRow?.enabled ?? false,
+    cronExpression: scheduleRow?.cron_expression ?? null,
+    nextSchedule: scheduleRow?.enabled ? (scheduleRow.cron_expression === "0 0 * * 0" ? "Next Sunday 00:00 UTC" : "Next day 00:00 UTC") : null,
+    consecutiveFailures: scheduleRow?.consecutive_failures ?? 0,
+  }), 200);
 }
 
 // ---------------------------------------------------------------------------
@@ -1417,7 +1742,8 @@ async function handleKpi(_ctx: AuthContext | null, _req: Request, _body: unknown
     q.eq("status", "FAILED").in("username", ["admin", "user"]));
   kpi.global.blockedIps = await countLike("blocked_ips", "status", "eq", "ACTIVE");
   kpi.global.activeAlerts = await countLike("security_alerts", "status", "eq", "UNRESOLVED");
-  kpi.global.unreadNotifications = await countRaw("admin_notifications", (q: any) => q.eq("read", false));
+  kpi.global.unreadNotifications = await countRaw("employee_notifications", (q: any) =>
+    q.eq("recipient_id", _ctx!.userId).eq("is_read", false).eq("is_deleted", false));
 
   return jsonResponse(ok(kpi), 200);
 }
@@ -1767,16 +2093,17 @@ const routes = [
   { method: "GET", path: "/admin/hr-assistance", guard: SUPER_ADMIN_ONLY, handler: handleListHrRequests },
   { method: "GET", path: "/admin/hr-assistance/:id", guard: SUPER_ADMIN_ONLY, handler: handleGetHrRequest },
   { method: "PATCH", path: "/admin/hr-assistance/:id/status", guard: SUPER_ADMIN_ONLY, handler: handleUpdateHrStatus },
-  { method: "GET", path: "/admin/notifications", guard: ADMIN_PORTAL_ROLES, handler: handleListAdminNotifications },
-  { method: "GET", path: "/admin/notifications/unread-count", guard: ADMIN_PORTAL_ROLES, handler: handleUnreadCount },
-  { method: "PUT", path: "/admin/notifications/:id/read", guard: ADMIN_PORTAL_ROLES, handler: handleMarkNotifRead },
   { method: "GET", path: "/admin/backups/latest", guard: SYSTEM_ADMIN_ONLY, handler: handleLatestBackup },
+  { method: "GET", path: "/admin/backups/health", guard: SYSTEM_ADMIN_ONLY, handler: handleBackupHealth },
   { method: "GET", path: "/admin/backups/schedule", guard: SYSTEM_ADMIN_ONLY, handler: handleGetBackupSchedule },
   { method: "PUT", path: "/admin/backups/schedule", guard: SYSTEM_ADMIN_ONLY, handler: handleSaveBackupSchedule },
+  { method: "POST", path: "/admin/backups/scheduled", guard: { kind: "public" }, handler: handleScheduledBackup },
+  { method: "POST", path: "/admin/backups/cleanup", guard: SYSTEM_ADMIN_ONLY, handler: handleBackupRetentionCleanup },
+  { method: "POST", path: "/admin/backups/:id/verify-restore", guard: SYSTEM_ADMIN_ONLY, handler: handleVerifyBackupRestore },
+  { method: "PATCH", path: "/admin/backups/:id/protection", guard: SYSTEM_ADMIN_ONLY, handler: handleBackupProtection },
   { method: "POST", path: "/admin/backups/:id/download", guard: SYSTEM_ADMIN_ONLY, handler: handleDownloadBackup },
   { method: "GET", path: "/admin/backups", guard: SYSTEM_ADMIN_ONLY, handler: handleListBackups },
   { method: "POST", path: "/admin/backups", guard: SYSTEM_ADMIN_ONLY, handler: handleCreateBackup },
-  { method: "GET", path: "/admin/kpi", guard: ADMIN_PORTAL_ROLES, handler: handleKpi },
 ] as const;
 
 Deno.serve(createHandler(routes as never, { name: "admin" }));

@@ -16,7 +16,6 @@ import {
   writeAudit,
   writeLoginHistory,
   writeSecurityLog,
-  LockoutInfo,
 } from "../_shared/lockout.ts";
 import {
   findActiveRefreshToken,
@@ -38,6 +37,14 @@ import { resolveClientIp } from "../_shared/ip.ts";
 import { relevantRoleConflicts } from "../_shared/rbac.ts";
 
 const ACCESS_TTL_SECONDS = 900;
+// Equalizes the password-hash work for unknown and known accounts. This is
+// not an application credential and is never used to authenticate a user.
+const DUMMY_PASSWORD_HASH = hashPassword(`timing-only-${crypto.randomUUID()}-Aa1!`);
+
+async function tokenDigest(token: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 type Ctx = { ip: string; userAgent: string | null };
 
@@ -45,20 +52,15 @@ function requestCtx(ctx: AuthContext | null, req: Request): Ctx {
   return { ip: resolveClientIp(req).ip, userAgent: req.headers.get("User-Agent") };
 }
 
-function lockoutResponse(info: LockoutInfo, message: string, errorCode: string) {
-  const locked = info.permanentlyLocked || info.lockSecondsRemaining > 0;
-  return jsonResponse(
-    { ...fail(message, errorCode), data: info },
-    locked ? 423 : 401,
-  );
-}
-
 async function buildAuthResponse(user: AuthUser, ctx: Ctx) {
   const accessToken = await signAccessToken(
     user.row.email,
     user.roles.map((r) => `ROLE_${r}`).concat(user.permissions),
+    undefined,
+    ACCESS_TTL_SECONDS,
+    user.row.auth_version,
   );
-  const refreshToken = await signRefreshToken(user.row.email);
+  const refreshToken = await signRefreshToken(user.row.email, undefined, undefined, user.row.auth_version);
   return {
     accessToken,
     refreshToken,
@@ -100,18 +102,12 @@ async function handleLogin(_ctx: AuthContext | null, req: Request, body: unknown
   if (user) {
     const lockout = currentLockoutInfo(user, new Date());
     if (lockout) {
-      const message = lockout.permanentlyLocked
-        ? "Your account has been temporarily locked due to multiple failed login attempts."
-        : `Too many failed login attempts. Please wait ${lockout.lockSecondsRemaining} seconds before trying again.`;
-      return lockoutResponse(
-        lockout,
-        message,
-        lockout.permanentlyLocked ? "ACCOUNT_LOCKED" : "ACCOUNT_TEMP_LOCKED",
-      );
+      await writeLoginHistory(user.row.email, user.row.id, ctx.ip, "FAILED", "ACCOUNT_LOCKED", ctx.userAgent ?? "");
+      return jsonResponse(fail("Invalid email or password", "INVALID_CREDENTIALS"), 401);
     }
   }
 
-  const passwordOk = user ? await verifyPassword(password, user.row.password_hash) : false;
+  const passwordOk = await verifyPassword(password, user?.row.password_hash ?? await DUMMY_PASSWORD_HASH);
 
   if (!user || !passwordOk) {
     if (user) {
@@ -119,30 +115,14 @@ async function handleLogin(_ctx: AuthContext | null, req: Request, body: unknown
       await writeLoginHistory(user.row.email, user.row.id, ctx.ip, "FAILED", "INVALID_CREDENTIALS", ctx.userAgent ?? "");
       await writeSecurityLog(user, "LOGIN_FAILED", "FAILED", "MEDIUM", ctx.ip, ctx.userAgent,
         `Failed login attempt ${info.failedAttempts}/3`);
-      if (info.permanentlyLocked) {
-        return lockoutResponse(
-          info,
-          "Your account has been temporarily locked due to multiple failed login attempts.",
-          "ACCOUNT_LOCKED",
-        );
-      }
-      if (info.lockSecondsRemaining > 0) {
-        return lockoutResponse(
-          info,
-          `Too many failed login attempts. Please wait ${info.lockSecondsRemaining} seconds before trying again.`,
-          "ACCOUNT_TEMP_LOCKED",
-        );
-      }
-      return lockoutResponse(info, "Invalid email or password", "INVALID_CREDENTIALS");
+      return jsonResponse(fail("Invalid email or password", "INVALID_CREDENTIALS"), 401);
     }
     return jsonResponse(fail("Invalid email or password", "INVALID_CREDENTIALS"), 401);
   }
 
   if (!isAccountActive(user)) {
-    return jsonResponse(
-      fail("Account is not active. Contact administrator.", "BUSINESS_RULE_VIOLATION"),
-      422,
-    );
+    await writeLoginHistory(user.row.email, user.row.id, ctx.ip, "FAILED", "ACCOUNT_INACTIVE", ctx.userAgent ?? "");
+    return jsonResponse(fail("Invalid email or password", "INVALID_CREDENTIALS"), 401);
   }
 
   const db = adminDb();
@@ -202,7 +182,8 @@ async function handleRefresh(_ctx: AuthContext | null, req: Request, body: unkno
   }
 
   const user = await findUserByEmail(payload.sub);
-  if (!user || user.row.id !== row.user_id) {
+  if (!user || user.row.id !== row.user_id || !isAccountActive(user)
+    || (payload.sessionVersion ?? 1) !== user.row.auth_version) {
     await revokeRefreshToken(row.id);
     return jsonResponse(fail("Invalid or expired token", "INVALID_TOKEN"), 401);
   }
@@ -216,6 +197,11 @@ async function handleRefresh(_ctx: AuthContext | null, req: Request, body: unkno
 
 async function handleLogout(ctx: AuthContext | null, _req: Request, _body: unknown) {
   if (ctx) {
+    const { error: versionError } = await adminDb().from("users")
+      .update({ auth_version: ctx.user.row.auth_version + 1 })
+      .eq("id", ctx.userId)
+      .eq("auth_version", ctx.user.row.auth_version);
+    if (versionError) throw new Error(`session version update failed: ${versionError.message}`);
     await revokeAllUserTokens(ctx.userId);
     await revokeActiveSessions(ctx.user);
     await insertActivityEvent({
@@ -268,7 +254,7 @@ async function handleForgotPassword(_ctx: AuthContext | null, req: Request, body
     const expiresAt = new Date(Date.now() + 30 * 60_000);
     const db = adminDb();
     await db.from("users").update({
-      password_reset_token: token,
+      password_reset_token: await tokenDigest(token),
       password_reset_expires_at: naiveIso(expiresAt),
     }).eq("id", user.row.id);
     await writeAudit(user, "PASSWORD_RESET_REQUESTED", "AUTH", "User", user.row.id,
@@ -304,10 +290,11 @@ async function handleResetPassword(_ctx: AuthContext | null, req: Request, body:
   }
 
   const db = adminDb();
+  const hashedToken = await tokenDigest(token);
   const { data: userRows, error: findErr } = await db
     .from("users")
     .select("*")
-    .eq("password_reset_token", token)
+    .eq("password_reset_token", hashedToken)
     .eq("is_deleted", false);
   if (findErr) throw new Error(`reset lookup failed: ${findErr.message}`);
 
@@ -330,6 +317,7 @@ async function handleResetPassword(_ctx: AuthContext | null, req: Request, body:
   const user = await findUserByEmail((userRow as { email: string }).email);
   if (user) {
     await revokeAllUserTokens(user.row.id);
+    await revokeActiveSessions(user);
     await writeAudit(user, "PASSWORD_RESET_SUCCESS", "AUTH", "User", user.row.id,
       "Password reset successfully", ctx.ip);
   }

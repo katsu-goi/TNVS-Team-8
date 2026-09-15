@@ -1,7 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { AlertCircle, RefreshCw, Calendar, CheckSquare, XSquare, Building2, ClipboardList, BarChart3, Bell, User, Settings, Plus, X, Wrench, Loader2, Save, Sparkles, Mail, CalendarClock, DoorOpen, FileText, ChevronLeft, ChevronRight, Clock, MapPin, AlertTriangle } from 'lucide-react';
 import { facilitiesService } from '../../api/facilitiesService';
+import { exportAnalyticsCsv, fetchAnalytics } from '../../api/analyticsService';
+import { notificationService, type AppNotification } from '../../api/notificationService';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
+import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
 import { TimePicker } from '../ui/TimePicker';
 
 const LoadingSkeleton: React.FC = () => (
@@ -1421,14 +1424,17 @@ export const AssetsPage: React.FC = () => {
 export const ReportsPage: React.FC = () => {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [retry, setRetry] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
-      const d = await facilitiesService.getReports();
-      setData(d);
-    } catch {} finally { setLoading(false); }
+      setData(await fetchAnalytics({ preset: 'last_30_days' }));
+    } catch (e: any) { setError(e?.response?.data?.message || e?.message || 'Failed to load facility report.'); }
+    finally { setLoading(false); }
   }, [retry]);
 
   useEffect(() => { load(); }, [load]);
@@ -1445,43 +1451,18 @@ export const ReportsPage: React.FC = () => {
           <h2 className="text-lg font-bold text-slate-900">Facility Reports</h2>
           <p className="text-xs text-slate-500">Live backend data only</p>
         </div>
-        <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setRetry(r => r + 1)} aria-label="Refresh report" className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
+          <button disabled={exporting} onClick={async () => { setExporting(true); setError(null); try { await exportAnalyticsCsv({ preset: 'last_30_days' }); } catch (e: any) { setError(e?.response?.data?.message || e?.message || 'CSV export failed.'); } finally { setExporting(false); } }} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{exporting ? 'Exporting…' : 'Export CSV'}</button>
+        </div>
       </div>
 
-      {data ? (
+      {error ? <ErrorState message={error} onRetry={() => setRetry(r => r + 1)} /> : data?.facilities ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {data.reservationReports && (
-            <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center"><Calendar className="w-4 h-4 mr-2 text-emerald-600" />Reservation Reports</h3>
-              {Object.entries(data.reservationReports).map(([k, v]) => (
-                <div key={k} className="flex justify-between py-1.5 text-xs"><span className="text-slate-600 capitalize">{k.replace(/([A-Z])/g, ' $1')}</span><span className="font-bold text-slate-900">{v as any}</span></div>
-              ))}
-            </div>
-          )}
-          {data.facilityUtilization && (
-            <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center"><Building2 className="w-4 h-4 mr-2 text-emerald-600" />Facility Utilization</h3>
-              {Object.entries(data.facilityUtilization).map(([k, v]) => (
-                <div key={k} className="flex justify-between py-1.5 text-xs"><span className="text-slate-600 capitalize">{k.replace(/([A-Z])/g, ' $1')}</span><span className="font-bold text-slate-900">{v as any}{k.includes('Rate') ? '%' : ''}</span></div>
-              ))}
-            </div>
-          )}
-          {data.assetReports && (
-            <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center"><ClipboardList className="w-4 h-4 mr-2 text-emerald-600" />Asset Reports</h3>
-              {Object.entries(data.assetReports).map(([k, v]) => (
-                <div key={k} className="flex justify-between py-1.5 text-xs"><span className="text-slate-600 capitalize">{k.replace(/([A-Z])/g, ' $1')}</span><span className="font-bold text-slate-900">{v as any}{k.includes('Rate') ? '%' : ''}</span></div>
-              ))}
-            </div>
-          )}
-          {data.occupancyReports && (
-            <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center"><BarChart3 className="w-4 h-4 mr-2 text-emerald-600" />Occupancy Reports</h3>
-              {Object.entries(data.occupancyReports).map(([k, v]) => (
-                <div key={k} className="flex justify-between py-1.5 text-xs"><span className="text-slate-600 capitalize">{k.replace(/([A-Z])/g, ' $1')}</span><span className="font-bold text-slate-900">{v as any}{k.includes('Rate') ? '%' : ''}</span></div>
-              ))}
-            </div>
-          )}
+          <div className="card-stat p-4"><h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center"><Calendar className="w-4 h-4 mr-2 text-emerald-600" />Reservation outcomes</h3>{['submitted','officerReviewed','managerApproved','rejected','cancelled','completed'].map(k => <div key={k} className="flex justify-between py-1.5 text-xs"><span className="text-slate-600 capitalize">{k.replace(/([A-Z])/g, ' $1')}</span><span className="font-bold text-slate-900">{data.facilities[k] ?? 0}</span></div>)}</div>
+          <div className="card-stat p-4"><h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center"><Building2 className="w-4 h-4 mr-2 text-emerald-600" />Time utilization</h3><div className="flex justify-between py-1.5 text-xs"><span>Occupied minutes</span><b>{data.facilities.occupiedMinutes ?? 0}</b></div><div className="flex justify-between py-1.5 text-xs"><span>Available operating minutes</span><b>{data.facilities.availableOperatingMinutes ?? 0}</b></div><div className="flex justify-between py-1.5 text-xs"><span>Utilization</span><b>{data.facilities.utilizationPercent == null ? 'N/A' : `${data.facilities.utilizationPercent}%`}</b></div><p className="mt-3 text-[11px] text-slate-500">Approved/confirmed/checked-in/completed occupied duration ÷ configured active-room operating duration.</p></div>
+          <div className="card-stat p-4"><h3 className="text-sm font-bold text-slate-900 mb-3">Scheduling quality</h3>{['conflicts','maintenanceRelatedRejections','maintenanceRestrictions'].map(k => <div key={k} className="flex justify-between py-1.5 text-xs"><span className="text-slate-600 capitalize">{k.replace(/([A-Z])/g, ' $1')}</span><b>{data.facilities[k] ?? 0}</b></div>)}</div>
+          <div className="card-stat p-4"><h3 className="text-sm font-bold text-slate-900 mb-3">Report provenance</h3><p className="text-xs text-slate-600">Range: {new Date(data.period.from).toLocaleString('en-PH')} to {new Date(data.period.toExclusive).toLocaleString('en-PH')} (exclusive)</p><p className="mt-2 text-xs text-slate-600">Generated: {new Date(data.generatedAt).toLocaleString('en-PH')}</p><p className="mt-2 text-xs text-slate-600">Scope: {data.scope}</p></div>
         </div>
       ) : (
         <EmptyState icon={BarChart3} title="No Report Data" desc="No data available for report generation." />
@@ -1500,7 +1481,7 @@ export const AnalyticsPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const d = await facilitiesService.getAnalytics();
+      const d = await facilitiesService.getAnalytics({ preset: 'last_30_days' });
       setData(d);
     } catch (e: any) {
       setError(e?.response?.data?.message || e?.message || 'Failed to load analytics.');
@@ -1514,14 +1495,16 @@ export const AnalyticsPage: React.FC = () => {
 
   if (loading && !data) return <LoadingSkeleton />;
 
-  const hasData = data && Object.keys(data).length > 0;
+  const facilities = data?.facilities;
+  const visitors = data?.visitors;
+  const hasData = Boolean(facilities || visitors);
 
   return (
     <div className="space-y-6">
       <div className="glass-panel p-5 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-slate-900">Analytics</h2>
-          <p className="text-xs text-slate-500">Live utilization and trends</p>
+          <p className="text-xs text-slate-500">Database-aggregated · last 30 Manila calendar days</p>
         </div>
         <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
       </div>
@@ -1530,47 +1513,43 @@ export const AnalyticsPage: React.FC = () => {
         <ErrorState message={error} onRetry={() => setRetry(r => r + 1)} />
       ) : hasData ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {data.monthlyReservationTrends && (
+          {facilities && (
             <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-2">Monthly Reservation Trends</h3>
-              <p className="text-2xl font-bold text-emerald-600">{data.monthlyReservationTrends.total}</p>
-              <p className="text-xs text-slate-500">This month</p>
+              <h3 className="text-sm font-bold text-slate-900 mb-2">Submitted reservations</h3>
+              <p className="text-2xl font-bold text-emerald-600">{facilities.submitted ?? 0}</p>
+              <p className="text-xs text-slate-500">{facilities.submittedTrend?.kind === 'NEW' ? 'New vs an empty prior period' : facilities.submittedTrend?.percent == null ? 'N/A comparison' : `${facilities.submittedTrend.percent}% vs previous equal period`}</p>
             </div>
           )}
-          {data.peakReservationHours && Object.keys(data.peakReservationHours).length > 0 && (
+          {facilities && (
             <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-2">Peak Reservation Hours</h3>
-              <div className="space-y-1">
-                {Object.entries(data.peakReservationHours).sort(([,a]: any, [,b]: any) => b - a).slice(0, 5).map(([hour, count]: [string, any]) => (
-                  <div key={hour} className="flex justify-between text-xs"><span className="text-slate-600">{hour}:00</span><span className="font-bold text-slate-900">{count}</span></div>
-                ))}
-              </div>
+              <h3 className="text-sm font-bold text-slate-900 mb-2">Facility utilization</h3>
+              <p className="text-2xl font-bold text-blue-600">{facilities.utilizationPercent == null ? 'N/A' : `${facilities.utilizationPercent}%`}</p>
+              <p className="text-xs text-slate-500">{facilities.occupiedMinutes ?? 0} of {facilities.availableOperatingMinutes ?? 0} operating minutes</p>
             </div>
           )}
-          {data.departmentDistribution && Object.keys(data.departmentDistribution).length > 0 && (
+          {visitors && (
             <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-2">Department Distribution</h3>
-              <div className="space-y-1">
-                {Object.entries(data.departmentDistribution).map(([dept, count]: [string, any]) => (
-                  <div key={dept} className="flex justify-between text-xs"><span className="text-slate-600">{dept}</span><span className="font-bold text-slate-900">{count}</span></div>
-                ))}
-              </div>
+              <h3 className="text-sm font-bold text-slate-900 mb-2">Average visitor duration</h3>
+              <p className="text-2xl font-bold text-violet-600">{visitors.averageVisitMinutes == null ? 'N/A' : `${visitors.averageVisitMinutes} min`}</p>
+              <p className="text-xs text-slate-500">Completed visits only · based on actual check-in and check-out timestamps</p>
             </div>
           )}
-          {data.mostFrequentlyUsedRooms && data.mostFrequentlyUsedRooms.length > 0 && (
+          {Array.isArray(facilities?.dailySubmitted) && (
             <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-2">Most Used Rooms</h3>
-              <div className="space-y-1">
-                {data.mostFrequentlyUsedRooms.slice(0, 5).map((r: any, i: number) => (
-                  <div key={i} className="flex justify-between text-xs"><span className="text-slate-600">{r.roomName} ({r.roomNumber})</span><span className="font-bold text-slate-900">{r.count} bookings</span></div>
-                ))}
-              </div>
+              <h3 className="text-sm font-bold text-slate-900 mb-2">Daily submitted reservations</h3>
+              <div className="max-h-48 space-y-1 overflow-y-auto">{facilities.dailySubmitted.map((row: any) => <div key={row.date} className="flex justify-between text-xs"><span className="text-slate-600">{row.date}</span><b>{row.value}</b></div>)}</div>
             </div>
           )}
-          {data.dailyRoomUtilization && (
+          {Array.isArray(facilities?.frequentlyUsedFacilities) && facilities.frequentlyUsedFacilities.length > 0 && (
             <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-2">Daily Room Utilization</h3>
-              <p className="text-xs text-slate-500">{Object.keys(data.dailyRoomUtilization).length} days with reservations</p>
+              <h3 className="text-sm font-bold text-slate-900 mb-2">Frequently used facilities</h3>
+              <div className="space-y-1">{facilities.frequentlyUsedFacilities.map((row: any) => <div key={row.facility} className="flex justify-between text-xs"><span className="text-slate-600">{row.facility}</span><b>{row.reservations} bookings · {row.occupiedMinutes} min</b></div>)}</div>
+            </div>
+          )}
+          {facilities && (
+            <div className="card-stat p-4">
+              <h3 className="text-sm font-bold text-slate-900 mb-2">Workflow outcomes</h3>
+              <p className="text-xs text-slate-500">{facilities.managerApproved ?? 0} approved · {facilities.rejected ?? 0} rejected · {facilities.cancelled ?? 0} cancelled · {facilities.completed ?? 0} completed</p>
             </div>
           )}
         </div>
@@ -1582,29 +1561,23 @@ export const AnalyticsPage: React.FC = () => {
 };
 
 export const FacilitiesNotificationsPage: React.FC = () => {
-  const [notifications, setNotifications] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const notificationRevision = useNotificationRealtimeStore(s => s.revision);
 
   const load = useCallback(async () => {
     setLoading(true);
-    try {
-      const d = await facilitiesService.getReservations();
-      const items = (d.reservations || []).slice(0, 15).map((r: any) => ({
-        id: r.id,
-        message: `${r.employeeName} ${r.status === 'PENDING' ? 'requested' : r.status === 'APPROVED' ? 'got approved for' : r.status === 'REJECTED' ? 'was rejected for' : 'cancelled'} "${r.title}"`,
-        type: r.status === 'PENDING' ? 'NEW' : r.status === 'APPROVED' ? 'APPROVED' : r.status === 'REJECTED' ? 'REJECTED' : 'CANCELLED',
-        timestamp: r.createdAt,
-        room: r.roomName,
-      }));
-      setNotifications(items);
-    } catch {} finally { setLoading(false); }
+    setError(null);
+    try { setNotifications(await notificationService.getNotifications()); }
+    catch (e: any) { setError(e?.response?.data?.message || e?.message || 'Failed to load notifications.'); }
+    finally { setLoading(false); }
   }, [retry]);
 
   useEffect(() => { load(); }, [load]);
 
-  const revisionN = useRealtimeSyncStore(s => s.revision);
-  useEffect(() => { if (revisionN > 0) setRetry(r => r + 1); }, [revisionN]);
+  useEffect(() => { if (notificationRevision > 0) setRetry(r => r + 1); }, [notificationRevision]);
 
   if (loading && notifications.length === 0) return <LoadingSkeleton />;
 
@@ -1618,21 +1591,22 @@ export const FacilitiesNotificationsPage: React.FC = () => {
         <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
       </div>
 
-      {notifications.length === 0 ? (
+      {error ? <ErrorState message={error} onRetry={() => setRetry(r => r + 1)} /> : notifications.length === 0 ? (
         <EmptyState icon={Bell} title="No Notifications" desc="No facility notifications yet." />
       ) : (
         <div className="space-y-2">
-          {notifications.map((n: any) => (
+          {notifications.map((n) => (
             <div key={n.id} className={`card-stat p-3 flex items-start space-x-3 ${
-              n.type === 'PENDING' || n.type === 'NEW' ? 'border-l-4 border-l-amber-400' :
+              !n.read ? 'border-l-4 border-l-amber-400' :
               n.type === 'APPROVED' ? 'border-l-4 border-l-emerald-400' :
               n.type === 'REJECTED' ? 'border-l-4 border-l-rose-400' : ''
             }`}>
               <div className="flex-1">
-                <p className="text-sm text-slate-900">{n.message}</p>
-                <p className="text-xs text-slate-500 mt-0.5">{n.room}</p>
-                <p className="text-[10px] text-slate-400 mt-1 font-mono">{n.timestamp ? new Date(n.timestamp).toLocaleString() : ''}</p>
+                <p className="text-sm font-semibold text-slate-900">{n.title}</p>
+                <p className="text-xs text-slate-500 mt-0.5">{n.message}</p>
+                <p className="text-[10px] text-slate-400 mt-1 font-mono">{new Date(n.createdAt).toLocaleString('en-PH')}</p>
               </div>
+              {!n.read && <button onClick={async () => { await notificationService.markNotificationRead(n.id); setNotifications(rows => rows.map(row => row.id === n.id ? { ...row, read: true } : row)); }} className="rounded-lg border border-emerald-200 px-2 py-1 text-[11px] font-bold text-emerald-700">Mark read</button>}
             </div>
           ))}
         </div>

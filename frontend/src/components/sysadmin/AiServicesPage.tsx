@@ -231,7 +231,7 @@ export const AiServicesPage: React.FC = () => {
         }
       }
     } catch (err) {
-      console.error('Failed to load AI services data from backend:', err);
+      console.error('Failed to load AI services data; response details were withheld.');
     }
   };
 
