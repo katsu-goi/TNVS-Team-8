@@ -24,7 +24,7 @@ export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const setAuthTokens = useAuthStore((s) => s.setAuthTokens);
-  const bootstrapSession = useAuthStore((s) => s.bootstrapSession);
+  const verifyLoginSession = useAuthStore((s) => s.verifyLoginSession);
 
   const [email, setEmail] = useState(() => savedRestriction()?.email ?? '');
   const [password, setPassword] = useState('');
@@ -90,7 +90,7 @@ export const LoginPage: React.FC = () => {
     try {
       const res = await login({ email: email.trim(), password });
       setAuthTokens(res.user, res.accessToken, res.refreshToken);
-      const verifiedUser = await bootstrapSession();
+      const verifiedUser = await verifyLoginSession();
       if (!verifiedUser) return;
       setRetryAt(null);
       try { sessionStorage.removeItem('loginRestriction'); } catch {}

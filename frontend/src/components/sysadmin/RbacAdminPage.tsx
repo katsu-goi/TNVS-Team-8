@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { GitBranch, Loader2, LockKeyhole, Plus, RefreshCw, Save, ShieldAlert, UnlockKeyhole, UsersRound } from 'lucide-react';
+import { GitBranch, LockKeyhole, Plus, RefreshCw, Save, ShieldAlert, UnlockKeyhole, UsersRound } from 'lucide-react';
 import { extractErrorMessage } from '../../api/client';
 import {
   rbacService,
@@ -8,6 +8,7 @@ import {
   RbacRole,
   RbacUser,
 } from '../../api/rbacService';
+import { PortalLoadingState } from '../ui/PortalLoadingState';
 import { Button, FormField, Modal, PasswordField, SelectField } from '../ui/SharedUI';
 import { DashboardHero } from '../ui/DashboardPrimitives';
 
@@ -131,7 +132,7 @@ export const RbacAdminPage: React.FC = () => {
   };
 
   if (loading) {
-    return <div className="flex h-48 items-center justify-center"><Loader2 className="h-7 w-7 animate-spin text-[#D02F34]" /></div>;
+    return <PortalLoadingState message="Loading role administration" />;
   }
 
   return (

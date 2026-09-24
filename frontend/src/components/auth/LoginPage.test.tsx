@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   login: vi.fn(),
   navigate: vi.fn(),
   setAuthTokens: vi.fn(),
-  bootstrapSession: vi.fn(),
+  verifyLoginSession: vi.fn(),
 }));
 
 vi.mock('../../api/authService', async (importOriginal) => {
@@ -14,9 +14,9 @@ vi.mock('../../api/authService', async (importOriginal) => {
 });
 
 vi.mock('../../stores/authStore', () => ({
-  useAuthStore: (selector: (state: { setAuthTokens: typeof mocks.setAuthTokens; bootstrapSession: typeof mocks.bootstrapSession }) => unknown) => selector({
+  useAuthStore: (selector: (state: { setAuthTokens: typeof mocks.setAuthTokens; verifyLoginSession: typeof mocks.verifyLoginSession }) => unknown) => selector({
     setAuthTokens: mocks.setAuthTokens,
-    bootstrapSession: mocks.bootstrapSession,
+    verifyLoginSession: mocks.verifyLoginSession,
   }),
   getDashboardPath: (user: { assignedRoles?: string[] }) => user.assignedRoles?.includes('EMPLOYEE') ? '/employee' : '/',
 }));
@@ -47,7 +47,7 @@ describe('LoginPage', () => {
     mocks.login.mockReset();
     mocks.navigate.mockReset();
     mocks.setAuthTokens.mockReset();
-    mocks.bootstrapSession.mockReset();
+    mocks.verifyLoginSession.mockReset();
   });
 
   afterEach(() => {
@@ -87,7 +87,7 @@ describe('LoginPage', () => {
       accessToken: 'access-token',
       refreshToken: 'refresh-token',
     });
-    mocks.bootstrapSession.mockReturnValueOnce(new Promise((resolve) => { resolveProfile = resolve; }));
+    mocks.verifyLoginSession.mockReturnValueOnce(new Promise((resolve) => { resolveProfile = resolve; }));
 
     render(<LoginPage />);
     fillLogin();
@@ -98,8 +98,11 @@ describe('LoginPage', () => {
       'access-token',
       'refresh-token',
     ));
-    expect(mocks.bootstrapSession).toHaveBeenCalledOnce();
+    expect(mocks.verifyLoginSession).toHaveBeenCalledOnce();
     expect(mocks.navigate).not.toHaveBeenCalled();
+    expect(screen.getByText('Welcome back')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Signing in...' })).toBeDisabled();
+    expect(screen.queryByTestId('lottie-animation')).not.toBeInTheDocument();
 
     resolveProfile({
       id: 'verified-user',

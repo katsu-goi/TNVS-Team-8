@@ -13,7 +13,8 @@ import {
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { safeFetchJson } from '../../api/client';
 import { DashboardHero, DashboardMetricCard } from '../ui/DashboardPrimitives';
-import { ErrorState, LoadingState, PageContainer } from '../ui/SharedUI';
+import { ErrorState, PageContainer } from '../ui/SharedUI';
+import { PortalLoadingState } from '../ui/PortalLoadingState';
 
 const PIE_COLORS = ['#10B981', '#F59E0B', '#EF4444', '#6B7280', '#3B82F6', '#8B5CF6'];
 
@@ -66,7 +67,7 @@ export const ComplianceOfficerDashboard: React.FC = () => {
   useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
 
   if (loading && !data) {
-    return <LoadingState label="Loading compliance dashboard..." />;
+    return <PortalLoadingState message="Loading compliance dashboard" />;
   }
 
   if (error && !data) {

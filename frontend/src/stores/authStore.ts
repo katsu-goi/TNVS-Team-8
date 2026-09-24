@@ -8,7 +8,6 @@ import { getCurrentUser } from '../api/authService';
 export type SessionStatus = 'loading' | 'ready' | 'error';
 
 export const SESSION_BOOTSTRAP_TIMEOUT_MS = 15_000;
-export const SESSION_LOADER_MINIMUM_MS = 350;
 
 interface AuthState {
   user: User | null;
@@ -17,6 +16,7 @@ interface AuthState {
   sessionStatus: SessionStatus;
   sessionError: string | null;
   setAuthTokens: (user: User, accessToken: string, refreshToken: string) => void;
+  verifyLoginSession: () => Promise<User | null>;
   bootstrapSession: () => Promise<User | null>;
   retryBootstrap: () => Promise<User | null>;
   logout: () => void;
@@ -73,10 +73,6 @@ const savedRefreshToken = localStorage.getItem('refreshToken');
 
 let bootstrapRequest: Promise<User | null> | null = null;
 
-const delay = (milliseconds: number) => new Promise<void>((resolve) => {
-  window.setTimeout(resolve, milliseconds);
-});
-
 function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = window.setTimeout(() => {
@@ -126,18 +122,27 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       localStorage.removeItem('refreshToken');
     }
     setSupabaseRealtimeAuth(accessToken);
-    // The login payload establishes token ownership only. Roles and permissions
-    // remain unavailable until the authoritative /auth/me profile is restored.
-    set({ user: null, accessToken, refreshToken, sessionStatus: 'loading', sessionError: null });
+    // The login payload establishes token ownership only. Keep the login page
+    // mounted while /auth/me verifies roles and permissions in the submit flow.
+    set({ user: null, accessToken, refreshToken, sessionStatus: 'ready', sessionError: null });
+  },
+  verifyLoginSession: async () => {
+    if (!get().accessToken) return null;
+    try {
+      const user = await withTimeout(getCurrentUser(), SESSION_BOOTSTRAP_TIMEOUT_MS);
+      set({ user, sessionStatus: 'ready', sessionError: null });
+      return user;
+    } catch (error) {
+      clearLocalSession();
+      set({ user: null, accessToken: null, refreshToken: null, sessionStatus: 'ready', sessionError: null });
+      throw error;
+    }
   },
   bootstrapSession: async () => {
     if (get().sessionStatus !== 'loading') return get().user;
     if (!bootstrapRequest) {
-      bootstrapRequest = Promise.all([
-        withTimeout(getCurrentUser(), SESSION_BOOTSTRAP_TIMEOUT_MS),
-        delay(SESSION_LOADER_MINIMUM_MS),
-      ])
-        .then(([user]) => {
+      bootstrapRequest = withTimeout(getCurrentUser(), SESSION_BOOTSTRAP_TIMEOUT_MS)
+        .then((user) => {
           set({ user, sessionStatus: 'ready', sessionError: null });
           return user;
         })

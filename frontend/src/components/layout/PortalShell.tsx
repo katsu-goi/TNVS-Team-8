@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, Menu, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
@@ -7,6 +7,7 @@ import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { HirnaSidebarDecoration } from '../ui/HirnaSidebarDecoration';
 import { NotificationBell } from '../ui/NotificationBell';
 import { UserProfileMenu } from '../ui/UserProfileMenu';
+import { PortalLoadingState } from '../ui/PortalLoadingState';
 
 export type PortalNavItem = {
   id: string;
@@ -192,7 +193,9 @@ export const PortalShell: React.FC<PortalShellProps> = ({
           </div>
         </header>
         <div className="hirna-content p-4 sm:p-6 lg:p-8">
-          <Outlet />
+          <Suspense fallback={<PortalLoadingState message="Loading page" />}>
+            <Outlet />
+          </Suspense>
         </div>
       </main>
     </div>

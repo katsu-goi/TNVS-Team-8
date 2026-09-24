@@ -5,20 +5,20 @@ vi.mock('@lottiefiles/dotlottie-react', () => ({
   DotLottieReact: () => <div data-testid="lottie-animation" />,
 }));
 
-import { HirnaLoader } from './HirnaLoader';
+import { PortalLoadingState } from './PortalLoadingState';
 
-describe('HirnaLoader', () => {
+describe('PortalLoadingState', () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
   });
 
-  it('announces the global loading state and renders the bundled animation', async () => {
-    render(<HirnaLoader />);
+  it('announces the content loading state and renders the bundled animation', async () => {
+    render(<PortalLoadingState message="Loading audit records" />);
 
     expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
-    expect(screen.getByText('Loading Hirna Portal...')).toBeInTheDocument();
-    expect(screen.getByText('Preparing your workspace')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByText('Loading audit records')).toBeInTheDocument();
     expect(await screen.findByTestId('lottie-animation')).toBeInTheDocument();
   });
 
@@ -30,9 +30,9 @@ describe('HirnaLoader', () => {
       removeEventListener: vi.fn(),
     }));
 
-    render(<HirnaLoader />);
+    const { container } = render(<PortalLoadingState />);
 
     expect(screen.queryByTestId('lottie-animation')).not.toBeInTheDocument();
-    expect(screen.getAllByRole('img', { name: 'Hirna' })).toHaveLength(1);
+    expect(container.querySelector('img[src="/hirna-logo.png"]')).toBeInTheDocument();
   });
 });

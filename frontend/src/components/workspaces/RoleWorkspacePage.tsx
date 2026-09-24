@@ -10,7 +10,8 @@ import {
   CoComplianceAlertsPage, CoContractsPage, CoDisposalApprovalsPage,
   CoDocumentsPage, CoRetentionPoliciesPage, CoAuditLogsPage,
 } from '../compliance/ComplianceOfficerPages';
-import { EmptyState, LoadingState, ReasonDialog } from '../ui/SharedUI';
+import { EmptyState, ReasonDialog } from '../ui/SharedUI';
+import { PortalLoadingState } from '../ui/PortalLoadingState';
 import { DashboardHero } from '../ui/DashboardPrimitives';
 import type { WorkspaceConfig } from './workspaceConfig';
 
@@ -164,7 +165,7 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
     return null;
   };
 
-  if (!payload && !error) return <LoadingState label={`Loading ${item.label.toLowerCase()}...`} />;
+  if (!payload && !error) return <PortalLoadingState message={`Loading ${item.label.toLowerCase()}`} />;
 
   return (
     <div className="space-y-6">

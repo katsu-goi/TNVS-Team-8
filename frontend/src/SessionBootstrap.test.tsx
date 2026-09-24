@@ -4,10 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const { getCurrentUser } = vi.hoisted(() => ({ getCurrentUser: vi.fn() }));
 vi.mock('./api/authService', () => ({ getCurrentUser }));
 vi.mock('./lib/supabase', () => ({ setSupabaseRealtimeAuth: vi.fn() }));
-vi.mock('@lottiefiles/dotlottie-react', () => ({
-  DotLottieReact: () => <div data-testid="lottie-animation" />,
-}));
-
 import { SessionBootstrap } from './App';
 import { useAuthStore } from './stores/authStore';
 
@@ -32,12 +28,12 @@ describe('SessionBootstrap', () => {
     let resolveProfile: (value: unknown) => void = () => undefined;
     getCurrentUser.mockReturnValueOnce(new Promise((resolve) => { resolveProfile = resolve; }));
     render(<SessionBootstrap><div>Protected portal</div></SessionBootstrap>);
-    expect(screen.getByText('Loading Hirna Portal...')).toBeInTheDocument();
+    expect(screen.getByText('Verifying secure session')).toBeInTheDocument();
     expect(screen.queryByText('Protected portal')).not.toBeInTheDocument();
 
     resolveProfile({ id: 'user-2', email: 'employee@example.com', assignedRoles: ['EMPLOYEE'], roles: ['EMPLOYEE'], permissions: [] });
     await waitFor(() => expect(screen.getByText('Protected portal')).toBeInTheDocument());
-    expect(screen.queryByText('Loading Hirna Portal...')).not.toBeInTheDocument();
+    expect(screen.queryByText('Verifying secure session')).not.toBeInTheDocument();
   });
 
   it('clears an invalid session and allows the login route to render', async () => {
@@ -67,7 +63,7 @@ describe('SessionBootstrap', () => {
     expect(screen.queryByText('Protected portal')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Try Again' }));
 
-    expect(await screen.findByText('Loading Hirna Portal...')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText('Protected portal')).toBeInTheDocument());
+    expect(getCurrentUser).toHaveBeenCalledTimes(2);
   });
 });

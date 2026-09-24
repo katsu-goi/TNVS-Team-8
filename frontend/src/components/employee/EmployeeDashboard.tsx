@@ -1,13 +1,14 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Activity, RefreshCw, AlertCircle, Loader2,
+  Activity, RefreshCw, AlertCircle,
   ClipboardList, Clock, CheckCircle2, XCircle,
   CalendarClock, Bell, Plus, UserPlus, Upload, FileSignature,
 } from 'lucide-react';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { safeFetchJson } from '../../api/client';
 import { DashboardHero, DashboardMetricCard as KpiCard } from '../ui/DashboardPrimitives';
+import { PortalLoadingState } from '../ui/PortalLoadingState';
 
 const QuickAction: React.FC<{ label: string; icon: React.ElementType; onClick: () => void }> = ({ label, icon: Icon, onClick }) => (
   <button onClick={onClick} className="card-stat p-4 flex items-center space-x-3 text-left w-full hover:border-emerald-300 hover:shadow-md transition-all group">
@@ -72,17 +73,7 @@ export const EmployeeDashboard: React.FC = () => {
   useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
 
   if (loading && !data) {
-    return (
-      <div className="space-y-6">
-        <div className="glass-panel p-5 flex items-center space-x-3">
-          <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
-          <p className="text-sm text-slate-500">Loading your dashboard...</p>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          {Array.from({ length: 6 }).map((_, i) => <div key={i} className="card-stat p-5 animate-pulse"><div className="h-3 w-20 bg-slate-200 rounded mb-3" /><div className="h-7 w-12 bg-slate-200 rounded" /></div>)}
-        </div>
-      </div>
-    );
+    return <PortalLoadingState message="Loading employee dashboard" />;
   }
 
   if (error && !data) {

@@ -43,15 +43,33 @@ describe('authoritative session bootstrap', () => {
       'new-refresh',
     );
     expect(useAuthStore.getState().user).toBeNull();
-    expect(useAuthStore.getState().sessionStatus).toBe('loading');
+    expect(useAuthStore.getState().sessionStatus).toBe('ready');
 
     getCurrentUser.mockResolvedValueOnce({
       id: 'verified', email: 'user@example.com', assignedRoles: ['EMPLOYEE'], roles: ['EMPLOYEE'], permissions: [],
     });
-    const user = await useAuthStore.getState().bootstrapSession();
+    const user = await useAuthStore.getState().verifyLoginSession();
 
     expect(user?.assignedRoles).toEqual(['EMPLOYEE']);
     expect(useAuthStore.getState().user?.assignedRoles).toEqual(['EMPLOYEE']);
+  });
+
+  it('clears newly issued tokens when post-login identity verification fails', async () => {
+    useAuthStore.getState().setAuthTokens(
+      { id: 'unverified', email: 'user@example.com', assignedRoles: [], roles: [], permissions: [] },
+      'new-access',
+      'new-refresh',
+    );
+    getCurrentUser.mockRejectedValueOnce({ response: { status: 401 } });
+
+    await expect(useAuthStore.getState().verifyLoginSession()).rejects.toBeTruthy();
+
+    expect(useAuthStore.getState()).toMatchObject({
+      user: null,
+      accessToken: null,
+      refreshToken: null,
+      sessionStatus: 'ready',
+    });
   });
 
   it('clears expired or invalid sessions instead of exposing a portal', async () => {
