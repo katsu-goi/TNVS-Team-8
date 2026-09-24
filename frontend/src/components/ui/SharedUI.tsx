@@ -73,12 +73,12 @@ export const PasswordField: React.FC<React.InputHTMLAttributes<HTMLInputElement>
   return <FieldShell label={label} required={required} error={error} hint={hint} descriptorId={descriptorId}>
     <span className="relative block">
       <input
+        {...props}
         required={required}
         type={visible ? 'text' : 'password'}
         aria-invalid={Boolean(error)}
         aria-describedby={error || hint ? descriptorId : undefined}
         className={join(fieldClass, 'pr-11', className)}
-        {...props}
       />
       <button
         type="button"
