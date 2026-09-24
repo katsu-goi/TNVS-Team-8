@@ -1,10 +1,11 @@
 import React, { lazy, Suspense, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAuthStore, getDashboardPath, isActorSuperAdmin, isActorSystemAdmin, hasAssignedRole } from './stores/authStore';
 import { OversightBanner } from './components/oversight';
 import { workspaceConfigs } from './components/workspaces/workspaceConfig';
 import type { WorkspaceConfig } from './components/workspaces/workspaceConfig';
-import { Button, EmptyState } from './components/ui/SharedUI';
+import { Button, EmptyState, LoadingState } from './components/ui/SharedUI';
+import { HirnaInitializationError, HirnaLoader } from './components/ui/HirnaLoader';
 
 const lazyNamed = (loader: () => Promise<any>, exportName: string) =>
   lazy(() => loader().then((module) => ({ default: module[exportName] }))) as React.LazyExoticComponent<React.ComponentType<any>>;
@@ -164,16 +165,55 @@ export const WorkspaceSectionRoute: React.FC<{ config: WorkspaceConfig }> = ({ c
 
 export const SessionBootstrap: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const status = useAuthStore((state) => state.sessionStatus);
+  const error = useAuthStore((state) => state.sessionError);
   const bootstrapSession = useAuthStore((state) => state.bootstrapSession);
+  const retryBootstrap = useAuthStore((state) => state.retryBootstrap);
   useEffect(() => { void bootstrapSession(); }, [bootstrapSession]);
   if (status === 'loading') {
+    return <HirnaLoader />;
+  }
+  if (status === 'error') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm font-medium text-slate-600" role="status" aria-live="polite">
-        Verifying your session...
-      </div>
+      <HirnaInitializationError
+        message={error || undefined}
+        onRetry={() => { void retryBootstrap(); }}
+      />
     );
   }
   return <>{children}</>;
+};
+
+const majorWorkspacePaths = new Set([
+  '/',
+  '/login',
+  '/super-admin',
+  '/system-admin',
+  '/compliance-management/dashboard',
+  '/privacy/dashboard',
+  '/legal-counsel/dashboard',
+  '/records/dashboard',
+  '/department/dashboard',
+  '/security-operations/dashboard',
+  '/information-security/dashboard',
+  '/facilities',
+  '/facilities-officer',
+  '/compliance/dashboard',
+  '/legal',
+  '/procurement',
+  '/employee',
+]);
+
+const RouteLoadingFallback: React.FC = () => {
+  const { pathname } = useLocation();
+  const normalizedPath = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+  if (majorWorkspacePaths.has(normalizedPath)) {
+    return <HirnaLoader subtitle="Opening your workspace" />;
+  }
+  return (
+    <main className="min-h-[24rem] bg-[var(--hirna-page)] p-6 sm:p-8">
+      <LoadingState label="Loading workspace content..." className="mx-auto max-w-2xl" />
+    </main>
+  );
 };
 
 const FacilitiesRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -221,7 +261,7 @@ export const App: React.FC = () => {
     <BrowserRouter>
       <SessionBootstrap>
        <OversightBanner />
-       <Suspense fallback={<div className="min-h-screen bg-slate-50 p-8 text-sm text-slate-500">Loading workspace...</div>}>
+       <Suspense fallback={<RouteLoadingFallback />}>
         <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/hr-assistance" element={<HRAssistancePage />} />

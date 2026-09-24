@@ -24,6 +24,7 @@ export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const setAuthTokens = useAuthStore((s) => s.setAuthTokens);
+  const bootstrapSession = useAuthStore((s) => s.bootstrapSession);
 
   const [email, setEmail] = useState(() => savedRestriction()?.email ?? '');
   const [password, setPassword] = useState('');
@@ -89,11 +90,13 @@ export const LoginPage: React.FC = () => {
     try {
       const res = await login({ email: email.trim(), password });
       setAuthTokens(res.user, res.accessToken, res.refreshToken);
+      const verifiedUser = await bootstrapSession();
+      if (!verifiedUser) return;
       setRetryAt(null);
       try { sessionStorage.removeItem('loginRestriction'); } catch {}
       const returnTo = new URLSearchParams(location.search).get('returnTo');
       const safeReturnTo = returnTo?.startsWith('/') && !returnTo.startsWith('//') ? returnTo : null;
-      navigate(safeReturnTo || getDashboardPath(res.user), { replace: true });
+      navigate(safeReturnTo || getDashboardPath(verifiedUser), { replace: true });
     } catch (err) {
       const info = extractLoginLockout(err);
       if (info?.retryAt && Date.parse(info.retryAt) > Date.now()) {

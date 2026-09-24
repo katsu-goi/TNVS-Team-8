@@ -127,12 +127,12 @@ export const EmptyState: React.FC<{ title?: string; description: string; action?
   </div>
 );
 
-export const ErrorState: React.FC<{ title?: string; message: string; onRetry?: () => void; className?: string }> = ({ title = 'Unable to load this content', message, onRetry, className }) => (
+export const ErrorState: React.FC<{ title?: string; message: string; onRetry?: () => void; retryLabel?: string; className?: string }> = ({ title = 'Unable to load this content', message, onRetry, retryLabel = 'Try again', className }) => (
   <div role="alert" className={join('flex min-h-40 flex-col items-center justify-center rounded-card border border-rose-200 bg-rose-50 p-8 text-center', className)}>
     <AlertCircle className="mb-3 h-8 w-8 text-rose-500" aria-hidden="true" />
     <h3 className="text-sm font-bold text-rose-900">{title}</h3>
     <p className="mt-1 max-w-lg text-sm text-rose-700">{message}</p>
-    {onRetry && <Button className="mt-4" variant="danger" onClick={onRetry}>Try again</Button>}
+    {onRetry && <Button className="mt-4" variant="danger" onClick={onRetry}>{retryLabel}</Button>}
   </div>
 );
 
