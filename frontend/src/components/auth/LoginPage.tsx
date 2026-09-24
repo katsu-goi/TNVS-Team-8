@@ -23,7 +23,7 @@ export const LoginPage: React.FC = () => {
   const [email, setEmail] = useState(() => savedRestriction()?.email ?? '');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
+  const [capsLock, setCapsLock] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -134,23 +134,30 @@ export const LoginPage: React.FC = () => {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                     </svg>
                   </div>
-                  <input type="text" value={email} onChange={(e) => setEmail(e.target.value)} disabled={locked} placeholder="admin@photonicomega.com" autoComplete="username" className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-white/15 bg-white/10 text-white placeholder-white/40 text-sm focus:outline-none focus:ring-2 focus:ring-[#D02F34] focus:border-transparent transition-shadow disabled:opacity-60 disabled:cursor-not-allowed" />
+                  <input type="text" value={email} onChange={(e) => setEmail(e.target.value)} disabled={locked} required placeholder="admin@photonicomega.com" autoComplete="username" className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-white/15 bg-white/10 text-white placeholder-white/40 text-sm focus:outline-none focus:ring-2 focus:ring-[#D02F34] focus:border-transparent transition-shadow disabled:opacity-60 disabled:cursor-not-allowed" />
                 </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-white/80 mb-1.5">Password</label>
                 <div className="relative">
-                  <input type={showPassword ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••••••" autoComplete="current-password" className="w-full pl-4 pr-10 py-2.5 rounded-xl border border-white/15 bg-white/10 text-white placeholder-white/30 text-sm focus:outline-none focus:ring-2 focus:ring-[#D02F34] focus:border-transparent transition-shadow" />
-                  <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute inset-y-0 right-0 pr-3 flex items-center text-white/50 hover:text-white" tabIndex={-1}>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    onKeyDown={(e) => setCapsLock(e.getModifierState('CapsLock'))}
+                    onKeyUp={(e) => setCapsLock(e.getModifierState('CapsLock'))}
+                    onBlur={() => setCapsLock(false)}
+                    required
+                    aria-describedby={capsLock ? 'caps-lock-warning' : undefined}
+                    placeholder="••••••••••••"
+                    autoComplete="current-password"
+                    className="w-full pl-4 pr-10 py-2.5 rounded-xl border border-white/15 bg-white/10 text-white placeholder-white/30 text-sm focus:outline-none focus:ring-2 focus:ring-[#D02F34] focus:border-transparent transition-shadow"
+                  />
+                  <button type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'} className="absolute inset-y-0 right-0 pr-3 flex items-center text-white/50 hover:text-white">
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
-              </div>
-              <div className="flex items-center justify-between">
-                <label className="flex items-center space-x-2 cursor-pointer">
-                  <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} className="w-4 h-4 rounded border-white/30 bg-white/10 text-[#D02F34] focus:ring-[#D02F34]" />
-                  <span className="text-sm text-white/70">Remember me</span>
-                </label>
+                {capsLock ? <p id="caps-lock-warning" role="status" className="mt-1.5 text-xs font-medium text-amber-300">Caps Lock is on.</p> : null}
               </div>
               <button type="submit" disabled={loading || locked} className="w-full flex items-center justify-center space-x-2 py-3 rounded-full bg-[#D02F34] hover:bg-[#A9252A] text-white font-bold text-sm shadow-[0_0_15px_rgba(208,47,52,0.3)] hover:shadow-[0_0_24px_rgba(208,47,52,0.45)] transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
