@@ -89,7 +89,7 @@ describe('LoginPage', () => {
     });
     mocks.verifyLoginSession.mockReturnValueOnce(new Promise((resolve) => { resolveProfile = resolve; }));
 
-    render(<LoginPage />);
+    const { container } = render(<LoginPage />);
     fillLogin();
     fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
 
@@ -103,6 +103,7 @@ describe('LoginPage', () => {
     expect(screen.getByText('Welcome back')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Signing in...' })).toBeDisabled();
     expect(screen.queryByTestId('lottie-animation')).not.toBeInTheDocument();
+    expect(container.querySelector('.animate-spin')).not.toBeInTheDocument();
 
     resolveProfile({
       id: 'verified-user',

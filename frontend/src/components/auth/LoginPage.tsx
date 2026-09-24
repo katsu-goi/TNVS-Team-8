@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore, getDashboardPath } from '../../stores/authStore';
 import { login, extractLoginLockout } from '../../api/authService';
 import { extractErrorMessage } from '../../api/client';
-import { Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 import { validateCorporateEmail } from '../../utils/emailValidation';
 
 const savedRestriction = (): { email: string; retryAt: string } | null => {
@@ -207,7 +207,6 @@ export const LoginPage: React.FC = () => {
                 {capsLock ? <p id="caps-lock-warning" role="status" className="mt-1.5 text-xs font-medium text-amber-300">Caps Lock is on.</p> : null}
               </div>
               <button type="submit" disabled={loading || locked} className="w-full flex items-center justify-center space-x-2 py-3 rounded-full bg-[#D02F34] hover:bg-[#A9252A] text-white font-bold text-sm shadow-[0_0_15px_rgba(208,47,52,0.3)] hover:shadow-[0_0_24px_rgba(208,47,52,0.45)] transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed">
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                 <span>{loading ? 'Signing in...' : locked ? `Try again in ${countdownLabel}` : 'Sign In'}</span>
               </button>
             </form>
