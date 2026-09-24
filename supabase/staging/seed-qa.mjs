@@ -28,7 +28,7 @@ if (users.length !== 17) throw new Error("Provision all 17 QA users before seedi
 const byEmail = new Map(users.map((user) => [user.email, user.id]));
 const employeeA = byEmail.get("qa.employee-a@tnvs-staging.invalid");
 const employeeB = byEmail.get("qa.employee-b@tnvs-staging.invalid");
-const complianceOfficer = byEmail.get("qa.compliance-officer@tnvs-staging.invalid");
+const complianceOfficer = byEmail.get(QA_ACCOUNTS.find((account) => account.slug === "compliance-officer").email);
 
 const now = new Date();
 const day = (offset, hour) => {

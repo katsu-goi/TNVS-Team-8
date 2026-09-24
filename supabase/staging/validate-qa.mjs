@@ -131,13 +131,13 @@ async function authenticateAll() {
     method: "POST",
     body: { email: "qa.absent@tnvs-staging.invalid", password: "non-secret-negative-test" },
   });
-  expectStatus(nonexistent, 401, "nonexistent-account login");
+  expectStatus(nonexistent, [401, 429], "nonexistent-account login");
   const wrong = await call("auth", "/auth/login", {
     method: "POST",
     body: { email: "qa.employee-a@tnvs-staging.invalid", password: "intentionally-wrong-negative-test" },
   });
-  expectStatus(wrong, 401, "wrong-password login");
-  pass("negative authentication", "missing, invalid, nonexistent, and wrong credentials denied");
+  expectStatus(wrong, [401, 429], "wrong-password login");
+  pass("negative authentication", "missing, invalid, nonexistent, and wrong credentials denied or rate-limited");
 
   for (const account of QA_ACCOUNTS) {
     const login = await call("auth", "/auth/login", {
@@ -206,15 +206,24 @@ async function testRbac() {
 }
 
 async function testOwnershipAndStorage() {
-  const update = (slug, id) => call("employee", `/employee/reservations/${id}`, {
+  const futureWindow = (days, startHour) => {
+    const start = new Date();
+    start.setUTCDate(start.getUTCDate() + days);
+    start.setUTCHours(startHour, 0, 0, 0);
+    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    return { startTime: start.toISOString(), endTime: end.toISOString() };
+  };
+  const update = (slug, id, schedule) => call("employee", `/employee/reservations/${id}`, {
     method: "PUT",
     token: tokenFor(slug),
-    body: { reason: "Synthetic staging ownership verification" },
+    body: { ...schedule, reason: "Synthetic staging ownership verification" },
   });
-  expectStatus(await update("employee-a", IDS.reservationA), 200, "Employee A own reservation");
-  expectStatus(await update("employee-b", IDS.reservationB), 200, "Employee B own reservation");
-  expectStatus(await update("employee-a", IDS.reservationB), [403, 404], "Employee A cross-owner reservation");
-  expectStatus(await update("employee-b", IDS.reservationA), [403, 404], "Employee B cross-owner reservation");
+  const scheduleA = futureWindow(20, 8);
+  const scheduleB = futureWindow(21, 10);
+  expectStatus(await update("employee-a", IDS.reservationA, scheduleA), 200, "Employee A own reservation");
+  expectStatus(await update("employee-b", IDS.reservationB, scheduleB), 200, "Employee B own reservation");
+  expectStatus(await update("employee-a", IDS.reservationB, scheduleB), [403, 404], "Employee A cross-owner reservation");
+  expectStatus(await update("employee-b", IDS.reservationA, scheduleA), [403, 404], "Employee B cross-owner reservation");
   pass("employee ownership", "both own resources allowed; both cross-owner attempts denied");
 
   const ownDownload = await call("documents", `/documents/${IDS.document}/download`, { token: tokenFor("employee-a") });

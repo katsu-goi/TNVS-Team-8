@@ -4,6 +4,21 @@ export const PRODUCTION_PROJECT_REF = "dunijfrvfozwlykpkfhy";
 export const QA_PREFIX = "QA-STAGING-20260924-";
 export const QA_EMAIL_DOMAIN = "tnvs-staging.invalid";
 
+export const TEAM8_EMAIL_BY_SLUG = {
+  "super-admin": "superadmin@photonicomega.com",
+  "system-admin": "systemadmin@photonicomega.com",
+  "compliance-manager": "compliance.manager@photonicomega.com",
+  dpo: "dpo@photonicomega.com",
+  "legal-counsel": "counsel@photonicomega.com",
+  "records-officer": "records@photonicomega.com",
+  "department-head": "dept.head@photonicomega.com",
+  "security-officer": "security@photonicomega.com",
+  "infosec-officer": "infosec@photonicomega.com",
+  "facilities-manager": "fm@photonicomega.com",
+  "facilities-officer": "fo@photonicomega.com",
+  "compliance-officer": "co@photonicomega.com",
+};
+
 export const CANONICAL_ROLES = [
   "SUPER_ADMIN",
   "SYSTEM_ADMIN",
@@ -66,7 +81,8 @@ export const QA_ACCOUNTS = [
   slug,
   passwordEnv,
   roles,
-  email: `qa.${slug}@${QA_EMAIL_DOMAIN}`,
+  email: TEAM8_EMAIL_BY_SLUG[slug] || `qa.${slug}@${QA_EMAIL_DOMAIN}`,
+  legacyEmail: `qa.${slug}@${QA_EMAIL_DOMAIN}`,
   employeeId: `${QA_PREFIX}USER-${String(index + 1).padStart(2, "0")}`,
 }));
 

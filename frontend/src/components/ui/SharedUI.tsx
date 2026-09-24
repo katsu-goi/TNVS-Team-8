@@ -1,4 +1,5 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertCircle, Eye, EyeOff, Inbox, Loader2, X } from 'lucide-react';
 import { DashboardHero } from './DashboardPrimitives';
 
@@ -151,22 +152,23 @@ type ModalProps = {
   title: string;
   description?: string;
   onClose: () => void;
-  children: React.ReactNode;
+  children?: React.ReactNode;
   footer?: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl';
   closeDisabled?: boolean;
+  returnFocusRef?: React.RefObject<HTMLElement | null>;
 };
 
 const modalSizes = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl' };
 
-export const Modal: React.FC<ModalProps> = ({ open, title, description, onClose, children, footer, size = 'md', closeDisabled = false }) => {
+export const Modal: React.FC<ModalProps> = ({ open, title, description, onClose, children, footer, size = 'md', closeDisabled = false, returnFocusRef }) => {
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
     const previous = document.body.style.overflow;
-    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previouslyFocused = returnFocusRef?.current || (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     document.body.style.overflow = 'hidden';
     const focusable = () => Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') || []);
     window.requestAnimationFrame(() => (focusable()[0] || dialogRef.current)?.focus());
@@ -182,28 +184,27 @@ export const Modal: React.FC<ModalProps> = ({ open, title, description, onClose,
     };
     document.addEventListener('keydown', onKeyDown);
     return () => { document.body.style.overflow = previous; document.removeEventListener('keydown', onKeyDown); previouslyFocused?.focus(); };
-  }, [open, onClose, closeDisabled]);
+  }, [open, onClose, closeDisabled, returnFocusRef]);
   if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm" onMouseDown={() => { if (!closeDisabled) onClose(); }}>
-      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined} className={join('flex max-h-[min(90vh,56rem)] w-full flex-col overflow-hidden rounded-modal border border-[var(--hirna-border)] bg-white shadow-modal outline-none', modalSizes[size])} onMouseDown={(event) => event.stopPropagation()}>
+  return createPortal(
+    <div data-testid="modal-overlay" className="fixed inset-0 z-[100] flex min-h-dvh items-center justify-center overflow-y-auto bg-slate-950/55 p-4 backdrop-blur-sm sm:p-6" onMouseDown={() => { if (!closeDisabled) onClose(); }}>
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined} className={join('flex max-h-[min(90dvh,56rem)] w-full flex-col overflow-hidden rounded-modal border border-[var(--hirna-border)] bg-white shadow-modal outline-none', modalSizes[size])} onMouseDown={(event) => event.stopPropagation()}>
         <header className="flex items-start justify-between gap-4 border-b border-[var(--hirna-border)] px-5 py-4 sm:px-6">
           <div className="min-w-0"><h2 id={titleId} className="font-heading text-lg font-bold text-slate-950">{title}</h2>{description && <p id={descriptionId} className="mt-1 text-sm text-slate-500">{description}</p>}</div>
           <button type="button" onClick={onClose} disabled={closeDisabled} aria-label="Close dialog" className="rounded-control p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"><X className="h-5 w-5" /></button>
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">{children}</div>
-        {footer && <footer className="flex flex-wrap justify-end gap-3 border-t border-[var(--hirna-border)] bg-[var(--hirna-surface-hover)] px-5 py-4 sm:px-6">{footer}</footer>}
+        {children && <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">{children}</div>}
+        {footer && <footer className="flex flex-col-reverse gap-3 border-t border-[var(--hirna-border)] bg-[var(--hirna-surface-hover)] px-5 py-4 sm:flex-row sm:justify-end sm:px-6 [&>button]:w-full sm:[&>button]:w-auto">{footer}</footer>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
 
 export const ConfirmDialog: React.FC<{
-  open: boolean; title: string; description: string; confirmLabel?: string; tone?: 'primary' | 'danger' | 'success'; busy?: boolean; onClose: () => void; onConfirm: () => void | Promise<void>;
-}> = ({ open, title, description, confirmLabel = 'Confirm', tone = 'primary', busy = false, onClose, onConfirm }) => (
-  <Modal open={open} title={title} onClose={onClose} closeDisabled={busy} size="sm" footer={<><Button onClick={onClose} disabled={busy}>Cancel</Button><Button variant={tone} busy={busy} onClick={onConfirm}>{confirmLabel}</Button></>}>
-    <p className="text-sm leading-6 text-slate-600">{description}</p>
-  </Modal>
+  open: boolean; title: string; description: string; confirmLabel?: string; tone?: 'primary' | 'danger' | 'success'; busy?: boolean; onClose: () => void; onConfirm: () => void | Promise<void>; returnFocusRef?: React.RefObject<HTMLElement | null>;
+}> = ({ open, title, description, confirmLabel = 'Confirm', tone = 'primary', busy = false, onClose, onConfirm, returnFocusRef }) => (
+  <Modal open={open} title={title} description={description} onClose={onClose} closeDisabled={busy} size="sm" returnFocusRef={returnFocusRef} footer={<><Button onClick={onClose} disabled={busy}>Cancel</Button><Button variant={tone} busy={busy} onClick={onConfirm}>{confirmLabel}</Button></>} />
 );
 
 export const ReasonDialog: React.FC<{

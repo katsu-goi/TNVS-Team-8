@@ -36,6 +36,7 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({ profilePath, s
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
   const menuRef = useRef<HTMLDivElement>(null);
+  const accountTriggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -87,6 +88,7 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({ profilePath, s
     <>
       <div ref={menuRef} className="relative shrink-0">
         <button
+          ref={accountTriggerRef}
           type="button"
           aria-haspopup="menu"
           aria-expanded={open}
@@ -147,6 +149,7 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({ profilePath, s
         busy={loggingOut}
         onClose={() => setShowLogoutModal(false)}
         onConfirm={confirmLogout}
+        returnFocusRef={accountTriggerRef}
       />
     </>
   );
