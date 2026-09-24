@@ -16,17 +16,13 @@ export interface AuthTokenResponse {
 
 /**
  * Server-side lockout state attached to a failed-login error response. The
- * The server exposes an absolute retry timestamp. Account counters and
+ * Server responses expose an absolute retry timestamp. Account counters and
  * existence stay private to prevent enumeration.
  */
 export interface LoginLockoutInfo {
-  failedAttempts?: number;
-  maxAttempts?: number;
-  remainingAttempts?: number;
-  lockSecondsRemaining: number;
-  permanentlyLocked?: boolean;
-  lockedUntil?: string;
-  retryAt?: string | null;
+  retryAfterSeconds: number;
+  lockedUntil: string;
+  retryAt: string;
 }
 
 export interface HrAssistanceRequest {
@@ -77,10 +73,31 @@ export async function requestHrAssistance(req: HrAssistanceRequest): Promise<voi
 export function extractLoginLockout(error: unknown): LoginLockoutInfo | null {
   if (!error || typeof error !== 'object') return null;
   const errObj = error as Record<string, any>;
-  const payload = errObj?.response?.data?.data;
-  if (!payload || typeof payload !== 'object') return null;
+  const response = errObj.response;
+  const envelope = response?.data;
+  const payload = envelope?.data;
+  if (envelope?.errorCode !== 'ACCOUNT_TEMPORARILY_LOCKED' || !payload || typeof payload !== 'object') {
+    return null;
+  }
+  const headerValue = response?.headers?.['retry-after'] ?? response?.headers?.get?.('retry-after');
+  const payloadSeconds = Number(payload.retry_after_seconds ?? payload.retryAfterSeconds);
+  const headerSeconds = Number(headerValue);
+  const lockedUntil = String(payload.locked_until ?? payload.lockedUntil ?? '');
+  const parsedLockedUntil = Date.parse(lockedUntil);
+  const retryAfterSeconds = Number.isFinite(payloadSeconds) && payloadSeconds > 0
+    ? Math.ceil(payloadSeconds)
+    : Number.isFinite(headerSeconds) && headerSeconds > 0
+      ? Math.ceil(headerSeconds)
+      : 0;
+  const retryAt = Number.isFinite(parsedLockedUntil) && parsedLockedUntil > Date.now()
+    ? new Date(parsedLockedUntil).toISOString()
+    : retryAfterSeconds > 0
+      ? new Date(Date.now() + retryAfterSeconds * 1000).toISOString()
+      : null;
+  if (!retryAt) return null;
   return {
-    ...payload,
-    lockSecondsRemaining: typeof payload.lockSecondsRemaining === 'number' ? payload.lockSecondsRemaining : 0,
-  } as LoginLockoutInfo;
+    retryAfterSeconds: Math.max(1, Math.ceil((Date.parse(retryAt) - Date.now()) / 1000)),
+    lockedUntil: retryAt,
+    retryAt,
+  };
 }

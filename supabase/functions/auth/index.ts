@@ -11,8 +11,10 @@ import { verifyPassword, hashPassword } from "../_shared/password.ts";
 import { signAccessToken, signRefreshToken } from "../_shared/jwt.ts";
 import { adminDb } from "../_shared/db.ts";
 import {
-  currentLockoutInfo,
-  recordFailedAttempt,
+  finalizeLoginSuccess,
+  getLoginRestriction,
+  recordLoginFailure,
+  type LockoutInfo,
   writeAudit,
   writeLoginHistory,
   writeSecurityLog,
@@ -47,6 +49,18 @@ async function tokenDigest(token: string): Promise<string> {
 }
 
 type Ctx = { ip: string; userAgent: string | null };
+
+function temporaryLockResponse(info: Pick<LockoutInfo, "lockedUntil" | "retryAfterSeconds">): Response {
+  const retryAfter = Math.max(1, info.retryAfterSeconds);
+  const headers = new Headers({ "Retry-After": String(retryAfter) });
+  return jsonResponse({
+    ...fail("Too many failed login attempts.", "ACCOUNT_TEMPORARILY_LOCKED"),
+    data: {
+      retry_after_seconds: retryAfter,
+      locked_until: info.lockedUntil,
+    },
+  }, 429, headers);
+}
 
 function requestCtx(ctx: AuthContext | null, req: Request): Ctx {
   return { ip: resolveClientIp(req).ip, userAgent: req.headers.get("User-Agent") };
@@ -98,41 +112,38 @@ async function handleLogin(_ctx: AuthContext | null, req: Request, body: unknown
   }
 
   const user = await findUserByEmail(email);
-
-  if (user) {
-    const lockout = currentLockoutInfo(user, new Date());
-    if (lockout) {
-      await writeLoginHistory(user.row.email, user.row.id, ctx.ip, "FAILED", "ACCOUNT_LOCKED", ctx.userAgent ?? "");
-      return jsonResponse(fail("Invalid email or password", "INVALID_CREDENTIALS"), 401);
-    }
+  const restriction = await getLoginRestriction(email);
+  if (restriction.retryAfterSeconds > 0) {
+    await writeLoginHistory(email, user?.row.id ?? null, ctx.ip, "FAILED", "ACCOUNT_TEMPORARILY_LOCKED", ctx.userAgent ?? "");
+    await writeAudit(user, "LOGIN_TEMPORARILY_LOCKED", "AUTH", "User", user?.row.id ?? null,
+      "Login rejected while a temporary restriction was active", ctx.ip, "WARNING");
+    await writeSecurityLog(user, "LOGIN_TEMPORARILY_LOCKED", "FAILED", "HIGH", ctx.ip, ctx.userAgent,
+      "Login rejected while a temporary restriction was active");
+    return temporaryLockResponse(restriction);
   }
 
   const passwordOk = await verifyPassword(password, user?.row.password_hash ?? await DUMMY_PASSWORD_HASH);
 
   if (!user || !passwordOk) {
-    if (user) {
-      const info = await recordFailedAttempt(user, ctx.ip, ctx.userAgent ?? "");
-      await writeLoginHistory(user.row.email, user.row.id, ctx.ip, "FAILED", "INVALID_CREDENTIALS", ctx.userAgent ?? "");
-      await writeSecurityLog(user, "LOGIN_FAILED", "FAILED", "MEDIUM", ctx.ip, ctx.userAgent,
-        `Failed login attempt ${info.failedAttempts}/3`);
-      return jsonResponse(fail("Invalid email or password", "INVALID_CREDENTIALS"), 401);
+    const info = await recordLoginFailure(email, user, ctx.ip);
+    await writeLoginHistory(email, user?.row.id ?? null, ctx.ip, "FAILED", "INVALID_CREDENTIALS", ctx.userAgent ?? "");
+    if (info.retryAfterSeconds > 0) {
+      await writeSecurityLog(user, "LOGIN_TEMPORARILY_LOCKED", "FAILED", "HIGH", ctx.ip, ctx.userAgent,
+        `Temporary login restriction applied after ${info.failedAttempts} failed attempts`);
+      return temporaryLockResponse(info);
     }
-    return jsonResponse(fail("Invalid email or password", "INVALID_CREDENTIALS"), 401);
+    await writeSecurityLog(user, "LOGIN_FAILED", "FAILED", "MEDIUM", ctx.ip, ctx.userAgent,
+      `Failed login attempt ${info.failedAttempts}`);
+    return jsonResponse(fail("Invalid email or password.", "INVALID_CREDENTIALS"), 401);
   }
 
   if (!isAccountActive(user)) {
     await writeLoginHistory(user.row.email, user.row.id, ctx.ip, "FAILED", "ACCOUNT_INACTIVE", ctx.userAgent ?? "");
-    return jsonResponse(fail("Invalid email or password", "INVALID_CREDENTIALS"), 401);
+    return jsonResponse(fail("Invalid email or password.", "INVALID_CREDENTIALS"), 401);
   }
 
-  const db = adminDb();
-  await db.from("users").update({
-    last_login_at: naiveIso(),
-    last_login_ip: ctx.ip,
-    failed_login_attempts: 0,
-    locked_until: null,
-    last_failed_attempt_at: null,
-  }).eq("id", user.row.id);
+  const finalization = await finalizeLoginSuccess(email, ctx.ip);
+  if (!finalization.allowed) return temporaryLockResponse(finalization);
 
   const auth = await buildAuthResponse(user, ctx);
 
