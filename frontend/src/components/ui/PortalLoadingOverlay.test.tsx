@@ -28,9 +28,10 @@ describe('PortalLoadingOverlay', () => {
     expect(screen.getByRole('status')).toHaveAttribute('aria-busy', 'true');
     expect(screen.getByText('Loading audit records...')).toBeInTheDocument();
     const wrapper = screen.getByTestId('portal-loading-animation');
-    expect(wrapper).toHaveStyle({ minWidth: '128px', minHeight: '128px' });
-    expect(wrapper.className).toContain('h-[128px]');
-    expect(wrapper.className).toContain('lg:h-[184px]');
+    expect(wrapper).toHaveStyle({ minWidth: '112px', minHeight: '112px' });
+    expect(wrapper.className).toContain('h-[112px]');
+    expect(wrapper.className).toContain('lg:h-[148px]');
+    expect(screen.getByRole('status')).toHaveClass('fixed', 'inset-0', 'z-[110]');
     const animation = await screen.findByTestId('lottie-animation');
     expect(animation).toHaveAttribute('data-version', '5.7.0');
     expect(animation).toHaveAttribute('data-layers', '2');

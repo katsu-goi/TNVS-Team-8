@@ -1,13 +1,18 @@
-import React, { Suspense, useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Menu, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useOutlet } from 'react-router-dom';
 import { useUserHeartbeat } from '../../hooks/useUserHeartbeat';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { HirnaSidebarDecoration } from '../ui/HirnaSidebarDecoration';
 import { NotificationBell } from '../ui/NotificationBell';
 import { UserProfileMenu } from '../ui/UserProfileMenu';
-import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
+import {
+  PortalLoadingOverlay, PortalLoadingProvider, usePortalLoadingController,
+} from '../ui/PortalLoadingOverlay';
+import {
+  getPortalDestinations, getPortalLoadingMessage, normalizePortalPath, shouldStartPortalNavigation,
+} from './portalNavigation';
 
 export type PortalNavItem = {
   id: string;
@@ -30,7 +35,12 @@ type PortalShellProps = {
   showSystemStatus?: boolean;
 };
 
-export const PortalShell: React.FC<PortalShellProps> = ({
+type ContentSlot = {
+  key: string;
+  node: React.ReactNode;
+};
+
+const PortalShellFrame: React.FC<PortalShellProps> = ({
   portalLabel,
   roleLabel,
   navItems,
@@ -40,9 +50,30 @@ export const PortalShell: React.FC<PortalShellProps> = ({
 }) => {
   const location = useLocation();
   const navigate = useNavigate();
+  const outlet = useOutlet();
+  const outletRef = useRef(outlet);
+  outletRef.current = outlet;
+  const loading = usePortalLoadingController();
+  const loadingActive = loading.active;
+  const requestLoading = loading.request;
+  const releaseLoading = loading.release;
+  const navigationToken = useRef(Symbol('portal-navigation'));
+  const requestedNavigation = useRef<{ path: string; message: string } | null>(null);
+  const initialRouteKey = `${location.pathname}${location.search}`;
+  const initialNavItem = getPortalDestinations(navItems)
+    .filter((item) => normalizePortalPath(location.pathname).startsWith(normalizePortalPath(item.path)))
+    .sort((left, right) => right.path.length - left.path.length)[0];
   const [mobileOpen, setMobileOpen] = useState(false);
   const [clock, setClock] = useState(new Date());
   const [expandedMenus, setExpandedMenus] = useState<Set<string>>(new Set());
+  const [contentSlots, setContentSlots] = useState<ContentSlot[]>(() => ([{
+    key: initialRouteKey,
+    node: outlet,
+  }]));
+  const [displayedRouteKey, setDisplayedRouteKey] = useState(initialRouteKey);
+  const [pendingRouteKey, setPendingRouteKey] = useState<string | null>(null);
+  const [armedRouteKey, setArmedRouteKey] = useState<string | null>(null);
+  const [routeLoadingMessage, setRouteLoadingMessage] = useState(() => getPortalLoadingMessage(initialNavItem?.label));
   const syncConnected = useRealtimeSyncStore((state) => state.connected);
   const connectSync = useRealtimeSyncStore((state) => state.connectSync);
   const disconnectSync = useRealtimeSyncStore((state) => state.disconnectSync);
@@ -65,12 +96,57 @@ export const PortalShell: React.FC<PortalShellProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
+  useEffect(() => {
+    const routeKey = `${location.pathname}${location.search}`;
+    if (routeKey === displayedRouteKey) return undefined;
+
+    const requested = requestedNavigation.current;
+    const matchedItem = getPortalDestinations(navItems)
+      .filter((item) => normalizePortalPath(location.pathname).startsWith(normalizePortalPath(item.path)))
+      .sort((left, right) => right.path.length - left.path.length)[0];
+    const nextMessage = requested && normalizePortalPath(requested.path) === normalizePortalPath(location.pathname)
+      ? requested.message
+      : getPortalLoadingMessage(matchedItem?.label);
+
+    requestedNavigation.current = null;
+    setRouteLoadingMessage(nextMessage);
+    setPendingRouteKey(routeKey);
+    setArmedRouteKey(null);
+    setContentSlots((current) => [
+      ...current.filter((slot) => slot.key === displayedRouteKey),
+      { key: routeKey, node: outletRef.current },
+    ]);
+    requestLoading(navigationToken.current, nextMessage);
+
+    const readyCheck = window.setTimeout(() => {
+      releaseLoading(navigationToken.current);
+      setArmedRouteKey(routeKey);
+    }, 0);
+    return () => window.clearTimeout(readyCheck);
+  }, [displayedRouteKey, location.pathname, location.search, navItems, releaseLoading, requestLoading]);
+
+  useEffect(() => {
+    if (!pendingRouteKey || armedRouteKey !== pendingRouteKey || loadingActive) return;
+    setDisplayedRouteKey(pendingRouteKey);
+    setContentSlots((current) => current.filter((slot) => slot.key === pendingRouteKey));
+    setPendingRouteKey(null);
+    setArmedRouteKey(null);
+  }, [armedRouteKey, loadingActive, pendingRouteKey]);
+
   const isPathActive = (path: string, exact = false) => {
     if (exact) return location.pathname === path;
     return location.pathname === path || location.pathname === `${path}/` || location.pathname.startsWith(`${path}/`);
   };
 
-  const goTo = (path: string) => {
+  const goTo = (path: string, label: string) => {
+    if (!shouldStartPortalNavigation(location.pathname, path)) {
+      setMobileOpen(false);
+      return;
+    }
+    const message = getPortalLoadingMessage(label);
+    requestedNavigation.current = { path, message };
+    setRouteLoadingMessage(message);
+    requestLoading(navigationToken.current, message);
     navigate(path);
     setMobileOpen(false);
   };
@@ -113,11 +189,13 @@ export const PortalShell: React.FC<PortalShellProps> = ({
               )}
               <button
                 type="button"
-                onClick={() => {
+                onClick={(event) => {
                   if (item.children) {
                     toggleMenu(item.id);
-                    if (!childActive) goTo(item.path);
-                  } else goTo(item.path);
+                    const toggleOnly = event.target instanceof Element
+                      && Boolean(event.target.closest('[data-menu-toggle]'));
+                    if (!toggleOnly && !childActive) goTo(item.path, item.label);
+                  } else goTo(item.path, item.label);
                 }}
                 className={`hirna-nav-item mb-1 flex w-full items-center justify-between px-3 py-2.5 text-left text-sm font-medium ${active ? 'hirna-nav-item-active font-semibold' : ''}`}
               >
@@ -128,7 +206,9 @@ export const PortalShell: React.FC<PortalShellProps> = ({
                 <span className="flex shrink-0 items-center gap-1.5">
                   {item.badge && <span className="rounded-full border border-current/20 px-1.5 py-0.5 font-mono text-[9px] opacity-70">{item.badge}</span>}
                   {item.children ? (
-                    <ChevronDown className={`hirna-nav-chevron h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                    <span data-menu-toggle="true" aria-label={`${expanded ? 'Collapse' : 'Expand'} ${item.label}`} className="-m-2 p-2">
+                      <ChevronDown className={`hirna-nav-chevron h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                    </span>
                   ) : active ? <ChevronRight className="hirna-nav-chevron h-3.5 w-3.5" /> : null}
                 </span>
               </button>
@@ -139,7 +219,7 @@ export const PortalShell: React.FC<PortalShellProps> = ({
                       const ChildIcon = child.icon;
                       const activeChild = isPathActive(child.path, child.exact);
                       return (
-                        <button key={child.id} type="button" onClick={() => goTo(child.path)} className={`hirna-nav-item flex w-full items-center gap-2 px-3 py-2 text-left text-xs ${activeChild ? 'hirna-nav-item-active font-semibold' : ''}`}>
+                        <button key={child.id} type="button" onClick={() => goTo(child.path, child.label)} className={`hirna-nav-item flex w-full items-center gap-2 px-3 py-2 text-left text-xs ${activeChild ? 'hirna-nav-item-active font-semibold' : ''}`}>
                           <ChildIcon className="hirna-nav-icon h-3.5 w-3.5 shrink-0" />
                           <span className="truncate">{child.label}</span>
                         </button>
@@ -177,7 +257,7 @@ export const PortalShell: React.FC<PortalShellProps> = ({
   );
 
   return (
-    <div className="hirna-app min-h-screen">
+    <div className="hirna-app min-h-screen" aria-busy={loadingActive ? 'true' : 'false'}>
       {sidebar}
       {mobileOpen && <button type="button" className="fixed inset-0 z-30 bg-slate-950/45 backdrop-blur-sm lg:hidden" onClick={() => setMobileOpen(false)} aria-label="Close navigation overlay" />}
 
@@ -193,11 +273,28 @@ export const PortalShell: React.FC<PortalShellProps> = ({
           </div>
         </header>
         <div className="hirna-content p-4 sm:p-6 lg:p-8">
-          <Suspense fallback={<PortalLoadingOverlay message="Loading page..." />}>
-            <Outlet />
-          </Suspense>
+          {contentSlots.map((slot) => {
+            const displayed = slot.key === displayedRouteKey;
+            return (
+              <div
+                key={slot.key}
+                className={displayed ? 'relative' : 'pointer-events-none invisible absolute inset-0'}
+                aria-hidden={displayed ? undefined : 'true'}
+              >
+                <Suspense fallback={<PortalLoadingOverlay message={routeLoadingMessage} />}>
+                  {slot.node}
+                </Suspense>
+              </div>
+            );
+          })}
         </div>
       </main>
     </div>
   );
 };
+
+export const PortalShell: React.FC<PortalShellProps> = (props) => (
+  <PortalLoadingProvider>
+    <PortalShellFrame {...props} />
+  </PortalLoadingProvider>
+);

@@ -54,7 +54,7 @@ describe('loading.json runtime integration', () => {
     const wrapper = container.querySelector('[data-testid="portal-loading-animation"]');
 
     expect(wrapper).not.toBeNull();
-    expect(wrapper).toHaveStyle({ minWidth: '128px', minHeight: '128px' });
+    expect(wrapper).toHaveStyle({ minWidth: '112px', minHeight: '112px' });
     await waitFor(() => expect(wrapper?.querySelector('svg')).not.toBeNull());
     const svg = wrapper?.querySelector('svg');
     expect(svg).toHaveStyle({ width: '100%', height: '100%' });
