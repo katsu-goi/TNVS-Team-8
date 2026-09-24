@@ -51,12 +51,12 @@ describe('PortalShell route loading', () => {
     expect(screen.getByRole('navigation', { name: 'Test Portal navigation' })).toBeInTheDocument();
     expect(screen.getByText('Notifications control')).toBeInTheDocument();
     expect(screen.getByText('Profile control')).toBeInTheDocument();
-    expect(screen.getByText('Loading page')).toBeInTheDocument();
+    expect(screen.getByText('Loading page…')).toBeInTheDocument();
 
     await act(async () => { resolveRoute?.(); });
 
     expect(await screen.findByText('Destination content')).toBeInTheDocument();
-    expect(screen.queryByText('Loading page')).not.toBeInTheDocument();
+    expect(screen.queryByText('Loading page…')).not.toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: 'Test Portal navigation' })).toBeInTheDocument();
   });
 });

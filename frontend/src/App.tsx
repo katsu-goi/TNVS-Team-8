@@ -5,7 +5,7 @@ import { OversightBanner } from './components/oversight';
 import { workspaceConfigs } from './components/workspaces/workspaceConfig';
 import type { WorkspaceConfig } from './components/workspaces/workspaceConfig';
 import { Button, EmptyState } from './components/ui/SharedUI';
-import { PortalInitializationError, SessionBootstrapPlaceholder } from './components/ui/PortalLoadingState';
+import { PortalInitializationError, SessionBootstrapPlaceholder } from './components/ui/PortalLoadingOverlay';
 import { AppLayout } from './components/layout/AppLayout';
 import { LoginPage } from './components/auth/LoginPage';
 import { HRAssistancePage } from './components/auth/HRAssistancePage';

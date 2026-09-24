@@ -10,7 +10,7 @@ import {
   PieChart, Pie, Cell,
 } from 'recharts';
 import { DashboardHero, DashboardMetricCard as KpiCard } from '../ui/DashboardPrimitives';
-import { PortalLoadingState } from '../ui/PortalLoadingState';
+import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 
 const QuickActionCard: React.FC<{ label: string; desc: string; icon: React.ElementType; onClick?: () => void }> = ({ label, desc, icon: Icon, onClick }) => (
   <button onClick={onClick} className="card-stat p-4 text-left w-full cursor-pointer hover:border-emerald-300 hover:shadow-md transition-all group flex items-start space-x-3">
@@ -60,7 +60,7 @@ export const FacilitiesOfficerDashboard: React.FC = () => {
   const tables = data?.tables ?? {};
 
   if (loading && !data) {
-    return <PortalLoadingState message="Loading facilities officer dashboard" />;
+    return <PortalLoadingOverlay message="Loading facilities officer dashboard…" />;
   }
 
   if (error && !data) {

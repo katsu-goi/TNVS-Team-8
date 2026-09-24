@@ -8,7 +8,7 @@ import {
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { safeFetchJson } from '../../api/client';
 import { DashboardHero, DashboardMetricCard as KpiCard } from '../ui/DashboardPrimitives';
-import { PortalLoadingState } from '../ui/PortalLoadingState';
+import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 
 const QuickAction: React.FC<{ label: string; icon: React.ElementType; onClick: () => void }> = ({ label, icon: Icon, onClick }) => (
   <button onClick={onClick} className="card-stat p-4 flex items-center space-x-3 text-left w-full hover:border-emerald-300 hover:shadow-md transition-all group">
@@ -73,7 +73,7 @@ export const EmployeeDashboard: React.FC = () => {
   useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
 
   if (loading && !data) {
-    return <PortalLoadingState message="Loading employee dashboard" />;
+    return <PortalLoadingOverlay message="Loading employee dashboard…" />;
   }
 
   if (error && !data) {

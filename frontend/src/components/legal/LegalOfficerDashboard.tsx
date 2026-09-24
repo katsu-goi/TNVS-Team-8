@@ -13,7 +13,7 @@ import {
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { safeFetchJson } from '../../api/client';
 import { DashboardHero, DashboardMetricCard as KpiCard } from '../ui/DashboardPrimitives';
-import { PortalLoadingState } from '../ui/PortalLoadingState';
+import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 
 const PIE_COLORS = ['#10B981', '#F59E0B', '#EF4444', '#6B7280', '#3B82F6', '#8B5CF6'];
 
@@ -66,7 +66,7 @@ export const LegalOfficerDashboard: React.FC = () => {
   useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
 
   if (loading && !data) {
-    return <PortalLoadingState message="Loading legal dashboard" />;
+    return <PortalLoadingOverlay message="Loading legal dashboard…" />;
   }
 
   if (error && !data) {

@@ -8,7 +8,7 @@ import {
 import { facilitiesService } from '../../api/facilitiesService';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { DashboardHero, DashboardMetricCard } from '../ui/DashboardPrimitives';
-import { PortalLoadingState } from '../ui/PortalLoadingState';
+import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 
 export const FacilitiesDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -72,7 +72,7 @@ export const FacilitiesDashboard: React.FC = () => {
   };
 
   if (loading && !kpi) {
-    return <PortalLoadingState message="Loading facilities dashboard" />;
+    return <PortalLoadingOverlay message="Loading facilities dashboard…" />;
   }
 
   if (error && !kpi) {

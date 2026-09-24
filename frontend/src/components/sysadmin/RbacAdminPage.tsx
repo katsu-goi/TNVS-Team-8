@@ -8,7 +8,7 @@ import {
   RbacRole,
   RbacUser,
 } from '../../api/rbacService';
-import { PortalLoadingState } from '../ui/PortalLoadingState';
+import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 import { Button, FormField, Modal, PasswordField, SelectField } from '../ui/SharedUI';
 import { DashboardHero } from '../ui/DashboardPrimitives';
 
@@ -132,7 +132,7 @@ export const RbacAdminPage: React.FC = () => {
   };
 
   if (loading) {
-    return <PortalLoadingState message="Loading role administration" />;
+    return <PortalLoadingOverlay message="Loading role administration…" />;
   }
 
   return (

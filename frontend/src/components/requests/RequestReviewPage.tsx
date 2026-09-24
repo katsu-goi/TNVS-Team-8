@@ -3,7 +3,7 @@ import { CheckCircle2, XCircle, CheckCheck, Loader2, FileSignature } from 'lucid
 import { requestReviewService, ReviewableRequest } from '../../api/requestReviewService';
 import { ReasonDialog } from '../ui/SharedUI';
 import { DashboardHero } from '../ui/DashboardPrimitives';
-import { PortalLoadingState } from '../ui/PortalLoadingState';
+import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 
 /**
  * Shared review page for employee contract/legal requests, used by Contract
@@ -75,7 +75,7 @@ export const RequestReviewPage: React.FC = () => {
       )}
 
       {loading ? (
-        <PortalLoadingState message="Loading requests" />
+        <PortalLoadingOverlay message="Loading requests…" />
       ) : (
         <div className="space-y-6">
           <section>

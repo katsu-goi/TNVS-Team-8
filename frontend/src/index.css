@@ -393,9 +393,16 @@ section {
 }
 
 .hirna-content {
+  position: relative;
+  min-height: calc(100vh - 76px);
   width: 100%;
   max-width: 100rem;
   margin-inline: auto;
+}
+
+.portal-loading-overlay {
+  background: color-mix(in srgb, var(--hirna-page) 88%, transparent);
+  backdrop-filter: blur(2px);
 }
 
 .dashboard-hero {

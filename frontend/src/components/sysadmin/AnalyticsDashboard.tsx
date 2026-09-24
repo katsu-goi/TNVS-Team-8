@@ -3,7 +3,7 @@ import { Activity, AlertCircle, BellRing, Clock3, Database, Download, Loader2, R
 import { exportAnalyticsCsv, fetchAnalytics, type AnalyticsQuery } from '../../api/analyticsService';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import type { AnalyticsData, RuntimeHealthCheck } from '../../types';
-import { PortalLoadingState } from '../ui/PortalLoadingState';
+import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 
 type RangeKey = 'today' | 'last_7_days' | 'last_30_days' | 'this_month' | 'previous_month' | 'custom';
 
@@ -76,7 +76,7 @@ export const AnalyticsPage: React.FC = () => {
     finally { setExporting(false); }
   };
 
-  if (loading && !data) return <PortalLoadingState message="Loading operational analytics" />;
+  if (loading && !data) return <PortalLoadingOverlay message="Loading operational analytics…" />;
   if (error && !data) return <div className="card-stat p-10 text-center"><AlertCircle className="mx-auto h-10 w-10 text-rose-500" /><h2 className="mt-3 font-bold text-slate-900">Analytics unavailable</h2><p className="mt-1 text-sm text-slate-500">{error}</p><button onClick={() => setRetry((value) => value + 1)} className="mt-4 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Retry</button></div>;
   if (!data) return null;
 
