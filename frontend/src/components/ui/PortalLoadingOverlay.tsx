@@ -1,12 +1,7 @@
-import React, { lazy, Suspense, useEffect, useState } from 'react';
-import loadingAnimationUrl from '../../assets/lottie/loading.json?url';
+import React, { useEffect, useState } from 'react';
+import Lottie from 'lottie-react';
+import loadingAnimation from '../../assets/lottie/loading.json';
 import { ErrorState } from './SharedUI';
-
-const LazyDotLottie = lazy(() =>
-  import('@lottiefiles/dotlottie-react').then(({ DotLottieReact }) => ({
-    default: DotLottieReact,
-  })),
-);
 
 function getReducedMotionPreference(): boolean {
   return typeof window !== 'undefined'
@@ -34,7 +29,7 @@ export interface PortalLoadingOverlayProps {
 }
 
 export const PortalLoadingOverlay: React.FC<PortalLoadingOverlayProps> = ({
-  message = 'Loading page…',
+  message = 'Loading page...',
 }) => {
   const reducedMotion = useReducedMotion();
 
@@ -49,17 +44,17 @@ export const PortalLoadingOverlay: React.FC<PortalLoadingOverlayProps> = ({
       <div className="flex flex-col items-center">
         <div
           className="flex h-[128px] w-[128px] items-center justify-center sm:h-[156px] sm:w-[156px] lg:h-[184px] lg:w-[184px]"
+          style={{ minWidth: 128, minHeight: 128 }}
           aria-hidden="true"
           data-testid="portal-loading-animation"
         >
-          <Suspense fallback={null}>
-            <LazyDotLottie
-              src={loadingAnimationUrl}
-              autoplay={!reducedMotion}
-              loop={!reducedMotion}
-              className="h-full w-full"
-            />
-          </Suspense>
+          <Lottie
+            animationData={loadingAnimation}
+            autoplay={!reducedMotion}
+            loop={!reducedMotion}
+            className="h-full w-full"
+            rendererSettings={{ preserveAspectRatio: 'xMidYMid meet' }}
+          />
         </div>
         <p className="mt-3 text-sm font-bold text-[var(--hirna-text)] sm:text-base">{message}</p>
       </div>

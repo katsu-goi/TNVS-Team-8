@@ -66,7 +66,7 @@ export const LegalOfficerDashboard: React.FC = () => {
   useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
 
   if (loading && !data) {
-    return <PortalLoadingOverlay message="Loading legal dashboard…" />;
+    return <PortalLoadingOverlay message="Loading legal dashboard..." />;
   }
 
   if (error && !data) {

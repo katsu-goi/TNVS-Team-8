@@ -14,8 +14,8 @@ vi.mock('../../stores/realtimeSyncStore', () => ({
 }));
 vi.mock('../ui/NotificationBell', () => ({ NotificationBell: () => <div>Notifications control</div> }));
 vi.mock('../ui/UserProfileMenu', () => ({ UserProfileMenu: () => <div>Profile control</div> }));
-vi.mock('@lottiefiles/dotlottie-react', () => ({
-  DotLottieReact: () => <div data-testid="lottie-animation" />,
+vi.mock('lottie-react', () => ({
+  default: () => <div data-testid="lottie-animation" />,
 }));
 
 import { PortalShell } from './PortalShell';
@@ -30,7 +30,7 @@ describe('PortalShell route loading', () => {
     }));
 
     render(
-      <MemoryRouter initialEntries={['/dashboard']}>
+      <MemoryRouter initialEntries={['/admin/analytics']}>
         <Routes>
           <Route
             element={(
@@ -38,11 +38,11 @@ describe('PortalShell route loading', () => {
                 portalLabel="Test Portal"
                 roleLabel="Test Role"
                 searchPlaceholder="Search"
-                navItems={[{ id: 'dashboard', label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard }]}
+                navItems={[{ id: 'analytics', label: 'Analytics', path: '/admin/analytics', icon: LayoutDashboard }]}
               />
             )}
           >
-            <Route path="/dashboard" element={<LazyDestination />} />
+            <Route path="/admin/analytics" element={<LazyDestination />} />
           </Route>
         </Routes>
       </MemoryRouter>,
@@ -51,12 +51,12 @@ describe('PortalShell route loading', () => {
     expect(screen.getByRole('navigation', { name: 'Test Portal navigation' })).toBeInTheDocument();
     expect(screen.getByText('Notifications control')).toBeInTheDocument();
     expect(screen.getByText('Profile control')).toBeInTheDocument();
-    expect(screen.getByText('Loading page…')).toBeInTheDocument();
+    expect(screen.getByText('Loading page...')).toBeInTheDocument();
 
     await act(async () => { resolveRoute?.(); });
 
     expect(await screen.findByText('Destination content')).toBeInTheDocument();
-    expect(screen.queryByText('Loading page…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Loading page...')).not.toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: 'Test Portal navigation' })).toBeInTheDocument();
   });
 });

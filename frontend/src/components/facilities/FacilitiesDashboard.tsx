@@ -72,7 +72,7 @@ export const FacilitiesDashboard: React.FC = () => {
   };
 
   if (loading && !kpi) {
-    return <PortalLoadingOverlay message="Loading facilities dashboard…" />;
+    return <PortalLoadingOverlay message="Loading facilities dashboard..." />;
   }
 
   if (error && !kpi) {

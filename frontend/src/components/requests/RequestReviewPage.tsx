@@ -75,7 +75,7 @@ export const RequestReviewPage: React.FC = () => {
       )}
 
       {loading ? (
-        <PortalLoadingOverlay message="Loading requests…" />
+        <PortalLoadingOverlay message="Loading requests..." />
       ) : (
         <div className="space-y-6">
           <section>

@@ -193,7 +193,7 @@ export const PortalShell: React.FC<PortalShellProps> = ({
           </div>
         </header>
         <div className="hirna-content p-4 sm:p-6 lg:p-8">
-          <Suspense fallback={<PortalLoadingOverlay message="Loading page…" />}>
+          <Suspense fallback={<PortalLoadingOverlay message="Loading page..." />}>
             <Outlet />
           </Suspense>
         </div>

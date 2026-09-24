@@ -132,7 +132,7 @@ export const RbacAdminPage: React.FC = () => {
   };
 
   if (loading) {
-    return <PortalLoadingOverlay message="Loading role administration…" />;
+    return <PortalLoadingOverlay message="Loading role administration..." />;
   }
 
   return (

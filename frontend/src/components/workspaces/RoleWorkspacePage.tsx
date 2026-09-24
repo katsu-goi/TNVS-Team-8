@@ -165,7 +165,7 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
     return null;
   };
 
-  if (!payload && !error) return <PortalLoadingOverlay message={`Loading ${item.label.toLowerCase()}…`} />;
+  if (!payload && !error) return <PortalLoadingOverlay message={`Loading ${item.label.toLowerCase()}...`} />;
 
   return (
     <div className="space-y-6">

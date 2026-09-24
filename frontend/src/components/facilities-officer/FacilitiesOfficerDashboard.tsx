@@ -60,7 +60,7 @@ export const FacilitiesOfficerDashboard: React.FC = () => {
   const tables = data?.tables ?? {};
 
   if (loading && !data) {
-    return <PortalLoadingOverlay message="Loading facilities officer dashboard…" />;
+    return <PortalLoadingOverlay message="Loading facilities officer dashboard..." />;
   }
 
   if (error && !data) {

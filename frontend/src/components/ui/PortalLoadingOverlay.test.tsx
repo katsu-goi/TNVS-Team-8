@@ -1,11 +1,12 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@lottiefiles/dotlottie-react', () => ({
-  DotLottieReact: ({ src, autoplay, loop }: { src: string; autoplay: boolean; loop: boolean }) => (
+vi.mock('lottie-react', () => ({
+  default: ({ animationData, autoplay, loop }: { animationData: Record<string, unknown>; autoplay: boolean; loop: boolean }) => (
     <div
       data-testid="lottie-animation"
-      data-src={src}
+      data-version={String(animationData.v)}
+      data-layers={String(Array.isArray(animationData.layers) ? animationData.layers.length : 0)}
       data-autoplay={String(autoplay)}
       data-loop={String(loop)}
     />
@@ -20,14 +21,19 @@ describe('PortalLoadingOverlay', () => {
     vi.unstubAllGlobals();
   });
 
-  it('announces loading and autoplays the exact loading.json asset', async () => {
-    render(<PortalLoadingOverlay message="Loading audit records…" />);
+  it('announces loading and autoplays the exact loading.json animation data', async () => {
+    render(<PortalLoadingOverlay message="Loading audit records..." />);
 
     expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
     expect(screen.getByRole('status')).toHaveAttribute('aria-busy', 'true');
-    expect(screen.getByText('Loading audit records…')).toBeInTheDocument();
+    expect(screen.getByText('Loading audit records...')).toBeInTheDocument();
+    const wrapper = screen.getByTestId('portal-loading-animation');
+    expect(wrapper).toHaveStyle({ minWidth: '128px', minHeight: '128px' });
+    expect(wrapper.className).toContain('h-[128px]');
+    expect(wrapper.className).toContain('lg:h-[184px]');
     const animation = await screen.findByTestId('lottie-animation');
-    expect(animation.getAttribute('data-src')).toContain('/src/assets/lottie/loading.json');
+    expect(animation).toHaveAttribute('data-version', '5.7.0');
+    expect(animation).toHaveAttribute('data-layers', '2');
     expect(animation).toHaveAttribute('data-autoplay', 'true');
     expect(animation).toHaveAttribute('data-loop', 'true');
   });
@@ -43,7 +49,8 @@ describe('PortalLoadingOverlay', () => {
     render(<PortalLoadingOverlay />);
 
     const animation = await screen.findByTestId('lottie-animation');
-    expect(animation.getAttribute('data-src')).toContain('/src/assets/lottie/loading.json');
+    expect(animation).toHaveAttribute('data-version', '5.7.0');
+    expect(animation).toHaveAttribute('data-layers', '2');
     expect(animation).toHaveAttribute('data-autoplay', 'false');
     expect(animation).toHaveAttribute('data-loop', 'false');
   });

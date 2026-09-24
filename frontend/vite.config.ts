@@ -15,6 +15,9 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // The downloaded hourglass uses shapes only. The light player avoids the
+      // expression evaluator that production CSP intentionally blocks.
+      'lottie-web': path.resolve(__dirname, './node_modules/lottie-web/build/player/lottie_light.js'),
     },
   },
   server: {
@@ -40,6 +43,7 @@ export default defineConfig({
           'charts-vendor': ['recharts'],
           'maps-vendor': ['leaflet', 'leaflet.markercluster', 'react-leaflet'],
           'ui-vendor': ['lucide-react'],
+          'lottie-vendor': ['lottie-react'],
         },
       },
     },

@@ -68,7 +68,7 @@ export const SysAdminDashboard: React.FC = () => {
   useEffect(() => { loadData(); }, [loadData]);
 
   if (loading && !metrics) {
-    return <PortalLoadingOverlay message="Loading system dashboard…" />;
+    return <PortalLoadingOverlay message="Loading system dashboard..." />;
   }
 
   if (error && !metrics) {

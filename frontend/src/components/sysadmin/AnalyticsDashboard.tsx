@@ -76,7 +76,7 @@ export const AnalyticsPage: React.FC = () => {
     finally { setExporting(false); }
   };
 
-  if (loading && !data) return <PortalLoadingOverlay message="Loading operational analytics…" />;
+  if (loading && !data) return <PortalLoadingOverlay message="Loading operational analytics..." />;
   if (error && !data) return <div className="card-stat p-10 text-center"><AlertCircle className="mx-auto h-10 w-10 text-rose-500" /><h2 className="mt-3 font-bold text-slate-900">Analytics unavailable</h2><p className="mt-1 text-sm text-slate-500">{error}</p><button onClick={() => setRetry((value) => value + 1)} className="mt-4 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Retry</button></div>;
   if (!data) return null;
 

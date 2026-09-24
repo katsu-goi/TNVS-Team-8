@@ -73,7 +73,7 @@ export const EmployeeDashboard: React.FC = () => {
   useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
 
   if (loading && !data) {
-    return <PortalLoadingOverlay message="Loading employee dashboard…" />;
+    return <PortalLoadingOverlay message="Loading employee dashboard..." />;
   }
 
   if (error && !data) {

@@ -9,8 +9,8 @@ vi.mock('../../api/governanceService', () => ({
 vi.mock('../../stores/realtimeSyncStore', () => ({
   useRealtimeSyncStore: (selector: (state: { revision: number }) => unknown) => selector({ revision: 0 }),
 }));
-vi.mock('@lottiefiles/dotlottie-react', () => ({
-  DotLottieReact: () => <div data-testid="lottie-animation" />,
+vi.mock('lottie-react', () => ({
+  default: () => <div data-testid="lottie-animation" />,
 }));
 
 import { RoleWorkspacePage } from './RoleWorkspacePage';
@@ -34,9 +34,9 @@ describe('RoleWorkspacePage loading transitions', () => {
 
     render(<RoleWorkspacePage config={config} section="dashboard" />);
 
-    expect(screen.getByText('Loading executive dashboard…')).toBeInTheDocument();
+    expect(screen.getByText('Loading executive dashboard...')).toBeInTheDocument();
     expect(await screen.findByText('No records are currently available for this workspace.')).toBeInTheDocument();
-    expect(screen.queryByText('Loading executive dashboard…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Loading executive dashboard...')).not.toBeInTheDocument();
   });
 
   it('replaces the loader with a visible error when the API fails', async () => {
@@ -44,8 +44,8 @@ describe('RoleWorkspacePage loading transitions', () => {
 
     render(<RoleWorkspacePage config={config} section="dashboard" />);
 
-    expect(screen.getByText('Loading executive dashboard…')).toBeInTheDocument();
+    expect(screen.getByText('Loading executive dashboard...')).toBeInTheDocument();
     expect(await screen.findByText('Workspace service unavailable')).toBeInTheDocument();
-    expect(screen.queryByText('Loading executive dashboard…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Loading executive dashboard...')).not.toBeInTheDocument();
   });
 });
