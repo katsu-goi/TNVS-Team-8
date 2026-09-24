@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   login: vi.fn(),
   navigate: vi.fn(),
   setAuthTokens: vi.fn(),
+  bootstrapSession: vi.fn(),
 }));
 
 vi.mock('../../api/authService', async (importOriginal) => {
@@ -13,10 +14,11 @@ vi.mock('../../api/authService', async (importOriginal) => {
 });
 
 vi.mock('../../stores/authStore', () => ({
-  useAuthStore: (selector: (state: { setAuthTokens: typeof mocks.setAuthTokens }) => unknown) => selector({
+  useAuthStore: (selector: (state: { setAuthTokens: typeof mocks.setAuthTokens; bootstrapSession: typeof mocks.bootstrapSession }) => unknown) => selector({
     setAuthTokens: mocks.setAuthTokens,
+    bootstrapSession: mocks.bootstrapSession,
   }),
-  getDashboardPath: () => '/employee',
+  getDashboardPath: (user: { assignedRoles?: string[] }) => user.assignedRoles?.includes('EMPLOYEE') ? '/employee' : '/',
 }));
 
 vi.mock('react-router-dom', async (importOriginal) => {
@@ -45,6 +47,7 @@ describe('LoginPage', () => {
     mocks.login.mockReset();
     mocks.navigate.mockReset();
     mocks.setAuthTokens.mockReset();
+    mocks.bootstrapSession.mockReset();
   });
 
   afterEach(() => {
@@ -75,6 +78,38 @@ describe('LoginPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
 
     expect(await screen.findByText('Invalid email or password.')).toBeInTheDocument();
+  });
+
+  it('verifies /auth/me before navigating from login to the role dashboard', async () => {
+    let resolveProfile: (user: unknown) => void = () => undefined;
+    mocks.login.mockResolvedValueOnce({
+      user: { id: 'login-payload', email: 'qa.employee-a@tnvs-staging.invalid', assignedRoles: ['SUPER_ADMIN'] },
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+    });
+    mocks.bootstrapSession.mockReturnValueOnce(new Promise((resolve) => { resolveProfile = resolve; }));
+
+    render(<LoginPage />);
+    fillLogin();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
+
+    await waitFor(() => expect(mocks.setAuthTokens).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'login-payload' }),
+      'access-token',
+      'refresh-token',
+    ));
+    expect(mocks.bootstrapSession).toHaveBeenCalledOnce();
+    expect(mocks.navigate).not.toHaveBeenCalled();
+
+    resolveProfile({
+      id: 'verified-user',
+      email: 'qa.employee-a@tnvs-staging.invalid',
+      assignedRoles: ['EMPLOYEE'],
+      roles: ['EMPLOYEE'],
+      permissions: [],
+    });
+
+    await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/employee', { replace: true }));
   });
 
   it('renders the server countdown, blocks submission, and re-enables automatically', async () => {
