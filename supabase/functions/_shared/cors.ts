@@ -16,7 +16,7 @@ function allowedOrigins(): Set<string> {
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
-  return new Set([...DEFAULT_ALLOWED_ORIGINS, ...configured]);
+  return new Set(configured.length ? configured : DEFAULT_ALLOWED_ORIGINS);
 }
 
 export function isAllowedOrigin(origin: string | null): boolean {
@@ -27,7 +27,7 @@ export const DEFAULT_CORS: CorsOptions = {
   allowMethods: "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   allowHeaders:
     "Authorization,Content-Type,X-Requested-With,X-Oversight-Session,Accept,Origin,User-Agent,Accept-Language,apikey,x-client-info",
-  exposeHeaders: "Content-Disposition",
+  exposeHeaders: "Content-Disposition, Retry-After",
 };
 
 export function corsHeaders(options: CorsOptions = DEFAULT_CORS): Headers {

@@ -167,13 +167,30 @@ type ReservationRow = {
 };
 
 async function loadReservationsWithJoins(roomIds?: string[]): Promise<ReservationRow[]> {
-  let q = db
-    .from("reservations")
-    .select("*, rooms(name, room_number, floor_number, building, facility_id, facilities(name, code)), users(employee_id, first_name, last_name, department, email)");
+  let q = db.from("reservations").select("*");
   if (roomIds && roomIds.length > 0) q = q.in("room_id", roomIds);
   const { data, error } = await q;
   if (error) throw new Error(`reservations load failed: ${error.message}`);
-  return (data as unknown as ReservationRow[]) ?? [];
+  const reservations = (data as unknown as ReservationRow[]) ?? [];
+  const reservationRoomIds = [...new Set(reservations.map((row) => row.room_id).filter((id): id is string => id != null))];
+  const reservationUserIds = [...new Set(reservations.map((row) => row.user_id).filter((id): id is string => id != null))];
+  const [roomResult, userResult] = await Promise.all([
+    reservationRoomIds.length
+      ? db.from("rooms").select("id, name, room_number, floor_number, building, facility_id, facilities(id, name, code)").in("id", reservationRoomIds)
+      : Promise.resolve({ data: [], error: null }),
+    reservationUserIds.length
+      ? db.from("users").select("id, employee_id, first_name, last_name, department, email").in("id", reservationUserIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (roomResult.error) throw new Error(`reservation rooms load failed: ${roomResult.error.message}`);
+  if (userResult.error) throw new Error(`reservation users load failed: ${userResult.error.message}`);
+  const rooms = new Map((roomResult.data ?? []).map((room) => [String(room.id), room]));
+  const users = new Map((userResult.data ?? []).map((user) => [String(user.id), user]));
+  return reservations.map((reservation) => ({
+    ...reservation,
+    rooms: reservation.room_id ? ((rooms.get(reservation.room_id) as ReservationRow["rooms"]) ?? null) : null,
+    users: reservation.user_id ? ((users.get(reservation.user_id) as ReservationRow["users"]) ?? null) : null,
+  }));
 }
 
 function roomName(r: ReservationRow): string | null {
@@ -1045,14 +1062,21 @@ async function handleOfficerDashboard(_ctx: AuthContext | null, _req: Request) {
 
   const { data: maint, error: me } = await db
     .from("maintenance_schedules")
-    .select("id, title, start_time, end_time, status, room_id, rooms(name)")
+    .select("id, title, start_time, end_time, status, room_id")
     .gte("start_time", dayStartIso(today))
     .lte("start_time", dayEndIso(today));
   if (me) throw new Error(`maintenance load failed: ${me.message}`);
   const maintRows = (maint as unknown as {
     id: string; title: string | null; start_time: string; end_time: string; status: string | null; room_id: string | null;
-    rooms?: { name: string | null } | { name: string | null }[] | null;
   }[]) ?? [];
+  const maintenanceRoomIds = [...new Set(maintRows.map((row) => row.room_id).filter((id): id is string => id != null))];
+  const { data: maintenanceRooms, error: maintenanceRoomsError } = maintenanceRoomIds.length
+    ? await db.from("rooms").select("id, name").in("id", maintenanceRoomIds)
+    : { data: [], error: null };
+  if (maintenanceRoomsError) throw new Error(`maintenance rooms load failed: ${maintenanceRoomsError.message}`);
+  const maintenanceRoomNames = new Map(
+    (maintenanceRooms ?? []).map((room) => [String(room.id), String(room.name)]),
+  );
   const tasksDueToday = maintRows.filter((m) => m.status === "SCHEDULED" || m.status === "IN_PROGRESS").length;
 
   const dailyReservationLoad: Record<string, unknown>[] = [];
@@ -1081,7 +1105,7 @@ async function handleOfficerDashboard(_ctx: AuthContext | null, _req: Request) {
   const maintenanceTasks = maintRows.map((m) => ({
     task: m.title,
     priority: m.status === "IN_PROGRESS" ? "HIGH" : m.status === "SCHEDULED" ? "MEDIUM" : "LOW",
-    location: (Array.isArray(m.rooms) ? m.rooms[0] : m.rooms)?.name ?? "Unknown",
+    location: m.room_id ? (maintenanceRoomNames.get(m.room_id) ?? "Unknown") : "Unknown",
     dueDate: localDatePart(m.start_time),
   }));
 

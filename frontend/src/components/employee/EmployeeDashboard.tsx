@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { safeFetchJson } from '../../api/client';
-import { DashboardMetricCard as KpiCard } from '../ui/DashboardPrimitives';
+import { DashboardHero, DashboardMetricCard as KpiCard } from '../ui/DashboardPrimitives';
 
 const QuickAction: React.FC<{ label: string; icon: React.ElementType; onClick: () => void }> = ({ label, icon: Icon, onClick }) => (
   <button onClick={onClick} className="card-stat p-4 flex items-center space-x-3 text-left w-full hover:border-emerald-300 hover:shadow-md transition-all group">
@@ -106,12 +106,8 @@ export const EmployeeDashboard: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="dashboard-hero">
-        <div>
-          <h1 className="text-[34px] font-extrabold font-heading text-slate-900 leading-tight">Employee</h1>
-          <p className="text-slate-500 text-sm mt-1">Facilities, Visitors &amp; Administrative Services</p>
-        </div>
-        <div className="flex items-center space-x-3">
+      <DashboardHero title="Employee" subtitle="Facilities, Visitors & Administrative Services" actions={
+        <>
           <div className="flex items-center px-3 py-1.5 rounded-lg border bg-emerald-50 border-emerald-200">
             <Activity className="w-4 h-4 mr-2 text-emerald-600" />
             <span className="text-xs font-mono font-semibold text-emerald-600">ONLINE</span>
@@ -119,8 +115,8 @@ export const EmployeeDashboard: React.FC = () => {
           <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition text-slate-400 hover:text-slate-700" title="Refresh">
             <RefreshCw className="w-4 h-4" />
           </button>
-        </div>
-      </div>
+        </>
+      } />
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">

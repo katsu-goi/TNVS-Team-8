@@ -1,8 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import {
-  AlertCircle, RefreshCw, Calendar, FileText, Bell, User, Eye,
-  Building2, Settings, ShieldCheck, ShieldAlert, Plus, Loader2,
-} from 'lucide-react';
+import { AlertCircle, RefreshCw, Eye, ShieldCheck, ShieldAlert, Plus, Loader2, FileText, Bell } from 'lucide-react';
 import { safeFetchJson } from '../../api/client';
 import { facilitiesService } from '../../api/facilitiesService';
 import { notificationService, type AppNotification } from '../../api/notificationService';
@@ -34,94 +31,11 @@ const ErrorState: React.FC<{ message: string; onRetry: () => void }> = ({ messag
   <div className="card-stat p-8 flex flex-col items-center justify-center text-center space-y-3">
     <AlertCircle className="w-10 h-10 text-rose-400" />
     <p className="text-sm text-slate-600">{message}</p>
-    <button onClick={onRetry} className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold inline-flex items-center space-x-2">
+    <button type="button" onClick={onRetry} className="inline-flex items-center space-x-2 rounded-xl bg-brand-500 px-4 py-2 text-xs font-semibold text-white hover:bg-brand-700">
       <RefreshCw className="w-4 h-4" /><span>Retry</span>
     </button>
   </div>
 );
-
-export const FoReservationsPage: React.FC = () => {
-  const [reservations, setReservations] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [retry, setRetry] = useState(0);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const json = await safeFetchJson('/api/v1/facilities-officer/reservations');
-      setReservations(json?.data ?? []);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to load');
-    } finally {
-      setLoading(false);
-    }
-  }, [retry]);
-
-  useEffect(() => { load(); }, [load]);
-
-  if (loading && reservations.length === 0) return <LoadingSkeleton />;
-  if (error && reservations.length === 0) return <ErrorState message={error} onRetry={() => setRetry(r => r + 1)} />;
-
-  return (
-    <div className="space-y-6">
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Facilities Reservation</h2>
-          <p className="text-xs text-slate-500">Manage room and vehicle bay bookings</p>
-        </div>
-        <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
-      </div>
-
-      <div className="flex items-center space-x-2 text-xs text-slate-500 bg-white border border-slate-200 rounded-xl px-4 py-3">
-        <Building2 className="w-4 h-4 text-emerald-600" />
-        <span>Full transactional access: Create, Read, Update reservations (approvals escalated to Facilities Manager)</span>
-      </div>
-
-      {reservations.length === 0 ? (
-        <EmptyState icon={Calendar} title="No Reservations" desc="No reservations have been created yet." />
-      ) : (
-        <div className="card-stat overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 text-left">
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Title</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Requester</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Room/Bay</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Date/Time</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {reservations.map((r: any) => (
-                  <tr key={r.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                    <td className="p-3 font-medium text-slate-900">{r.title}</td>
-                    <td className="p-3 text-slate-600">{r.requesterName || r.employeeName || '-'}</td>
-                    <td className="p-3 text-slate-600">{r.roomName || r.bay || '-'}</td>
-                    <td className="p-3 text-slate-600">
-                      <p className="text-xs">{new Date(r.startTime).toLocaleDateString()}</p>
-                      <p className="text-[10px] text-slate-400">{new Date(r.startTime).toLocaleTimeString()} - {new Date(r.endTime).toLocaleTimeString()}</p>
-                    </td>
-                    <td className="p-3">
-                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
-                        r.status === 'APPROVED' ? 'bg-emerald-50 text-emerald-600' :
-                        r.status === 'PENDING' ? 'bg-amber-50 text-amber-600' :
-                        r.status === 'REJECTED' ? 'bg-rose-50 text-rose-600' :
-                        'bg-slate-100 text-slate-500'
-                      }`}>{r.status}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
 
 const scoreTone = (score: number | null) => {
   if (score === null || score === undefined) return 'bg-slate-100 text-slate-500';
@@ -756,34 +670,6 @@ export const FoNotificationsPage: React.FC = () => {
           ))}
         </div>
       )}
-    </div>
-  );
-};
-
-export const FoProfilePage: React.FC = () => {
-  return (
-    <div className="space-y-6">
-      <div className="glass-panel p-5">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Profile</h2>
-          <p className="text-xs text-slate-500">Facilities Officer account</p>
-        </div>
-      </div>
-      <EmptyState icon={User} title="Profile Settings" desc="Profile management will be available via TEAM 1 - Human Resource Management integration." />
-    </div>
-  );
-};
-
-export const FoSettingsPage: React.FC = () => {
-  return (
-    <div className="space-y-6">
-      <div className="glass-panel p-5">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Settings</h2>
-          <p className="text-xs text-slate-500">Facilities Officer account and module preferences</p>
-        </div>
-      </div>
-      <EmptyState icon={Settings} title="Settings" desc="Account and module settings will be available via TEAM 1 - Human Resource Management integration." />
     </div>
   );
 };

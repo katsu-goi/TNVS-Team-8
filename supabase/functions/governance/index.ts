@@ -2,6 +2,7 @@ import { createHandler, AuthContext, RouteParams } from "../_shared/guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
 import { fail, ok } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
+import { hasAssignedWorkspace } from "../_shared/workspace-access.ts";
 
 const db = adminDb();
 
@@ -19,14 +20,11 @@ const WORKSPACE_BY_ROLE: Record<string, string> = {
 
 const WORKSPACE_ROLES = Object.keys(WORKSPACE_BY_ROLE);
 
-function assignedRole(ctx: AuthContext | null): string | null {
-  if (!ctx) return null;
-  return ctx.user.assignedRoles.find((role) => WORKSPACE_BY_ROLE[role]) ?? null;
-}
-
 function validateWorkspace(ctx: AuthContext | null, workspace: string): Response | null {
-  const role = assignedRole(ctx);
-  if (!role || WORKSPACE_BY_ROLE[role] !== workspace) {
+  const hasWorkspaceRole = ctx
+    ? hasAssignedWorkspace(ctx.user.assignedRoles, workspace, WORKSPACE_BY_ROLE)
+    : false;
+  if (!hasWorkspaceRole) {
     return jsonResponse(fail("This workspace is not assigned to the current account.", "ACCESS_DENIED"), 403);
   }
   return null;

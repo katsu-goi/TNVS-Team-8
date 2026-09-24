@@ -28,3 +28,4 @@ backend/src/main/java/com/photonicomega/facilities/module/ai/domain/AiRequestSta
 
 .vercel
 .env*
+!supabase/staging/.env.example

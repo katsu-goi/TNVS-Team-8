@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Menu, Search, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Menu, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useUserHeartbeat } from '../../hooks/useUserHeartbeat';
@@ -32,7 +32,6 @@ type PortalShellProps = {
 export const PortalShell: React.FC<PortalShellProps> = ({
   portalLabel,
   roleLabel,
-  searchPlaceholder,
   navItems,
   profilePath,
   settingsPath,
@@ -40,7 +39,6 @@ export const PortalShell: React.FC<PortalShellProps> = ({
 }) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const [searchQuery, setSearchQuery] = useState('');
   const [mobileOpen, setMobileOpen] = useState(false);
   const [clock, setClock] = useState(new Date());
   const [expandedMenus, setExpandedMenus] = useState<Set<string>>(new Set());
@@ -93,7 +91,7 @@ export const PortalShell: React.FC<PortalShellProps> = ({
         </div>
         <div className="min-w-0 flex-1">
           <h1 className="truncate font-heading text-sm font-bold leading-tight text-white">Hirna Portal</h1>
-          <p className="truncate text-[10px] font-semibold text-[#FFBF2F]">{portalLabel}</p>
+          <p className="truncate text-[10px] font-semibold text-hirna-yellow">{portalLabel}</p>
         </div>
         <button type="button" onClick={() => setMobileOpen(false)} className="rounded-lg p-2 text-white/75 hover:bg-white/10 hover:text-white lg:hidden" aria-label="Close navigation">
           <X className="h-5 w-5" />
@@ -163,17 +161,10 @@ export const PortalShell: React.FC<PortalShellProps> = ({
               <span className="text-[10px] font-semibold uppercase tracking-widest text-white/80">System Status</span>
               <span className="flex items-center gap-1 font-mono text-[10px] text-white">
                 <span className={`h-1.5 w-1.5 rounded-full ${syncConnected ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                {syncConnected ? 'All OK' : 'Connecting'}
+                {syncConnected ? 'Realtime connected' : 'Realtime connecting'}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-y-1.5">
-              {['Database', 'API', 'WebSocket', 'Storage'].map((label) => (
-                <span key={label} className="flex items-center gap-1.5 font-mono text-[9px] text-white/65">
-                  <span className={`h-1.5 w-1.5 rounded-full ${syncConnected || label !== 'WebSocket' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                  {label}
-                </span>
-              ))}
-            </div>
+            <p className="font-mono text-[9px] text-white/65">Only the realtime channel is monitored here.</p>
             <div className="mt-3 flex justify-between font-mono text-[9px] text-white/45">
               <span>{clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
               <span>Local</span>
@@ -191,16 +182,10 @@ export const PortalShell: React.FC<PortalShellProps> = ({
 
       <main className="hirna-main min-h-screen lg:pl-72">
         <header className="hirna-topbar sticky top-0 z-20 flex min-h-[76px] items-center gap-3 border-b px-4 py-3 sm:px-6 lg:px-8">
-          <button type="button" onClick={() => setMobileOpen(true)} className="rounded-xl border border-[#F1DADA] bg-[#FFFDFD] p-2 text-slate-600 shadow-sm lg:hidden" aria-label="Open navigation">
+          <button type="button" onClick={() => setMobileOpen(true)} className="rounded-control border border-[var(--hirna-border)] bg-[var(--hirna-surface)] p-2 text-slate-600 shadow-sm lg:hidden" aria-label="Open navigation">
             <Menu className="h-5 w-5" />
           </button>
-          <div className="min-w-0 flex-1 sm:max-w-md">
-            <label className="relative block">
-              <span className="sr-only">Search</span>
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} type="search" placeholder={searchPlaceholder} className="hirna-search w-full rounded-xl border px-9 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#B5121B] focus:ring-2 focus:ring-[#B5121B]/15" />
-            </label>
-          </div>
+          <div className="min-w-0 flex-1" />
           <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-3">
             <NotificationBell />
             <UserProfileMenu profilePath={profilePath} settingsPath={settingsPath} roleLabelOverride={roleLabel} />

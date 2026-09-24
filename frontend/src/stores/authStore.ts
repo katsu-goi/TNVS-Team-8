@@ -2,12 +2,18 @@ import { create } from 'zustand';
 import { User } from '../types';
 import { setSupabaseRealtimeAuth } from '../lib/supabase';
 import { clearOversightSession, getOversightTargetUser } from '../utils/oversightSession';
+import { getDashboardPathForRoles } from '../config/roleRegistry';
+import { getCurrentUser } from '../api/authService';
+
+export type SessionStatus = 'loading' | 'ready';
 
 interface AuthState {
   user: User | null;
   accessToken: string | null;
   refreshToken: string | null;
+  sessionStatus: SessionStatus;
   setAuthTokens: (user: User, accessToken: string, refreshToken: string) => void;
+  bootstrapSession: () => Promise<void>;
   logout: () => void;
 }
 
@@ -17,21 +23,7 @@ export function getDashboardPath(user: User | null): string {
   if (!routeUser || (!routeUser.roles?.length && !routeUser.assignedRoles?.length)) return '/';
   if (!oversightTarget && isActorSuperAdmin(user)) return '/super-admin';
   if (!oversightTarget && isActorSystemAdmin(user)) return '/system-admin';
-  const roles = getAssignedRoles(routeUser);
-  if (roles.includes('COMPLIANCE_MANAGER')) return '/compliance-management';
-  if (roles.includes('DATA_PROTECTION_OFFICER')) return '/privacy';
-  if (roles.includes('LEGAL_COUNSEL')) return '/legal-counsel';
-  if (roles.includes('RECORDS_OFFICER')) return '/records';
-  if (roles.includes('DEPARTMENT_HEAD')) return '/department';
-  if (roles.includes('SECURITY_OFFICER')) return '/security-operations';
-  if (roles.includes('INFOSEC_OFFICER')) return '/information-security';
-  if (roles.includes('FACILITIES_MANAGER') || roles.includes('ROLE_FACILITIES_MANAGER')) return '/facilities';
-  if (roles.includes('FACILITIES_OFFICER') || roles.includes('ROLE_FACILITIES_OFFICER')) return '/facilities-officer';
-  if (roles.includes('COMPLIANCE_OFFICER') || roles.includes('ROLE_COMPLIANCE_OFFICER')) return '/compliance';
-  if (roles.includes('LEGAL_OFFICER') || roles.includes('ROLE_LEGAL_OFFICER')) return '/legal';
-  if (roles.includes('CONTRACT_OFFICER') || roles.includes('ROLE_CONTRACT_OFFICER')) return '/procurement';
-  if (roles.includes('EMPLOYEE') || roles.includes('ROLE_EMPLOYEE')) return '/employee';
-  return '/';
+  return getDashboardPathForRoles(getAssignedRoles(routeUser));
 }
 
 export function isSuperAdmin(user: User | null): boolean {
@@ -71,80 +63,43 @@ export function hasPermission(user: User | null, permission: string): boolean {
   return effectiveUser?.permissions?.some((candidate) => candidate.toUpperCase() === permission.toUpperCase()) ?? false;
 }
 
-/**
- * Decodes the JWT `roles` claim (a comma-joined list of authorities) and
- * returns the role names only - ROLE_* entries have the prefix stripped and
- * permission names (which never carry the ROLE_ prefix) are dropped.
- *
- * The backend puts the actual authorities in the token, so this is the ground
- * truth for what a client can do. LocalStorage can be edited by hand, so the
- * stored `user.roles` is overridden by these token claims on boot.
- */
-function decodeTokenAuthorities(token: string | null): { roles: string[]; permissions: string[] } | null {
-  if (!token) return null;
-  try {
-    const encodedPayload = token.split('.')[1];
-    if (!encodedPayload) return null;
-    const normalizedPayload = encodedPayload.replace(/-/g, '+').replace(/_/g, '/');
-    const paddedPayload = normalizedPayload.padEnd(Math.ceil(normalizedPayload.length / 4) * 4, '=');
-    const payload = JSON.parse(atob(paddedPayload));
-    const raw = payload?.roles;
-    if (typeof raw !== 'string' || !raw) return null;
-    const authorities = raw
-      .split(',')
-      .map((r: string) => r.trim())
-      .filter(Boolean);
-    return {
-      roles: authorities
-        .filter((authority: string) => authority.startsWith('ROLE_'))
-        .map((authority: string) => authority.slice('ROLE_'.length)),
-      permissions: authorities.filter((authority: string) => !authority.startsWith('ROLE_')),
-    };
-  } catch {
-    return null;
-  }
-}
-
 const savedToken = localStorage.getItem('accessToken');
 const savedRefreshToken = localStorage.getItem('refreshToken');
 
-function loadSavedUser(): User | null {
-  const raw = localStorage.getItem('user');
-  if (!raw) return null;
-  try {
-    const stored = JSON.parse(raw) as User;
-    // The token's authorities are authoritative; never trust roles or permissions from localStorage.
-    const tokenAuthorities = decodeTokenAuthorities(savedToken);
-    if (tokenAuthorities) {
-      return {
-        ...stored,
-        roles: tokenAuthorities.roles,
-        permissions: tokenAuthorities.permissions,
-      };
-    }
-    if (savedToken) {
-      localStorage.removeItem('user');
-      return null;
-    }
-    return stored;
-  } catch {
-    localStorage.removeItem('user');
-    return null;
-  }
-}
+let bootstrapRequest: Promise<void> | null = null;
 
-export const useAuthStore = create<AuthState>((set) => ({
-  user: loadSavedUser(),
+export const useAuthStore = create<AuthState>((set, get) => ({
+  // Tokens provide session continuity only. Identity and authorization always
+  // come from the server before any protected UI is rendered.
+  user: null,
   accessToken: savedToken,
   refreshToken: savedRefreshToken,
+  sessionStatus: savedToken ? 'loading' : 'ready',
   setAuthTokens: (user, accessToken, refreshToken) => {
     localStorage.setItem('accessToken', accessToken);
-    localStorage.setItem('user', JSON.stringify(user));
+    localStorage.removeItem('user');
     if (refreshToken) {
       localStorage.setItem('refreshToken', refreshToken);
     }
     setSupabaseRealtimeAuth(accessToken);
-    set({ user, accessToken, refreshToken });
+    set({ user, accessToken, refreshToken, sessionStatus: 'ready' });
+  },
+  bootstrapSession: async () => {
+    if (get().sessionStatus !== 'loading') return;
+    if (!bootstrapRequest) {
+      bootstrapRequest = getCurrentUser()
+        .then((user) => set({ user, sessionStatus: 'ready' }))
+        .catch(() => {
+          localStorage.removeItem('accessToken');
+          localStorage.removeItem('refreshToken');
+          localStorage.removeItem('user');
+          clearOversightSession();
+          setSupabaseRealtimeAuth(null);
+          set({ user: null, accessToken: null, refreshToken: null, sessionStatus: 'ready' });
+        })
+        .finally(() => { bootstrapRequest = null; });
+    }
+    await bootstrapRequest;
   },
   logout: () => {
     localStorage.removeItem('accessToken');
@@ -152,7 +107,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     localStorage.removeItem('user');
     clearOversightSession();
     setSupabaseRealtimeAuth(null);
-    set({ user: null, accessToken: null, refreshToken: null });
+    set({ user: null, accessToken: null, refreshToken: null, sessionStatus: 'ready' });
   },
 }));
 
@@ -167,14 +122,15 @@ window.addEventListener('auth:session-refreshed', (event) => {
   useAuthStore.setState((state) => ({
     accessToken: session.accessToken,
     refreshToken: session.refreshToken,
-    user: session.user || state.user,
+    user: (session.user as User | undefined) || state.user,
+    sessionStatus: 'ready',
   }));
 });
 
 window.addEventListener('auth:session-expired', () => {
   clearOversightSession();
   setSupabaseRealtimeAuth(null);
-  useAuthStore.setState({ user: null, accessToken: null, refreshToken: null });
+  useAuthStore.setState({ user: null, accessToken: null, refreshToken: null, sessionStatus: 'ready' });
 });
 
 setSupabaseRealtimeAuth(savedToken);

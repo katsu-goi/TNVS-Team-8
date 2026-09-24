@@ -154,6 +154,7 @@ export const AiServicesPage: React.FC = () => {
   const [tempPrompt, setTempPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
   const [logs, setLogs] = useState<RequestLog[]>([]);
   const [analytics, setAnalytics] = useState<HealthAnalytics | null>(null);
+  const [analyticsError, setAnalyticsError] = useState('');
 
   // Module Instructions State
   const [moduleInstructions, setModuleInstructions] = useState<ModuleInstruction[]>([]);
@@ -220,6 +221,13 @@ export const AiServicesPage: React.FC = () => {
       }
       if (analyticsRes.status === 'fulfilled' && analyticsRes.value.data?.data) {
         setAnalytics(analyticsRes.value.data.data);
+        setAnalyticsError('');
+      } else if (analyticsRes.status === 'rejected') {
+        setAnalytics(null);
+        setAnalyticsError(extractErrorMessage(analyticsRes.reason));
+      } else {
+        setAnalytics(null);
+        setAnalyticsError('The analytics service returned no telemetry.');
       }
       if (instructionsRes.status === 'fulfilled' && instructionsRes.value.data?.data) {
         const list: ModuleInstruction[] = instructionsRes.value.data.data;
@@ -230,7 +238,7 @@ export const AiServicesPage: React.FC = () => {
           }
         }
       }
-    } catch (err) {
+    } catch {
       console.error('Failed to load AI services data; response details were withheld.');
     }
   };
@@ -538,7 +546,7 @@ export const AiServicesPage: React.FC = () => {
       )}
 
       {/* HEADER SECTION */}
-      <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="dashboard-hero flex-col md:flex-row md:items-center">
         <div className="flex items-center space-x-4">
           <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-100 shadow-inner">
             <Cpu className="w-7 h-7 text-emerald-600" />
@@ -546,9 +554,9 @@ export const AiServicesPage: React.FC = () => {
           <div>
             <div className="flex items-center space-x-3">
               <h1 className="text-2xl font-bold font-heading text-slate-900 tracking-tight">AI Services</h1>
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center space-x-1">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>Live Operational</span>
+              <span className={`flex items-center space-x-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${analytics ? 'border-emerald-200 bg-emerald-100 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                <span className={`h-2 w-2 rounded-full ${analytics ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                <span>{analytics ? (analytics.apiConnectionStatus || 'Telemetry available') : 'Telemetry unavailable'}</span>
               </span>
             </div>
             <p className="text-sm text-slate-500 mt-0.5">
@@ -578,42 +586,50 @@ export const AiServicesPage: React.FC = () => {
           </p>
         </div>
 
+        {analyticsError && (
+          <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            AI analytics are unavailable: {analyticsError}
+          </div>
+        )}
+
         {/* 6 Statistics Cards */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm">
             <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Requests Today</p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{analytics?.requestsToday ?? 0}</p>
-            <p className="text-[10px] text-slate-400 font-semibold mt-1">Live requests logged</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{analytics?.requestsToday ?? '—'}</p>
+            <p className="text-[10px] text-slate-400 font-semibold mt-1">
+              {typeof analytics?.requestsToday === 'number' ? 'Requests logged today' : 'Request telemetry unavailable'}
+            </p>
           </div>
 
           <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm">
             <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Docs Processed</p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{analytics?.docsProcessed ?? 0}</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{analytics?.docsProcessed ?? '—'}</p>
             <p className="text-[10px] text-slate-400 font-semibold mt-1">OCR engine active</p>
           </div>
 
           <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm">
             <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Contracts Reviewed</p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{analytics?.contractsReviewed ?? 0}</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{analytics?.contractsReviewed ?? '—'}</p>
             <p className="text-[10px] text-slate-400 font-semibold mt-1">Risk flags checked</p>
           </div>
 
           <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm">
             <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Visitors Verified</p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{analytics?.visitorsVerified ?? 0}</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{analytics?.visitorsVerified ?? '—'}</p>
             <p className="text-[10px] text-slate-400 font-semibold mt-1">PH Valid ID Parsed</p>
           </div>
 
           <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm">
             <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Avg Response Time</p>
-            <p className="text-2xl font-bold text-emerald-600 mt-1">{analytics?.avgLatencyMs ?? 58} ms</p>
-            <p className="text-[10px] text-slate-400 mt-1">Fast LLM Gateway</p>
+            <p className="text-2xl font-bold text-emerald-600 mt-1">{analytics ? `${analytics.avgLatencyMs} ms` : '—'}</p>
+            <p className="text-[10px] text-slate-400 mt-1">Measured gateway latency</p>
           </div>
 
           <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm">
             <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Success Rate</p>
-            <p className="text-2xl font-bold text-emerald-600 mt-1">{analytics?.successRate ?? 100}%</p>
-            <p className="text-[10px] text-slate-400 font-semibold mt-1">0 Errors recorded</p>
+            <p className="text-2xl font-bold text-emerald-600 mt-1">{analytics ? `${analytics.successRate}%` : '—'}</p>
+            <p className="text-[10px] text-slate-400 font-semibold mt-1">Based on recorded requests</p>
           </div>
         </div>
 
@@ -624,13 +640,8 @@ export const AiServicesPage: React.FC = () => {
             <h3 className="text-sm font-bold text-slate-900 mb-1">Requests per Day</h3>
             <p className="text-xs text-slate-400 mb-4">Daily volume of AI API calls over the past week</p>
             <div className="h-52 flex items-end justify-between px-6 pb-2 pt-6 bg-slate-50/50 rounded-xl border border-slate-100">
-              {(analytics?.requestsPerDay || [
-                { day: 'Mon', requests: 12 },
-                { day: 'Tue', requests: 18 },
-                { day: 'Wed', requests: 25 },
-                { day: 'Thu', requests: 31 },
-                { day: 'Today', requests: analytics?.requestsToday || 5 },
-              ]).map((item, idx) => {
+              {!analytics?.requestsPerDay?.length && <p className="m-auto text-xs text-slate-500">No request telemetry available.</p>}
+              {(analytics?.requestsPerDay || []).map((item, idx) => {
                 const maxReq = 40;
                 const heightPct = Math.min(100, Math.max(15, (item.requests / maxReq) * 100));
                 return (
@@ -652,13 +663,8 @@ export const AiServicesPage: React.FC = () => {
             <h3 className="text-sm font-bold text-slate-900 mb-1">Token Consumption (k Tokens)</h3>
             <p className="text-xs text-slate-400 mb-4">Total token utilization across all LLM backends</p>
             <div className="h-52 flex items-end justify-between px-6 pb-2 pt-6 bg-slate-50/50 rounded-xl border border-slate-100">
-              {(analytics?.tokenConsumption || [
-                { day: 'Mon', tokens: 14.2 },
-                { day: 'Tue', tokens: 22.8 },
-                { day: 'Wed', tokens: 35.1 },
-                { day: 'Thu', tokens: 48.5 },
-                { day: 'Today', tokens: 8.4 },
-              ]).map((item, idx) => {
+              {!analytics?.tokenConsumption?.length && <p className="m-auto text-xs text-slate-500">No token telemetry available.</p>}
+              {(analytics?.tokenConsumption || []).map((item, idx) => {
                 const maxTok = 60;
                 const heightPct = Math.min(100, Math.max(15, (item.tokens / maxTok) * 100));
                 return (
@@ -1321,7 +1327,7 @@ export const AiServicesPage: React.FC = () => {
 
       {/* MODAL: CONFIGURE AI MODULE */}
       {showConfigModuleModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-2">

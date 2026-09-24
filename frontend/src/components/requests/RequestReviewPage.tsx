@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, XCircle, CheckCheck, Loader2, FileSignature } from 'lucide-react';
 import { requestReviewService, ReviewableRequest } from '../../api/requestReviewService';
+import { ReasonDialog } from '../ui/SharedUI';
+import { DashboardHero } from '../ui/DashboardPrimitives';
 
 /**
  * Shared review page for employee contract/legal requests, used by Contract
@@ -12,6 +14,7 @@ export const RequestReviewPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [rejectRequest, setRejectRequest] = useState<ReviewableRequest | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -28,25 +31,23 @@ export const RequestReviewPage: React.FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
-  const run = async (id: string, action: 'approve' | 'reject' | 'complete', reason?: string) => {
+  const run = async (id: string, action: 'approve' | 'reject' | 'complete', reason?: string): Promise<boolean> => {
     setBusy(id);
     try {
       if (action === 'approve') await requestReviewService.approve(id);
       else if (action === 'reject') await requestReviewService.reject(id, reason);
       else await requestReviewService.complete(id);
       setRequests(rs => rs.map(r => r.id === id ? { ...r, status: action === 'approve' ? 'APPROVED' : action === 'reject' ? 'REJECTED' : 'COMPLETED', decisionNotes: reason } : r));
-    } catch {
-      setError('Action failed. Try again.');
+      return true;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Action failed. Try again.');
+      return false;
     } finally {
       setBusy(null);
     }
   };
 
-  const onReject = (r: ReviewableRequest) => {
-    const reason = window.prompt('Rejection reason (optional):', '');
-    if (reason === null) return; // cancelled
-    run(r.id, 'reject', reason.trim() || undefined);
-  };
+  const onReject = (r: ReviewableRequest) => setRejectRequest(r);
 
   const pending = requests.filter(r => r.status === 'PENDING' || r.status === 'IN_REVIEW');
   const approved = requests.filter(r => r.status === 'APPROVED');
@@ -54,11 +55,8 @@ export const RequestReviewPage: React.FC = () => {
 
   return (
     <div className="p-8">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-heading font-bold text-slate-900">Request Review</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Approve, reject or complete employee contract/legal requests. Decisions notify the requester instantly.</p>
-        </div>
+      <div className="mb-6">
+        <DashboardHero title="Request Review" subtitle="Approve, reject or complete employee contract/legal requests. Decisions notify the requester instantly." actions={
         <button
           type="button"
           onClick={load}
@@ -66,6 +64,7 @@ export const RequestReviewPage: React.FC = () => {
         >
           Refresh
         </button>
+        } />
       </div>
 
       {error && (
@@ -118,6 +117,22 @@ export const RequestReviewPage: React.FC = () => {
           )}
         </div>
       )}
+      <ReasonDialog
+        open={Boolean(rejectRequest)}
+        title="Reject request"
+        description={rejectRequest ? `Provide a reason for rejecting “${rejectRequest.title}”.` : undefined}
+        label="Rejection reason"
+        confirmLabel="Reject request"
+        required={false}
+        busy={Boolean(rejectRequest && busy === rejectRequest.id)}
+        onClose={() => setRejectRequest(null)}
+        onConfirm={async (reason) => {
+          if (!rejectRequest) return;
+          const succeeded = await run(rejectRequest.id, 'reject', reason || undefined);
+          if (succeeded) setRejectRequest(null);
+          else throw new Error('The rejection failed. Your reason has been preserved.');
+        }}
+      />
     </div>
   );
 };

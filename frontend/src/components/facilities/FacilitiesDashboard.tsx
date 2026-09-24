@@ -162,7 +162,7 @@ export const FacilitiesDashboard: React.FC = () => {
       </div>
 
       {reorderAsset && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4" onClick={() => !reorderBusy && setReorderAsset(null)}>
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4" onClick={() => !reorderBusy && setReorderAsset(null)}>
           <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-start justify-between gap-3">
               <div><h2 className="text-base font-bold text-slate-900">Initiate Reorder</h2><p className="mt-1 text-xs text-slate-500">{reorderAsset.asset_name} · {reorderAsset.hubName}</p></div>

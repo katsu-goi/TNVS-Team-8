@@ -1,25 +1,19 @@
-import React, { useMemo } from 'react';
-import { PortalShell, type PortalNavItem } from '../layout/PortalShell';
+import React from 'react';
+import { getRolePresentation } from '../../config/roleRegistry';
+import { PortalShell } from '../layout/PortalShell';
 import type { WorkspaceConfig } from './workspaceConfig';
 
 export const RoleWorkspaceLayout: React.FC<{ config: WorkspaceConfig }> = ({ config }) => {
-  const navItems = useMemo<PortalNavItem[]>(() => config.nav.map((item) => ({
-    id: item.section,
-    label: item.label,
-    path: `/${config.slug}/${item.section}`,
-    icon: item.icon,
-    exact: true,
-    group: item.group,
-  })), [config]);
-  const hasSettings = config.nav.some((item) => item.section === 'settings');
+  const presentation = getRolePresentation(config.role)!;
 
   return (
     <PortalShell
-      portalLabel={config.portalLabel}
-      roleLabel={config.headerLabel}
-      searchPlaceholder={`Search ${config.portalLabel.toLowerCase()} records...`}
-      navItems={navItems}
-      settingsPath={hasSettings ? `/${config.slug}/settings` : undefined}
+      portalLabel={presentation.portalLabel}
+      roleLabel={presentation.roleLabel}
+      searchPlaceholder={presentation.searchPlaceholder}
+      navItems={presentation.navigation}
+      profilePath={presentation.profilePath}
+      settingsPath={presentation.settingsPath}
     />
   );
 };

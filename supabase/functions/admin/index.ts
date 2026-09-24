@@ -5,6 +5,7 @@ import { adminDb } from "../_shared/db.ts";
 import { writeAudit } from "../_shared/lockout.ts";
 import { resolveClientIp } from "../_shared/ip.ts";
 import { findUserById } from "../_shared/auth-users.ts";
+import { hashPassword } from "../_shared/password.ts";
 import {
   assignedRoleIds,
   findConflict,
@@ -145,22 +146,24 @@ function notFound(message: string) {
 // ---------------------------------------------------------------------------
 
 async function loadRolesByUser(): Promise<Map<string, string[]>> {
-  const { data, error } = await db
+  const { data: links, error } = await db
     .from("user_roles")
-    .select("user_id, roles(name)");
+    .select("user_id, role_id");
   if (error) throw new Error(`user_roles load failed: ${error.message}`);
+  const roleIds = [...new Set((links ?? []).map((link) => String(link.role_id)))];
+  const { data: roles, error: rolesError } = roleIds.length
+    ? await db.from("roles").select("id, name").in("id", roleIds)
+    : { data: [], error: null };
+  if (rolesError) throw new Error(`roles load failed: ${rolesError.message}`);
+  const roleNames = new Map((roles ?? []).map((role) => [String(role.id), String(role.name)]));
   const map = new Map<string, string[]>();
-  for (const row of data ?? []) {
-    const r = row as { user_id: string; roles: unknown };
-    const rolesVal = Array.isArray(r.roles) ? r.roles : r.roles ? [r.roles] : [];
-    for (const role of rolesVal) {
-      const name = (role as { name?: string }).name;
-      if (name) {
-        const list = map.get(r.user_id) ?? [];
-        list.push(name);
-        map.set(r.user_id, list);
-      }
-    }
+  for (const link of links ?? []) {
+    const userId = String(link.user_id);
+    const name = roleNames.get(String(link.role_id));
+    if (!name) continue;
+    const list = map.get(userId) ?? [];
+    list.push(name);
+    map.set(userId, list);
   }
   return map;
 }
@@ -324,22 +327,138 @@ function parseOversightDuration(value: unknown): number {
 }
 
 async function assignedRolesForUser(userId: string): Promise<string[]> {
-  const { data, error } = await db
+  const { data: links, error } = await db
     .from("user_roles")
-    .select("roles(name)")
+    .select("role_id")
     .eq("user_id", userId);
   if (error) throw new Error(`target roles lookup failed: ${error.message}`);
+  const roleIds = [...new Set((links ?? []).map((link) => String(link.role_id)))];
+  if (roleIds.length === 0) return [];
+  const { data: roles, error: rolesError } = await db.from("roles").select("name").in("id", roleIds);
+  if (rolesError) throw new Error(`target role names lookup failed: ${rolesError.message}`);
+  return [...new Set((roles ?? []).map((role) => String(role.name).toUpperCase()))];
+}
 
-  const roles = new Set<string>();
-  for (const row of data ?? []) {
-    const related = (row as { roles: unknown }).roles;
-    const values = Array.isArray(related) ? related : related ? [related] : [];
-    for (const value of values) {
-      const name = (value as { name?: string }).name;
-      if (name) roles.add(name.toUpperCase());
-    }
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{12,100}$/;
+
+function requiredText(body: Record<string, unknown>, key: string, label: string, errors: string[]): string {
+  const value = typeof body[key] === "string" ? String(body[key]).trim() : "";
+  if (!value) errors.push(`${label} is required`);
+  return value;
+}
+
+function optionalText(body: Record<string, unknown>, key: string): string | null | undefined {
+  if (!(key in body)) return undefined;
+  const value = typeof body[key] === "string" ? String(body[key]).trim() : "";
+  return value || null;
+}
+
+function validatePassword(password: string, required: boolean, errors: string[]) {
+  if (required && !password) errors.push("Password is required");
+  if (password && !PASSWORD_PATTERN.test(password)) {
+    errors.push("Password must be 12-100 characters and include uppercase, lowercase, number, and symbol");
   }
-  return [...roles];
+}
+
+async function userWithRoles(id: string): Promise<Record<string, unknown> | null> {
+  const { data, error } = await db.from("users").select("*").eq("id", id).eq("is_deleted", false).maybeSingle();
+  if (error) throw new Error(`user lookup failed: ${error.message}`);
+  if (!data) return null;
+  const roleMap = await loadRolesByUser();
+  return userDto(data as unknown as UserRow, roleMap.get(id) ?? []);
+}
+
+async function handleCreateUser(ctx: AuthContext | null, req: Request, body: unknown) {
+  const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+  const errors: string[] = [];
+  const firstName = requiredText(b, "firstName", "First name", errors);
+  const lastName = requiredText(b, "lastName", "Last name", errors);
+  const email = requiredText(b, "email", "Email", errors).toLowerCase();
+  const password = typeof b.password === "string" ? b.password : "";
+  const status = b.status === "INACTIVE" ? "INACTIVE" : "ACTIVE";
+  if (email && !EMAIL_PATTERN.test(email)) errors.push("Enter a valid email address");
+  validatePassword(password, true, errors);
+  if (errors.length) return jsonResponse(fail("Validation failed", "VALIDATION_ERROR", errors), 400);
+
+  const passwordHash = await hashPassword(password);
+  const now = nowIso();
+  const { data, error } = await db.from("users").insert({
+    first_name: firstName,
+    last_name: lastName,
+    email,
+    password_hash: passwordHash,
+    employee_id: optionalText(b, "employeeId"),
+    department: optionalText(b, "department"),
+    position: optionalText(b, "position"),
+    status,
+    is_email_verified: false,
+    created_by: ctx!.email,
+    updated_by: ctx!.email,
+    created_at: now,
+    updated_at: now,
+  }).select("id").single();
+  if (error) {
+    if (error.code === "23505") return jsonResponse(fail("An account with that email or employee ID already exists", "CONFLICT"), 409);
+    throw new Error(`user create failed: ${error.message}`);
+  }
+  const id = String((data as { id: string }).id);
+  await writeAudit(ctx!.user, "USER_CREATED", "ADMIN", "User", id,
+    `Created account ${email}`, resolveClientIp(req).ip);
+  return jsonResponse(ok(await userWithRoles(id), "Account created successfully"), 201);
+}
+
+async function handleUpdateUser(ctx: AuthContext | null, req: Request, body: unknown, p: RouteParams) {
+  const existing = await rbacUser(p.id);
+  if (!existing) return notFound("User not found");
+  const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+  const errors: string[] = [];
+  const fields: Record<string, unknown> = { updated_by: ctx!.email, updated_at: nowIso() };
+  const mappings = [["firstName", "first_name"], ["lastName", "last_name"], ["employeeId", "employee_id"], ["department", "department"], ["position", "position"]] as const;
+  for (const [inputKey, column] of mappings) {
+    if (!(inputKey in b)) continue;
+    const value = optionalText(b, inputKey);
+    if ((inputKey === "firstName" || inputKey === "lastName") && !value) errors.push(`${inputKey === "firstName" ? "First" : "Last"} name is required`);
+    fields[column] = value;
+  }
+  if ("email" in b) {
+    const email = typeof b.email === "string" ? b.email.trim().toLowerCase() : "";
+    if (!EMAIL_PATTERN.test(email)) errors.push("Enter a valid email address");
+    else fields.email = email;
+  }
+  if ("status" in b) {
+    if (b.status !== "ACTIVE" && b.status !== "INACTIVE") errors.push("Status must be ACTIVE or INACTIVE");
+    else if (p.id === ctx!.userId && b.status === "INACTIVE") errors.push("You cannot deactivate your own administrator account");
+    else fields.status = b.status;
+  }
+  const password = typeof b.password === "string" ? b.password : "";
+  validatePassword(password, false, errors);
+  if (errors.length) return jsonResponse(fail("Validation failed", "VALIDATION_ERROR", errors), 400);
+  if (password) {
+    fields.password_hash = await hashPassword(password);
+    fields.auth_version = (existing.auth_version ?? 0) + 1;
+    fields.failed_login_attempts = 0;
+    fields.last_failed_attempt_at = null;
+    fields.locked_until = null;
+  }
+
+  const { error } = await db.from("users").update(fields).eq("id", p.id).eq("is_deleted", false);
+  if (error) {
+    if (error.code === "23505") return jsonResponse(fail("An account with that email or employee ID already exists", "CONFLICT"), 409);
+    throw new Error(`user update failed: ${error.message}`);
+  }
+  const credentialsChanged = Boolean(password) ||
+    (typeof fields.email === "string" && fields.email !== existing.email) ||
+    (typeof fields.status === "string" && fields.status !== existing.status);
+  if (!password && typeof fields.email === "string" && fields.email !== existing.email) {
+    const { error: versionError } = await db.from("users").update({ auth_version: (existing.auth_version ?? 0) + 1 }).eq("id", p.id);
+    if (versionError) throw new Error(`session version update failed: ${versionError.message}`);
+  }
+  if (credentialsChanged) await revokeUserRefreshTokens(p.id);
+  await writeAudit(ctx!.user, password ? "USER_CREDENTIALS_UPDATED" : "USER_UPDATED", "ADMIN", "User", p.id,
+    password ? `Updated account details and set a new password for ${String(fields.email ?? existing.email)}` : `Updated account ${String(fields.email ?? existing.email)}`,
+    resolveClientIp(req).ip);
+  return jsonResponse(ok(await userWithRoles(p.id), "Account updated successfully"), 200);
 }
 
 async function oversightTarget(userId: string): Promise<OversightTargetRow | null> {
@@ -1764,12 +1883,12 @@ async function rbacRole(id: string) {
 async function rbacUser(id: string) {
   const { data, error } = await db
     .from("users")
-    .select("id, email")
+    .select("id, email, status, auth_version")
     .eq("id", id)
     .eq("is_deleted", false)
     .maybeSingle();
   if (error) throw new Error(`user lookup failed: ${error.message}`);
-  return data as { id: string; email: string } | null;
+  return data as { id: string; email: string; status: string; auth_version: number } | null;
 }
 
 async function revokeUserRefreshTokens(userId: string) {
@@ -2067,6 +2186,8 @@ const OVERSIGHT_ADMIN_ROLES = { kind: "roles", roles: ["SUPER_ADMIN", "COMPLIANC
 
 const routes = [
   { method: "GET", path: "/admin/users", guard: SUPER_ADMIN_ONLY, handler: handleListUsers },
+  { method: "POST", path: "/admin/users", guard: SUPER_ADMIN_ONLY, handler: handleCreateUser },
+  { method: "PATCH", path: "/admin/users/:id", guard: SUPER_ADMIN_ONLY, handler: handleUpdateUser },
   { method: "GET", path: "/admin/account-lockouts", guard: SYSTEM_ADMIN_ONLY, handler: handleListLockedUsers },
   { method: "POST", path: "/admin/users/:id/unlock", guard: ADMIN_PORTAL_ROLES, handler: handleUnlockUser },
   { method: "GET", path: "/admin/rbac/users", guard: SUPER_ADMIN_ONLY, handler: handleListUsers },

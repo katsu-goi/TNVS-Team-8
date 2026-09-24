@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { LockKeyhole, RefreshCw, UnlockKeyhole } from 'lucide-react';
 import { extractErrorMessage } from '../../api/client';
 import { rbacService, RbacUser } from '../../api/rbacService';
+import { DashboardHero } from '../ui/DashboardPrimitives';
 
 export const AccountLockoutsPage: React.FC = () => {
   const [users, setUsers] = useState<RbacUser[]>([]);
@@ -41,18 +42,11 @@ export const AccountLockoutsPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="glass-panel flex items-center justify-between p-5">
-        <div className="flex items-center gap-3">
-          <div className="rounded-xl border border-amber-200 bg-amber-50 p-2"><LockKeyhole className="h-5 w-5 text-amber-700" /></div>
-          <div>
-            <h1 className="text-xl font-bold text-slate-900">Account Lockouts</h1>
-            <p className="text-xs text-slate-500">Review login-locked profiles and restore access.</p>
-          </div>
-        </div>
+      <DashboardHero title="Account Lockouts" subtitle="Review login-locked profiles and restore access." actions={
         <button onClick={load} disabled={loading} className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:text-slate-900 disabled:opacity-50" title="Refresh locked accounts">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
         </button>
-      </div>
+      } />
 
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>}
       {message && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">{message}</div>}
