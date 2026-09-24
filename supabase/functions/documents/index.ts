@@ -332,10 +332,23 @@ async function loadTagsForDocs(docIds: string[]): Promise<Map<string, Array<Reco
 }
 
 async function loadDocumentRow(id: string): Promise<Record<string, unknown> | null> {
-  const { data, error } = await db.from("documents").select("*, categories(name), folders(name, path)")
-    .eq("id", id).maybeSingle();
+  const { data, error } = await db.from("documents").select("*").eq("id", id).maybeSingle();
   if (error) throw new Error(`document query failed: ${error.message}`);
-  return (data as unknown as Record<string, unknown>) ?? null;
+  if (!data) return null;
+  const row = data as unknown as Record<string, unknown>;
+  const categoryId = str(row.category_id);
+  const folderId = str(row.folder_id);
+  const [categoryResult, folderResult] = await Promise.all([
+    categoryId
+      ? db.from("categories").select("id, name, description").eq("id", categoryId).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    folderId
+      ? db.from("folders").select("id, name, path").eq("id", folderId).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+  if (categoryResult.error) throw new Error(`document category query failed: ${categoryResult.error.message}`);
+  if (folderResult.error) throw new Error(`document folder query failed: ${folderResult.error.message}`);
+  return { ...row, categories: categoryResult.data, folders: folderResult.data };
 }
 
 // ---------------------------------------------------------------------------

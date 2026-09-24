@@ -38,7 +38,7 @@ export const DashboardMetricCard: React.FC<DashboardMetricCardProps> = ({
 }) => (
   <button type="button" onClick={onClick} disabled={!onClick} className="card-stat dashboard-metric-card group w-full text-left transition-all disabled:cursor-default">
     <div className="mb-3 flex items-center justify-between gap-3">
-      <p className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 transition-colors group-enabled:group-hover:text-[#98131B]">
+      <p className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 transition-colors group-enabled:group-hover:text-brand-700">
         <span className="truncate">{label}</span>
         {pulse && (
           <span className="relative flex h-2 w-2 shrink-0">
@@ -56,7 +56,7 @@ export const DashboardMetricCard: React.FC<DashboardMetricCardProps> = ({
         <p className="truncate text-2xl font-bold text-slate-950">{value}</p>
         {sub && <p className="mt-1 truncate font-mono text-[10px] text-slate-500">{sub}</p>}
       </div>
-      {onClick && <ChevronRight className="h-4 w-4 shrink-0 text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-[#B5121B]" />}
+      {onClick && <ChevronRight className="h-4 w-4 shrink-0 text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-brand-500" />}
     </div>
   </button>
 );

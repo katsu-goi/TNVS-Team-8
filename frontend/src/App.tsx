@@ -1,10 +1,10 @@
-import React, { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import React, { lazy, Suspense, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useAuthStore, getDashboardPath, isActorSuperAdmin, isActorSystemAdmin, hasAssignedRole } from './stores/authStore';
 import { OversightBanner } from './components/oversight';
 import { workspaceConfigs } from './components/workspaces/workspaceConfig';
 import type { WorkspaceConfig } from './components/workspaces/workspaceConfig';
-import { useParams } from 'react-router-dom';
+import { Button, EmptyState } from './components/ui/SharedUI';
 
 const lazyNamed = (loader: () => Promise<any>, exportName: string) =>
   lazy(() => loader().then((module) => ({ default: module[exportName] }))) as React.LazyExoticComponent<React.ComponentType<any>>;
@@ -34,16 +34,12 @@ const AssetsPage = lazyNamed(() => import('./components/facilities/FacilitiesPag
 const FacilitiesReportsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'ReportsPage');
 const FacilitiesAnalyticsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'AnalyticsPage');
 const FacilitiesNotificationsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'FacilitiesNotificationsPage');
-const ProfilePage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'ProfilePage');
-const FacilitiesSettingsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'FacilitiesSettingsPage');
 const FacilitiesOfficerLayout = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerLayout'), 'FacilitiesOfficerLayout');
 const FacilitiesOfficerDashboard = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerDashboard'), 'FacilitiesOfficerDashboard');
 const FoReservationsPage = lazyNamed(() => import('./components/facilities-officer/FoReservationsPage'), 'FoReservationsPage');
 const FoVisitorManagementPage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'FoVisitorManagementPage');
 const FoDocumentsPage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'FoDocumentsPage');
 const FoNotificationsPage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'FoNotificationsPage');
-const FoProfilePage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'FoProfilePage');
-const FoSettingsPage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'FoSettingsPage');
 const LegalOfficerLayout = lazyNamed(() => import('./components/legal/LegalOfficerLayout'), 'LegalOfficerLayout');
 const LegalOfficerDashboard = lazyNamed(() => import('./components/legal/LegalOfficerDashboard'), 'LegalOfficerDashboard');
 const RequestReviewPage = lazyNamed(() => import('./components/requests/RequestReviewPage'), 'RequestReviewPage');
@@ -51,8 +47,6 @@ const LoContractsPage = lazyNamed(() => import('./components/legal/LegalOfficerP
 const LoLegalCasesPage = lazyNamed(() => import('./components/legal/LegalOfficerPages'), 'LoLegalCasesPage');
 const LoLegalNoticesPage = lazyNamed(() => import('./components/legal/LegalOfficerPages'), 'LoLegalNoticesPage');
 const LoDocumentsPage = lazyNamed(() => import('./components/legal/LegalOfficerPages'), 'LoDocumentsPage');
-const LoProfilePage = lazyNamed(() => import('./components/legal/LegalOfficerPages'), 'LoProfilePage');
-const LoSettingsPage = lazyNamed(() => import('./components/legal/LegalOfficerPages'), 'LoSettingsPage');
 const ProcurementOfficerLayout = lazyNamed(() => import('./components/procurement/ProcurementOfficerLayout'), 'ProcurementOfficerLayout');
 const ProcurementOfficerDashboard = lazyNamed(() => import('./components/procurement/ProcurementOfficerDashboard'), 'ProcurementOfficerDashboard');
 const PoContractsPage = lazyNamed(() => import('./components/procurement/ProcurementOfficerPages'), 'PoContractsPage');
@@ -61,8 +55,6 @@ const PoNoticesPage = lazyNamed(() => import('./components/procurement/Procureme
 const PoDocumentsPage = lazyNamed(() => import('./components/procurement/ProcurementOfficerPages'), 'PoDocumentsPage');
 const PoLegalCasesPage = lazyNamed(() => import('./components/procurement/ProcurementOfficerPages'), 'PoLegalCasesPage');
 const PoAuditLogsPage = lazyNamed(() => import('./components/procurement/ProcurementOfficerPages'), 'PoAuditLogsPage');
-const PoProfilePage = lazyNamed(() => import('./components/procurement/ProcurementOfficerPages'), 'PoProfilePage');
-const PoSettingsPage = lazyNamed(() => import('./components/procurement/ProcurementOfficerPages'), 'PoSettingsPage');
 const EmployeeLayout = lazyNamed(() => import('./components/employee/EmployeeLayout'), 'EmployeeLayout');
 const EmployeeDashboard = lazyNamed(() => import('./components/employee/EmployeeDashboard'), 'EmployeeDashboard');
 const EmpReservationsPage = lazyNamed(() => import('./components/employee/EmployeePages'), 'EmpReservationsPage');
@@ -71,7 +63,6 @@ const EmpDocumentsPage = lazyNamed(() => import('./components/employee/EmployeeP
 const EmpRequestsPage = lazyNamed(() => import('./components/employee/EmployeePages'), 'EmpRequestsPage');
 const EmpNotificationsPage = lazyNamed(() => import('./components/employee/EmployeePages'), 'EmpNotificationsPage');
 const EmpProfilePage = lazyNamed(() => import('./components/employee/EmployeePages'), 'EmpProfilePage');
-const EmpSettingsPage = lazyNamed(() => import('./components/employee/EmployeePages'), 'EmpSettingsPage');
 const RoleWorkspaceLayout = lazyNamed(() => import('./components/workspaces/RoleWorkspaceLayout'), 'RoleWorkspaceLayout');
 const RoleWorkspacePage = lazyNamed(() => import('./components/workspaces/RoleWorkspacePage'), 'RoleWorkspacePage');
 const AccountLockoutsPage = lazyNamed(() => import('./components/sysadmin/AccountLockoutsPage'), 'AccountLockoutsPage');
@@ -102,7 +93,7 @@ class ErrorBoundary extends React.Component<
   }
 }
 
-const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   // Fail-closed: both a bearer token AND a rehydrated user session are required.
@@ -155,10 +146,34 @@ const AssignedRoleRoute: React.FC<{ role: string; children: React.ReactNode }> =
   return <>{children}</>;
 };
 
-const WorkspaceSectionRoute: React.FC<{ config: WorkspaceConfig }> = ({ config }) => {
+export const WorkspaceSectionRoute: React.FC<{ config: WorkspaceConfig }> = ({ config }) => {
   const { section = 'dashboard' } = useParams();
-  const validSection = config.nav.some((item) => item.section === section) ? section : 'dashboard';
-  return <RoleWorkspacePage config={config} section={validSection} />;
+  const navigate = useNavigate();
+  const validSection = config.nav.some((item) => item.section === section);
+  if (!validSection) {
+    return (
+      <EmptyState
+        title="Workspace page not found"
+        description={`The “${section}” section is not available in ${config.portalLabel}. Check the address or return to the dashboard.`}
+        action={<Button variant="primary" onClick={() => navigate(`/${config.slug}/dashboard`, { replace: true })}>Go to dashboard</Button>}
+      />
+    );
+  }
+  return <RoleWorkspacePage config={config} section={section} />;
+};
+
+export const SessionBootstrap: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const status = useAuthStore((state) => state.sessionStatus);
+  const bootstrapSession = useAuthStore((state) => state.bootstrapSession);
+  useEffect(() => { void bootstrapSession(); }, [bootstrapSession]);
+  if (status === 'loading') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm font-medium text-slate-600" role="status" aria-live="polite">
+        Verifying your session...
+      </div>
+    );
+  }
+  return <>{children}</>;
 };
 
 const FacilitiesRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -204,8 +219,9 @@ const EmployeeRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =>
 export const App: React.FC = () => {
   return (
     <BrowserRouter>
-      <OversightBanner />
-      <Suspense fallback={<div className="min-h-screen bg-slate-50 p-8 text-sm text-slate-500">Loading workspace...</div>}>
+      <SessionBootstrap>
+       <OversightBanner />
+       <Suspense fallback={<div className="min-h-screen bg-slate-50 p-8 text-sm text-slate-500">Loading workspace...</div>}>
         <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/hr-assistance" element={<HRAssistancePage />} />
@@ -225,7 +241,7 @@ export const App: React.FC = () => {
           <Route path="admin/ai-services" element={<SystemAdminRoute><AiServicesPage /></SystemAdminRoute>} />
           <Route path="admin/backup" element={<SystemAdminRoute><BackupPage /></SystemAdminRoute>} />
           <Route path="admin/settings" element={<SystemAdminRoute><SettingsPage /></SystemAdminRoute>} />
-          <Route path="admin/notifications" element={<SystemAdminRoute><NotificationsPage /></SystemAdminRoute>} />
+          <Route path="admin/notifications" element={<AdminPortalRoute><NotificationsPage /></AdminPortalRoute>} />
           <Route path="admin/system-health" element={<SystemAdminRoute><SystemHealthPage /></SystemAdminRoute>} />
            <Route path="admin/sessions" element={<SystemAdminRoute><SessionsPage /></SystemAdminRoute>} />
            <Route path="admin/account-lockouts" element={<SystemAdminRoute><AccountLockoutsPage /></SystemAdminRoute>} />
@@ -276,8 +292,6 @@ export const App: React.FC = () => {
           <Route path="facilities/reports" element={<FacilitiesReportsPage />} />
           <Route path="facilities/analytics" element={<FacilitiesAnalyticsPage />} />
           <Route path="facilities/notifications" element={<FacilitiesNotificationsPage />} />
-          <Route path="facilities/profile" element={<ProfilePage />} />
-          <Route path="facilities/settings" element={<FacilitiesSettingsPage />} />
         </Route>
 
         {/* Facilities Officer routes */}
@@ -291,8 +305,6 @@ export const App: React.FC = () => {
           <Route path="facilities-officer/visitors" element={<FoVisitorManagementPage />} />
           <Route path="facilities-officer/documents" element={<FoDocumentsPage />} />
           <Route path="facilities-officer/notifications" element={<FoNotificationsPage />} />
-          <Route path="facilities-officer/profile" element={<FoProfilePage />} />
-          <Route path="facilities-officer/settings" element={<FoSettingsPage />} />
         </Route>
 
         {/* Legal Officer routes */}
@@ -307,8 +319,6 @@ export const App: React.FC = () => {
           <Route path="legal/cases" element={<LoLegalCasesPage />} />
           <Route path="legal/notices" element={<LoLegalNoticesPage />} />
           <Route path="legal/documents" element={<LoDocumentsPage />} />
-          <Route path="legal/profile" element={<LoProfilePage />} />
-          <Route path="legal/settings" element={<LoSettingsPage />} />
         </Route>
 
         {/* Contract Officer routes */}
@@ -325,8 +335,6 @@ export const App: React.FC = () => {
           <Route path="procurement/documents" element={<PoDocumentsPage />} />
           <Route path="procurement/legal-cases" element={<PoLegalCasesPage />} />
           <Route path="procurement/audit-logs" element={<PoAuditLogsPage />} />
-          <Route path="procurement/profile" element={<PoProfilePage />} />
-          <Route path="procurement/settings" element={<PoSettingsPage />} />
         </Route>
 
         {/* Employee routes */}
@@ -342,12 +350,12 @@ export const App: React.FC = () => {
           <Route path="employee/requests" element={<EmpRequestsPage />} />
           <Route path="employee/notifications" element={<EmpNotificationsPage />} />
           <Route path="employee/profile" element={<EmpProfilePage />} />
-          <Route path="employee/settings" element={<EmpSettingsPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
-      </Suspense>
+       </Suspense>
+      </SessionBootstrap>
     </BrowserRouter>
   );
 };

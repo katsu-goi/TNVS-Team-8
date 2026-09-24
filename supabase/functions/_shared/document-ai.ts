@@ -295,7 +295,7 @@ export async function classifyDocumentContent(
   });
 
   let response: Response;
-  let timeout: number | undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     const controller = new AbortController();
     timeout = setTimeout(() => controller.abort(), 55_000);

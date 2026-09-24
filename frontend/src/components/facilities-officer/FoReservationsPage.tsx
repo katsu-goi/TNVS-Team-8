@@ -3,7 +3,7 @@ import {
   Calendar, Clock, Building2,
   PlusCircle, FileText, Download, Edit3,
   Send, X, Eye, Wrench, BarChart2,
-  CheckSquare, ArrowUpRight, FileSpreadsheet, FileCode, Activity, DoorOpen, Loader2, Sparkles,
+  CheckSquare, FileSpreadsheet, FileCode, Activity, DoorOpen, Loader2, Sparkles,
   Mail, CalendarClock, Inbox
 } from 'lucide-react';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
@@ -12,6 +12,7 @@ import { facilitiesService } from '../../api/facilitiesService';
 import { RoomPicker, RoomPickerSelection } from './RoomPicker';
 import { DatePicker } from '../ui/DatePicker';
 import { TimePicker } from '../ui/TimePicker';
+import { downloadCsv } from '../../utils/csvExport';
 
 export interface ReservationItem {
   id: string;
@@ -27,7 +28,7 @@ export interface ReservationItem {
   durationHours: number;
   status: 'PENDING' | 'PENDING_MANAGER_APPROVAL' | 'APPROVED' | 'CONFIRMED' | 'COMPLETED' | 'REJECTED' | 'CANCELLED';
   expectedAttendees: number;
-  priorityLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+  priorityLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT' | 'UNSPECIFIED';
   description?: string;
   updatedAt: string;
   updatedBy: string;
@@ -65,6 +66,7 @@ const PRIORITY_BADGE: Record<ReservationItem['priorityLevel'], string> = {
   HIGH:   'bg-amber-100 text-amber-700',
   MEDIUM: 'bg-slate-100 text-slate-600',
   LOW:    'bg-slate-100 text-slate-500',
+  UNSPECIFIED: 'bg-slate-100 text-slate-500',
 };
 
 /** Two initials for the requester avatar. */
@@ -110,9 +112,9 @@ const QueueField: React.FC<{
 export const FoReservationsPage: React.FC = () => {
   const syncData = useRealtimeSyncStore(s => s.syncData);
   const revision = useRealtimeSyncStore(s => s.revision);
+  const syncConnected = useRealtimeSyncStore(s => s.connected);
   // Navigation & View States
   const [activeTab, setActiveTab] = useState<'upcoming' | 'pending' | 'calendar' | 'recent' | 'utilization' | 'notices'>('upcoming');
-  const [calendarViewMode, setCalendarViewMode] = useState<'daily' | 'weekly' | 'monthly'>('weekly');
 
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -140,6 +142,7 @@ export const FoReservationsPage: React.FC = () => {
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [reservationLoadError, setReservationLoadError] = useState('');
 
   // Dynamic state for reservations and maintenance notices (no hardcoded seed data)
   const [reservations, setReservations] = useState<ReservationItem[]>([]);
@@ -147,12 +150,12 @@ export const FoReservationsPage: React.FC = () => {
 
   const fetchReservations = React.useCallback(async () => {
       try {
+        setReservationLoadError('');
         const json = await safeFetchJson('/api/v1/facilities-officer/reservations');
-        if (json?.data && Array.isArray(json.data)) {
-          setReservations(json.data.map((r: any) => mapBackendReservation(r)));
-        }
+        if (!Array.isArray(json?.data)) throw new Error('The reservation service returned an invalid response.');
+        setReservations(json.data.map((r: any) => mapBackendReservation(r)));
       } catch (e) {
-        console.warn('Reservation request failed; response details were withheld.');
+        setReservationLoadError(extractErrorMessage(e));
       }
   }, []);
 
@@ -166,7 +169,7 @@ export const FoReservationsPage: React.FC = () => {
     title: r.title,
     facilityCategory: 'ROOM',
     facilityName: r.roomName || r.facilityName || '',
-    requesterName: r.requesterName || r.employeeName || 'Requester',
+    requesterName: r.requesterName || r.employeeName || 'Unavailable',
     requesterEmail: r.requesterEmail || r.employeeEmail || '',
     reservationDate: (r.startTime || '').slice(0, 10),
     startTime: (r.startTime || '').slice(11, 16),
@@ -175,12 +178,12 @@ export const FoReservationsPage: React.FC = () => {
       ? Math.max(0, (new Date(r.endTime).getTime() - new Date(r.startTime).getTime()) / 3600000)
       : 0,
     status: ['PENDING', 'PENDING_MANAGER_APPROVAL', 'APPROVED', 'CONFIRMED', 'COMPLETED', 'REJECTED', 'CANCELLED'].includes(r.status) ? r.status : 'PENDING',
-    expectedAttendees: r.expectedAttendees ?? 1,
-    priorityLevel: 'MEDIUM',
+    expectedAttendees: r.expectedAttendees ?? 0,
+    priorityLevel: ['LOW', 'MEDIUM', 'HIGH', 'URGENT'].includes(r.priorityLevel) ? r.priorityLevel : 'UNSPECIFIED',
     description: r.description,
-    updatedAt: r.createdAt || new Date().toLocaleString(),
-    updatedBy: r.requesterName || r.employeeName || 'Requester',
-    modificationNotes: `Requested ${r.roomName} · ${r.facilityName || ''}`.trim()
+    updatedAt: r.updatedAt || r.createdAt || '',
+    updatedBy: r.updatedBy || r.requesterName || r.employeeName || 'Unavailable',
+    modificationNotes: r.modificationNotes || r.description || 'No modification note supplied.',
   });
 
   // Derived metrics for Component 1: Summary Cards & Component 6: Resource Utilization
@@ -188,7 +191,35 @@ export const FoReservationsPage: React.FC = () => {
   const approvedCount = reservations.filter(r => r.status === 'APPROVED' || r.status === 'CONFIRMED').length;
   const upcomingCount = reservations.filter(r => ['APPROVED', 'CONFIRMED'].includes(r.status) && new Date(r.reservationDate) >= new Date()).length;
   const maintenanceCount = maintenanceNotices.length;
-  const occupancyRate = 68; // 68% calculated occupancy rate
+  const facilityCounts = reservations.reduce<Record<string, number>>((counts, reservation) => {
+    const name = reservation.facilityName || 'Unassigned facility';
+    counts[name] = (counts[name] || 0) + 1;
+    return counts;
+  }, {});
+  const frequentFacility = Object.entries(facilityCounts).sort((a, b) => b[1] - a[1])[0];
+  const hourCounts = reservations.reduce<Record<string, number>>((counts, reservation) => {
+    const hour = reservation.startTime?.slice(0, 2);
+    if (hour) counts[hour] = (counts[hour] || 0) + 1;
+    return counts;
+  }, {});
+  const peakHour = Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0];
+  const activeVehicleBookings = reservations.filter((reservation) =>
+    reservation.facilityCategory === 'VEHICLE_BAY' && ['APPROVED', 'CONFIRMED'].includes(reservation.status),
+  ).length;
+
+  const exportReservationsCsv = () => {
+    downloadCsv(
+      `facilities-reservations-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['Reservation ID', 'Title', 'Facility', 'Requester', 'Email', 'Date', 'Start', 'End', 'Status', 'Attendees', 'Priority'],
+      reservations.map((reservation) => [
+        reservation.reservationId, reservation.title, reservation.facilityName,
+        reservation.requesterName, reservation.requesterEmail, reservation.reservationDate,
+        reservation.startTime, reservation.endTime, reservation.status,
+        reservation.expectedAttendees, reservation.priorityLevel,
+      ]),
+    );
+    setShowReportModal(false);
+  };
 
   // Quick Action Handlers
   const handleCreateReservationSubmit = async (e: React.FormEvent) => {
@@ -383,15 +414,17 @@ export const FoReservationsPage: React.FC = () => {
         </div>
 
         {/* Component 8: Quick Action Buttons & Real-Time Sync Badge */}
-        <div className="flex items-center space-x-2 shrink-0">
-          <div className="hidden sm:flex items-center px-3 py-1.5 rounded-xl border bg-emerald-50 border-emerald-200">
-            <Activity className="w-4 h-4 mr-2 text-emerald-600 animate-pulse" />
-            <span className="text-xs font-mono font-semibold text-emerald-600">REALTIME SYNC LIVE</span>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <div className={`hidden items-center rounded-xl border px-3 py-1.5 sm:flex ${syncConnected ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+            <Activity className={`mr-2 h-4 w-4 ${syncConnected ? 'text-emerald-600' : 'text-amber-600'}`} />
+            <span className={`text-xs font-mono font-semibold ${syncConnected ? 'text-emerald-600' : 'text-amber-700'}`}>
+              {syncConnected ? 'REALTIME CONNECTED' : 'REALTIME CONNECTING'}
+            </span>
           </div>
 
           <button
             onClick={() => setShowCreateModal(true)}
-            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs transition flex items-center space-x-1.5 shadow-sm"
+            className="flex items-center space-x-1.5 rounded-xl bg-brand-500 px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-brand-700"
           >
             <PlusCircle className="w-4 h-4" />
             <span>New Reservation</span>
@@ -414,6 +447,13 @@ export const FoReservationsPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {reservationLoadError && (
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          Reservation data is unavailable: {reservationLoadError}
+          <button type="button" onClick={() => void fetchReservations()} className="ml-3 font-semibold underline">Retry</button>
+        </div>
+      )}
 
       {/* Component 1: Reservation Summary Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
@@ -443,8 +483,8 @@ export const FoReservationsPage: React.FC = () => {
 
         <div className="card-stat p-4 border-l-4 border-l-teal-500">
           <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Occupancy Rate</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">{occupancyRate}%</p>
-          <p className="text-[10px] text-teal-600 mt-0.5 font-mono">Facility Utilization</p>
+          <p className="text-2xl font-bold text-slate-400 mt-1">Unavailable</p>
+          <p className="text-[10px] text-slate-500 mt-0.5 font-mono">Capacity telemetry not supplied</p>
         </div>
       </div>
 
@@ -669,74 +709,36 @@ export const FoReservationsPage: React.FC = () => {
       {/* Component 4: Facility Availability Calendar */}
       {activeTab === 'calendar' && (
         <div className="card-stat p-5 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
             <div>
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <Calendar className="w-5 h-5 text-emerald-600" />
                 Facility Availability Calendar & Schedule Grid
               </h3>
-              <p className="text-xs text-slate-500">Visual time-slot booking grid, vehicle bay schedules, and maintenance blockouts.</p>
-            </div>
-
-            {/* Daily / Weekly / Monthly Switcher */}
-            <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
-              <button onClick={() => setCalendarViewMode('daily')} className={`px-3 py-1.5 rounded-lg transition ${calendarViewMode === 'daily' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500'}`}>
-                Daily View
-              </button>
-              <button onClick={() => setCalendarViewMode('weekly')} className={`px-3 py-1.5 rounded-lg transition ${calendarViewMode === 'weekly' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500'}`}>
-                Weekly View
-              </button>
-              <button onClick={() => setCalendarViewMode('monthly')} className={`px-3 py-1.5 rounded-lg transition ${calendarViewMode === 'monthly' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500'}`}>
-                Monthly View
-              </button>
+              <p className="text-xs text-slate-500">Live reservation schedules returned by the facilities service.</p>
             </div>
           </div>
 
-          {/* Calendar Grid Representation */}
-          <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
-            <div className="grid grid-cols-6 bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600 py-2.5 px-3 uppercase tracking-wider text-center">
-              <div>Facility / Bay</div>
-              <div>Mon (Aug 1)</div>
-              <div>Tue (Aug 2)</div>
-              <div>Wed (Aug 3)</div>
-              <div>Thu (Aug 4)</div>
-              <div>Fri (Aug 5)</div>
-            </div>
-
-            <div className="divide-y divide-slate-100 text-xs">
-              <div className="grid grid-cols-6 p-3 items-center hover:bg-slate-50">
-                <div className="font-bold text-slate-900">Executive Conf Room A</div>
-                <div className="p-2 rounded bg-emerald-50 text-emerald-700 text-[11px] font-semibold text-center border border-emerald-200">
-                  09:00-12:30 Booked
-                </div>
-                <div className="p-2 text-center text-slate-400 font-mono text-[10px]">Available</div>
-                <div className="p-2 text-center text-slate-400 font-mono text-[10px]">Available</div>
-                <div className="p-2 text-center text-slate-400 font-mono text-[10px]">Available</div>
-                <div className="p-2 rounded bg-blue-50 text-blue-700 text-[11px] font-semibold text-center border border-blue-200">
-                  14:00-16:00 Booked
-                </div>
-              </div>
-
-              <div className="grid grid-cols-6 p-3 items-center hover:bg-slate-50">
-                <div className="font-bold text-slate-900">Vehicle Dock Bay 3</div>
-                <div className="p-2 rounded bg-amber-50 text-amber-700 text-[11px] font-semibold text-center border border-amber-200">
-                  13:00-15:00 Pending
-                </div>
-                <div className="p-2 text-center text-slate-400 font-mono text-[10px]">Available</div>
-                <div className="p-2 text-center text-slate-400 font-mono text-[10px]">Available</div>
-                <div className="p-2 text-center text-slate-400 font-mono text-[10px]">Available</div>
-                <div className="p-2 text-center text-slate-400 font-mono text-[10px]">Available</div>
-              </div>
-
-              <div className="grid grid-cols-6 p-3 items-center hover:bg-slate-50 bg-rose-50/30">
-                <div className="font-bold text-slate-900">Conference Room C</div>
-                <div className="p-2 text-center text-slate-400 font-mono text-[10px]">Available</div>
-                <div className="p-2 rounded bg-rose-100 text-rose-700 text-[10px] font-bold text-center border border-rose-200 col-span-3">
-                  ⚠️ OUT OF SERVICE: HVAC Maintenance Block
-                </div>
-                <div className="p-2 text-center text-slate-400 font-mono text-[10px]">Available</div>
-              </div>
-            </div>
+          <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white" aria-label="Facility reservation schedule">
+            {reservations.length === 0 ? (
+              <p className="p-8 text-center text-sm text-slate-500">No reservation schedule is currently available.</p>
+            ) : reservations
+              .slice()
+              .sort((a, b) => `${a.reservationDate}T${a.startTime}`.localeCompare(`${b.reservationDate}T${b.startTime}`))
+              .map((reservation) => (
+                <article key={reservation.id} className="grid gap-2 p-4 text-xs sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
+                  <div className="min-w-0">
+                    <p className="truncate font-bold text-slate-900">{reservation.facilityName || 'Unassigned facility'}</p>
+                    <p className="truncate text-slate-500">{reservation.title}</p>
+                  </div>
+                  <time className="font-mono text-slate-700" dateTime={`${reservation.reservationDate}T${reservation.startTime}`}>
+                    {formatSchedule(reservation.reservationDate, reservation.startTime)}–{reservation.endTime}
+                  </time>
+                  <span className={`w-fit rounded-full border px-2 py-1 font-semibold ${STATUS_META[reservation.status].badge}`}>
+                    {STATUS_META[reservation.status].label}
+                  </span>
+                </article>
+              ))}
           </div>
         </div>
       )}
@@ -777,20 +779,20 @@ export const FoReservationsPage: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="p-4 rounded-xl border border-slate-200 bg-slate-50">
               <p className="text-xs font-semibold text-slate-500 uppercase">Peak Booking Hours</p>
-              <p className="text-xl font-bold text-slate-900 mt-1">10:00 AM – 02:00 PM</p>
-              <p className="text-[10px] text-slate-400 mt-1 font-mono">Highest demand period across rooms</p>
+              <p className="text-xl font-bold text-slate-900 mt-1">{peakHour ? `${peakHour[0]}:00` : 'Unavailable'}</p>
+              <p className="text-[10px] text-slate-400 mt-1 font-mono">{peakHour ? `${peakHour[1]} reservations start in this hour` : 'No reservation data'}</p>
             </div>
 
             <div className="p-4 rounded-xl border border-slate-200 bg-slate-50">
               <p className="text-xs font-semibold text-slate-500 uppercase">Frequently Used Facility</p>
-              <p className="text-xl font-bold text-emerald-700 mt-1">Executive Conference Room A</p>
-              <p className="text-[10px] text-slate-400 mt-1 font-mono">84% weekly booking load</p>
+              <p className="text-xl font-bold text-emerald-700 mt-1">{frequentFacility?.[0] || 'Unavailable'}</p>
+              <p className="text-[10px] text-slate-400 mt-1 font-mono">{frequentFacility ? `${frequentFacility[1]} reservations in the loaded dataset` : 'No reservation data'}</p>
             </div>
 
             <div className="p-4 rounded-xl border border-slate-200 bg-slate-50">
-              <p className="text-xs font-semibold text-slate-500 uppercase">Vehicle Bay Capacity</p>
-              <p className="text-xl font-bold text-blue-700 mt-1">52% Utilized</p>
-              <p className="text-[10px] text-slate-400 mt-1 font-mono">3 / 6 bays active today</p>
+              <p className="text-xs font-semibold text-slate-500 uppercase">Active Vehicle Bay Bookings</p>
+              <p className="text-xl font-bold text-blue-700 mt-1">{activeVehicleBookings}</p>
+              <p className="text-[10px] text-slate-400 mt-1 font-mono">Capacity percentage unavailable from the API</p>
             </div>
           </div>
         </div>
@@ -825,7 +827,7 @@ export const FoReservationsPage: React.FC = () => {
 
       {/* Component 8: Create Reservation Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full overflow-hidden border border-slate-200 max-h-[90vh] flex flex-col">
             <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
               <h3 className="text-base font-bold flex items-center gap-2">
@@ -905,7 +907,7 @@ export const FoReservationsPage: React.FC = () => {
                           type="button"
                           onClick={() => applyAiSuggestion(s)}
                           className={`shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-bold transition ${
-                            selectedRoom?.roomId === s.roomId ? 'bg-emerald-600 text-white' : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                            selectedRoom?.roomId === s.roomId ? 'bg-brand-500 text-white' : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
                           }`}
                         >
                           {selectedRoom?.roomId === s.roomId ? 'Selected' : 'Select'}
@@ -956,7 +958,7 @@ export const FoReservationsPage: React.FC = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="font-bold text-slate-700">Facility Category</label>
                   <select
@@ -999,7 +1001,7 @@ export const FoReservationsPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="font-bold text-slate-700">Requester Name</label>
                   <input
@@ -1061,7 +1063,7 @@ export const FoReservationsPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="font-bold text-slate-700">Expected Attendees</label>
                   <input
@@ -1102,7 +1104,7 @@ export const FoReservationsPage: React.FC = () => {
                 <button type="button" onClick={() => setShowCreateModal(false)} className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-semibold hover:bg-slate-200">
                   Cancel
                 </button>
-                <button type="submit" disabled={submitting} className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 inline-flex items-center space-x-1.5 disabled:opacity-60">
+                <button type="submit" disabled={submitting} className="inline-flex items-center space-x-1.5 rounded-xl bg-brand-500 px-4 py-2 font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
                   {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   <span>{submitting ? 'Submitting…' : 'Submit & Escalate Request'}</span>
                 </button>
@@ -1114,7 +1116,7 @@ export const FoReservationsPage: React.FC = () => {
 
       {/* Edit / Reschedule Modal */}
       {editModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
             <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
               <h3 className="text-base font-bold">Edit / Reschedule Reservation: {editModal.reservationId}</h3>
@@ -1125,7 +1127,7 @@ export const FoReservationsPage: React.FC = () => {
                 <label className="font-bold text-slate-700">Title</label>
                 <input type="text" value={editModal.title} onChange={e => setEditModal({ ...editModal, title: e.target.value })} className="w-full mt-1 bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="font-bold text-slate-700">Start Time</label>
                   <input type="time" value={editModal.startTime} onChange={e => setEditModal({ ...editModal, startTime: e.target.value })} className="w-full mt-1 bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none" />
@@ -1137,7 +1139,7 @@ export const FoReservationsPage: React.FC = () => {
               </div>
               <div className="pt-3 flex justify-end space-x-2">
                 <button type="button" onClick={() => setEditModal(null)} className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-semibold">Cancel</button>
-                <button type="submit" className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold">Save Changes</button>
+                <button type="submit" className="rounded-xl bg-brand-500 px-4 py-2 font-semibold text-white hover:bg-brand-700">Save Changes</button>
               </div>
             </form>
           </div>
@@ -1146,7 +1148,7 @@ export const FoReservationsPage: React.FC = () => {
 
       {/* Escalate Modal */}
       {escalateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
             <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
               <h3 className="text-base font-bold flex items-center gap-2">
@@ -1185,7 +1187,7 @@ export const FoReservationsPage: React.FC = () => {
 
       {/* Component 8: Generate Reports Modal */}
       {showReportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
             <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
               <h3 className="text-base font-bold flex items-center gap-2">
@@ -1200,27 +1202,28 @@ export const FoReservationsPage: React.FC = () => {
 
               <div className="space-y-2">
                 <button
-                  onClick={() => { alert('Exported PDF Report successfully!'); setShowReportModal(false); }}
-                  className="w-full p-3 rounded-xl border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/50 flex items-center justify-between font-bold text-slate-800 transition"
+                  disabled
+                  title="PDF export is not configured"
+                  className="w-full p-3 rounded-xl border border-slate-200 flex items-center justify-between font-bold text-slate-400 cursor-not-allowed"
                 >
-                  <span className="flex items-center gap-2"><FileText className="w-5 h-5 text-rose-500" /> Export PDF Summary Report</span>
-                  <ArrowUpRight className="w-4 h-4 text-slate-400" />
+                  <span className="flex items-center gap-2"><FileText className="w-5 h-5" /> PDF export unavailable</span>
                 </button>
 
                 <button
-                  onClick={() => { alert('Exported Excel Spreadsheet successfully!'); setShowReportModal(false); }}
-                  className="w-full p-3 rounded-xl border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/50 flex items-center justify-between font-bold text-slate-800 transition"
+                  disabled
+                  title="Excel export is not configured"
+                  className="w-full p-3 rounded-xl border border-slate-200 flex items-center justify-between font-bold text-slate-400 cursor-not-allowed"
                 >
-                  <span className="flex items-center gap-2"><FileSpreadsheet className="w-5 h-5 text-emerald-600" /> Export Excel (.xlsx) Dataset</span>
-                  <ArrowUpRight className="w-4 h-4 text-slate-400" />
+                  <span className="flex items-center gap-2"><FileSpreadsheet className="w-5 h-5" /> Excel export unavailable</span>
                 </button>
 
                 <button
-                  onClick={() => { alert('Exported CSV File successfully!'); setShowReportModal(false); }}
+                  onClick={exportReservationsCsv}
+                  disabled={reservations.length === 0}
                   className="w-full p-3 rounded-xl border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/50 flex items-center justify-between font-bold text-slate-800 transition"
                 >
                   <span className="flex items-center gap-2"><FileCode className="w-5 h-5 text-blue-600" /> Export Raw CSV Logs</span>
-                  <ArrowUpRight className="w-4 h-4 text-slate-400" />
+                  <Download className="w-4 h-4 text-slate-400" />
                 </button>
               </div>
 
@@ -1236,7 +1239,7 @@ export const FoReservationsPage: React.FC = () => {
 
       {/* View Details Modal */}
       {viewDetailModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
             <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
               <h3 className="text-base font-bold">Reservation Details: {viewDetailModal.reservationId}</h3>

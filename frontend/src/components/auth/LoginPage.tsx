@@ -162,7 +162,7 @@ export const LoginPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => navigate('/hr-assistance')}
-                  className="w-full text-center text-xs text-white/40 hover:text-[#FFC629] transition-colors"
+                  className="w-full text-center text-xs text-white/40 transition-colors hover:text-hirna-yellow"
                 >
                   Contact HR Department
                 </button>

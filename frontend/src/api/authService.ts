@@ -52,6 +52,15 @@ export async function refreshToken(token: string): Promise<AuthTokenResponse> {
   return data.data;
 }
 
+export async function getCurrentUser(): Promise<User> {
+  const { data } = await apiClient.get('/auth/me');
+  const user = data?.data as User | undefined;
+  if (!user?.id || !user.email || !Array.isArray(user.assignedRoles)) {
+    throw new Error('The server returned an invalid session profile.');
+  }
+  return user;
+}
+
 export async function logout(): Promise<void> {
   try {
     await apiClient.post('/auth/logout', {

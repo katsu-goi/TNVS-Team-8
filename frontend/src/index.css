@@ -28,6 +28,12 @@
   --hirna-danger: #ef4444;
   --hirna-info: #3b82f6;
   --hirna-purple: #8b5cf6;
+  --radius-control: 0.75rem;
+  --radius-card: 1rem;
+  --radius-modal: 1.25rem;
+  --shadow-card: 0 2px 8px rgba(101, 24, 30, 0.05);
+  --shadow-card-hover: 0 6px 16px rgba(101, 24, 30, 0.07);
+  --shadow-modal: 0 24px 60px rgba(70, 10, 16, 0.22);
 }
 
 /* ── Theme-aware Leaflet World Map Container ──────────────────────────────── */
@@ -313,24 +319,24 @@ section {
 .glass-panel {
   background: var(--hirna-surface);
   border: 1px solid var(--hirna-border);
-  box-shadow: 0 2px 8px rgba(101, 24, 30, 0.05);
-  border-radius: 0.875rem;
+  box-shadow: var(--shadow-card);
+  border-radius: var(--radius-card);
   transition: box-shadow 200ms ease, border-color 200ms ease;
 }
 .glass-panel:hover {
-  box-shadow: 0 6px 16px rgba(101, 24, 30, 0.07);
+  box-shadow: var(--shadow-card-hover);
 }
 
 .glass-card {
   background: var(--hirna-surface);
   border: 1px solid var(--hirna-border);
-  box-shadow: 0 2px 8px rgba(101, 24, 30, 0.05);
-  border-radius: 0.875rem;
+  box-shadow: var(--shadow-card);
+  border-radius: var(--radius-card);
   transition: all 200ms ease, box-shadow 200ms ease, border-color 200ms ease;
 }
 .glass-card:hover {
   background: var(--hirna-surface-hover);
-  box-shadow: 0 6px 16px rgba(101, 24, 30, 0.07);
+  box-shadow: var(--shadow-card-hover);
   border-color: #e8bfc2;
 }
 
@@ -338,13 +344,13 @@ section {
 .card-stat {
   background: var(--hirna-surface);
   border: 1px solid var(--hirna-border);
-  box-shadow: 0 2px 8px rgba(101, 24, 30, 0.05);
-  border-radius: 0.875rem;
+  box-shadow: var(--shadow-card);
+  border-radius: var(--radius-card);
   transition: box-shadow 200ms ease, border-color 200ms ease;
 }
 .card-stat:hover {
   background: var(--hirna-surface-hover);
-  box-shadow: 0 6px 16px rgba(101, 24, 30, 0.07);
+  box-shadow: var(--shadow-card-hover);
   border-color: #e8bfc2;
 }
 
@@ -520,7 +526,7 @@ section {
   background: var(--hirna-surface-hover);
 }
 
-.hirna-app :where([role='dialog']) {
+.hirna-app :where([role='dialog']:not(.fixed)) {
   background-color: var(--hirna-surface);
   border-color: var(--hirna-border);
   border-radius: 1rem;

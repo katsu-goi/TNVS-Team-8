@@ -145,22 +145,24 @@ function notFound(message: string) {
 // ---------------------------------------------------------------------------
 
 async function loadRolesByUser(): Promise<Map<string, string[]>> {
-  const { data, error } = await db
+  const { data: links, error } = await db
     .from("user_roles")
-    .select("user_id, roles(name)");
+    .select("user_id, role_id");
   if (error) throw new Error(`user_roles load failed: ${error.message}`);
+  const roleIds = [...new Set((links ?? []).map((link) => String(link.role_id)))];
+  const { data: roles, error: rolesError } = roleIds.length
+    ? await db.from("roles").select("id, name").in("id", roleIds)
+    : { data: [], error: null };
+  if (rolesError) throw new Error(`roles load failed: ${rolesError.message}`);
+  const roleNames = new Map((roles ?? []).map((role) => [String(role.id), String(role.name)]));
   const map = new Map<string, string[]>();
-  for (const row of data ?? []) {
-    const r = row as { user_id: string; roles: unknown };
-    const rolesVal = Array.isArray(r.roles) ? r.roles : r.roles ? [r.roles] : [];
-    for (const role of rolesVal) {
-      const name = (role as { name?: string }).name;
-      if (name) {
-        const list = map.get(r.user_id) ?? [];
-        list.push(name);
-        map.set(r.user_id, list);
-      }
-    }
+  for (const link of links ?? []) {
+    const userId = String(link.user_id);
+    const name = roleNames.get(String(link.role_id));
+    if (!name) continue;
+    const list = map.get(userId) ?? [];
+    list.push(name);
+    map.set(userId, list);
   }
   return map;
 }
@@ -324,22 +326,16 @@ function parseOversightDuration(value: unknown): number {
 }
 
 async function assignedRolesForUser(userId: string): Promise<string[]> {
-  const { data, error } = await db
+  const { data: links, error } = await db
     .from("user_roles")
-    .select("roles(name)")
+    .select("role_id")
     .eq("user_id", userId);
   if (error) throw new Error(`target roles lookup failed: ${error.message}`);
-
-  const roles = new Set<string>();
-  for (const row of data ?? []) {
-    const related = (row as { roles: unknown }).roles;
-    const values = Array.isArray(related) ? related : related ? [related] : [];
-    for (const value of values) {
-      const name = (value as { name?: string }).name;
-      if (name) roles.add(name.toUpperCase());
-    }
-  }
-  return [...roles];
+  const roleIds = [...new Set((links ?? []).map((link) => String(link.role_id)))];
+  if (roleIds.length === 0) return [];
+  const { data: roles, error: rolesError } = await db.from("roles").select("name").in("id", roleIds);
+  if (rolesError) throw new Error(`target role names lookup failed: ${rolesError.message}`);
+  return [...new Set((roles ?? []).map((role) => String(role.name).toUpperCase()))];
 }
 
 async function oversightTarget(userId: string): Promise<OversightTargetRow | null> {

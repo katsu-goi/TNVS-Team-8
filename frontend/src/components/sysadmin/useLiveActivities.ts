@@ -126,7 +126,7 @@ export function useLiveActivities() {
         const kept = prev.filter(a => !a.id.startsWith('session-'));
         return [...seeds, ...kept].slice(0, 50);
       });
-    } catch (err) {
+    } catch {
       console.warn('[LiveActivity] initial presence request failed.');
     }
   }, [updateOnline]);
@@ -150,7 +150,7 @@ export function useLiveActivities() {
           return [...kept, ...recent].slice(0, 50);
         });
       }
-    } catch (err) {
+    } catch {
       console.warn('[LiveActivity] initial security-log request failed.');
     }
   }, []);

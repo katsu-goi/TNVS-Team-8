@@ -16,7 +16,7 @@ function allowedOrigins(): Set<string> {
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
-  return new Set([...DEFAULT_ALLOWED_ORIGINS, ...configured]);
+  return new Set(configured.length ? configured : DEFAULT_ALLOWED_ORIGINS);
 }
 
 export function isAllowedOrigin(origin: string | null): boolean {

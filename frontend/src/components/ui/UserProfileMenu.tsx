@@ -1,30 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { AlertTriangle, ChevronDown, LogOut, Settings, UserRound } from 'lucide-react';
+import { ChevronDown, LogOut, Settings, UserRound } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { logout as apiLogout } from '../../api/authService';
 import { useAuthStore } from '../../stores/authStore';
-
-const ROLE_LABELS: Record<string, string> = {
-  SUPER_ADMIN: 'Super Administrator',
-  FACILITIES_MANAGER: 'Facilities Manager',
-  FACILITIES_OFFICER: 'Facilities Officer',
-  COMPLIANCE_OFFICER: 'Compliance Officer',
-  LEGAL_OFFICER: 'Legal Officer',
-  CONTRACT_OFFICER: 'Contract Officer',
-  EMPLOYEE: 'Employee',
-  DATA_PROTECTION_OFFICER: 'Data Protection Officer',
-  LEGAL_COUNSEL: 'Legal Counsel',
-  RECORDS_OFFICER: 'Records Officer',
-  DEPARTMENT_HEAD: 'Department Head',
-  SECURITY_OFFICER: 'Security Officer',
-  INFOSEC_OFFICER: 'Information Security Officer',
-};
+import { getRolePresentation } from '../../config/roleRegistry';
+import { ConfirmDialog } from './SharedUI';
 
 export function formatRoleLabel(role?: string): string {
   if (!role) return 'User';
   const normalized = role.trim().toUpperCase().replace(/^ROLE_/, '');
-  if (ROLE_LABELS[normalized]) return ROLE_LABELS[normalized];
+  const configured = getRolePresentation(normalized);
+  if (configured) return configured.roleLabel;
   return normalized
     .toLowerCase()
     .split('_')
@@ -152,27 +138,16 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({ profilePath, s
         )}
       </div>
 
-      {showLogoutModal && createPortal(
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-          <div role="dialog" aria-modal="true" aria-labelledby="logout-title" className="w-full max-w-sm space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
-            <div className="flex items-center gap-3">
-              <div className="rounded-xl border border-red-100 bg-red-50 p-2.5 text-red-600"><AlertTriangle className="h-6 w-6" /></div>
-              <div>
-                <h3 id="logout-title" className="text-lg font-bold text-slate-900">Confirm Logout</h3>
-                <p className="text-xs text-slate-500">End your current session?</p>
-              </div>
-            </div>
-            <p className="text-sm leading-relaxed text-slate-600">Are you sure you want to log out of Hirna Portal?</p>
-            <div className="flex justify-end gap-3">
-              <button type="button" disabled={loggingOut} onClick={() => setShowLogoutModal(false)} className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-50 hover:text-slate-900 disabled:opacity-50">Cancel</button>
-              <button type="button" disabled={loggingOut} onClick={confirmLogout} className="rounded-xl bg-[#D02F34] px-4 py-2 text-xs font-semibold text-white hover:bg-[#A9252A] disabled:cursor-not-allowed disabled:opacity-60">
-                {loggingOut ? 'Logging out...' : 'Confirm Logout'}
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+      <ConfirmDialog
+        open={showLogoutModal}
+        title="Confirm logout"
+        description="Are you sure you want to end your current Hirna Portal session?"
+        confirmLabel="Log out"
+        tone="danger"
+        busy={loggingOut}
+        onClose={() => setShowLogoutModal(false)}
+        onConfirm={confirmLogout}
+      />
     </>
   );
 };

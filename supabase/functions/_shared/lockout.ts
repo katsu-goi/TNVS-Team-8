@@ -191,12 +191,11 @@ export async function writeSecurityLog(
   try {
     const db = adminDb();
     const agent = parseUserAgent(userAgent);
-    await db.from("security_logs").insert({
+    const { error } = await db.from("security_logs").insert({
       action,
       module: "AUTH",
       full_name: user ? `${user.row.first_name} ${user.row.last_name}` : null,
       role: user?.roles[0] ?? null,
-      username: user?.row.email ?? null,
       user_id: user?.row.id ?? null,
       ip_address: ipAddress ?? null,
       browser: agent.browser,
@@ -206,6 +205,7 @@ export async function writeSecurityLog(
       reason,
       timestamp: tzIso(),
     });
+    if (error) throw new Error(`security_logs insert failed: ${error.message}`);
   } catch (e) {
     console.error("security_logs insert threw:", (e as Error).message);
   }

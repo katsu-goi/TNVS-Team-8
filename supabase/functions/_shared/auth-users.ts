@@ -158,15 +158,27 @@ async function loadRolesFor(userId: string): Promise<RoleLoad> {
       return (leftIndex < 0 ? 1_000 : leftIndex) - (rightIndex < 0 ? 1_000 : rightIndex);
     })[0]?.dashboard_key ?? "employee";
 
-  const { data: permRows, error: permErr } = await db
+  const { data: permissionLinks, error: permissionLinkErr } = await db
     .from("role_permissions")
-    .select("permission:permissions(name)")
+    .select("permission_id")
     .in("role_id", [...effectiveRoleIds]);
-  if (permErr) throw new Error(`permissions lookup failed: ${permErr.message}`);
+  if (permissionLinkErr) throw new Error(`role permissions lookup failed: ${permissionLinkErr.message}`);
+
+  const permissionIds = [...new Set((permissionLinks ?? []).map((row) => row.permission_id as string))];
+  if (permissionIds.length === 0) {
+    return { assignedNames, effectiveNames, permissions: [], dashboardKey };
+  }
+
+  const { data: permissionRows, error: permissionErr } = await db
+    .from("permissions")
+    .select("name")
+    .in("id", permissionIds)
+    .eq("is_deleted", false);
+  if (permissionErr) throw new Error(`permissions lookup failed: ${permissionErr.message}`);
 
   const permissions = new Set<string>();
-  for (const row of permRows ?? []) {
-    const name = (row.permission as { name?: string } | null)?.name;
+  for (const row of permissionRows ?? []) {
+    const name = row.name as string | undefined;
     if (name) permissions.add(name);
   }
   return { assignedNames, effectiveNames, permissions: [...permissions], dashboardKey };

@@ -1,14 +1,15 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   AlertCircle, RefreshCw, FileText, FileSignature, Building2,
-  ScrollText, User, Settings, Filter, CheckCircle2, Trash2, Plus,
+  ScrollText, Filter, CheckCircle2, Trash2, Plus,
   X, BellRing, Bell, ShieldAlert, Ban, Gavel, Send, PlayCircle,
   RotateCcw, Pencil, ChevronRight, Gauge, CalendarClock,
 } from 'lucide-react';
 import { safeFetchJson } from '../../api/client';
 import { ContractAiPanel } from '../contracts/ContractAiPanel';
+import { Modal as SharedModal } from '../ui/SharedUI';
 
-// POST/PUT helper that surfaces failure (safeFetchJson returns null on error).
+// POST/PUT helper that preserves the API envelope and propagates failures.
 const mutate = async (url: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown) => {
   const json = await safeFetchJson(url, {
     method,
@@ -37,7 +38,7 @@ const ErrorState: React.FC<{ message: string; onRetry: () => void }> = ({ messag
   <div className="card-stat p-8 flex flex-col items-center justify-center text-center space-y-3">
     <AlertCircle className="w-10 h-10 text-rose-400" />
     <p className="text-sm text-slate-600">{message}</p>
-    <button onClick={onRetry} className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold inline-flex items-center space-x-2">
+    <button type="button" onClick={onRetry} className="inline-flex items-center space-x-2 rounded-xl bg-brand-500 px-4 py-2 text-xs font-semibold text-white hover:bg-brand-700">
       <RefreshCw className="w-4 h-4" /><span>Retry</span>
     </button>
   </div>
@@ -179,19 +180,8 @@ const VENDOR_CATEGORIES = ['IT_SERVICES', 'FACILITIES', 'PROFESSIONAL_SERVICES',
 const VENDOR_STATUSES = ['ACTIVE', 'INACTIVE', 'SUSPENDED', 'PENDING_APPROVAL'];
 const OBLIGATION_STATUSES = ['PENDING', 'IN_PROGRESS', 'COMPLETED', 'OVERDUE'];
 
-const Modal: React.FC<{ title: string; icon: React.ElementType; onClose: () => void; children: React.ReactNode; wide?: boolean }> = ({ title, icon: Icon, onClose, children, wide }) => (
-  <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4" onClick={onClose}>
-    <div className={`bg-white rounded-2xl shadow-xl w-full ${wide ? 'max-w-2xl' : 'max-w-md'} p-6 space-y-4 max-h-[90vh] overflow-y-auto`} onClick={e => e.stopPropagation()}>
-      <div className="flex items-start justify-between">
-        <div className="flex items-center space-x-2">
-          <div className="p-2 rounded-xl bg-emerald-50 border border-emerald-100"><Icon className="w-4 h-4 text-emerald-500" /></div>
-          <h3 className="text-sm font-bold text-slate-900">{title}</h3>
-        </div>
-        <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
-      </div>
-      {children}
-    </div>
-  </div>
+const Modal: React.FC<{ title: string; icon: React.ElementType; onClose: () => void; children: React.ReactNode; wide?: boolean }> = ({ title, onClose, children, wide }) => (
+  <SharedModal open title={title} onClose={onClose} size={wide ? 'lg' : 'md'}>{children}</SharedModal>
 );
 
 // ============================================================= Contracts
@@ -472,7 +462,7 @@ const ContractDetailDrawer: React.FC<{ contract: any; onClose: () => void; onCha
   const clauses: any[] = full?.clauses ?? [];
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-slate-900/40 backdrop-blur-sm" onClick={onClose}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-40 flex justify-end bg-slate-900/40 backdrop-blur-sm" onClick={onClose}>
       <div className="bg-white w-full max-w-lg h-full overflow-y-auto p-6 space-y-5 shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between">
           <div>
@@ -876,7 +866,7 @@ const VendorDetailDrawer: React.FC<{ vendor: any; onClose: () => void; onChanged
   const contracts: any[] = full?.contracts ?? [];
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-slate-900/40 backdrop-blur-sm" onClick={onClose}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-40 flex justify-end bg-slate-900/40 backdrop-blur-sm" onClick={onClose}>
       <div className="bg-white w-full max-w-lg h-full overflow-y-auto p-6 space-y-5 shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between">
           <div>
@@ -1422,29 +1412,3 @@ export const PoAuditLogsPage: React.FC = () => {
     </div>
   );
 };
-
-// ============================================================= Profile / Settings
-
-export const PoProfilePage: React.FC = () => (
-  <div className="space-y-6">
-    <div className="glass-panel p-5">
-      <div>
-        <h2 className="text-lg font-bold text-slate-900">Profile</h2>
-        <p className="text-xs text-slate-500">Contract Officer account</p>
-      </div>
-    </div>
-    <EmptyState icon={User} title="Profile Settings" desc="Profile management will be available via TEAM 1 - Human Resource Management integration." />
-  </div>
-);
-
-export const PoSettingsPage: React.FC = () => (
-  <div className="space-y-6">
-    <div className="glass-panel p-5">
-      <div>
-        <h2 className="text-lg font-bold text-slate-900">Settings</h2>
-        <p className="text-xs text-slate-500">Contract Officer account and module preferences</p>
-      </div>
-    </div>
-    <EmptyState icon={Settings} title="Settings" desc="Account and module settings will be available via TEAM 1 - Human Resource Management integration." />
-  </div>
-);
