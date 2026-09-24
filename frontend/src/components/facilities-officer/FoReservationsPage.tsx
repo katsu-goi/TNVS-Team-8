@@ -402,7 +402,7 @@ export const FoReservationsPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header Banner & Governance Notice */}
-      <div className="glass-panel p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="dashboard-hero flex-col md:flex-row md:items-center">
         <div>
           <div className="flex items-center space-x-2">
             <Building2 className="w-6 h-6 text-emerald-600" />

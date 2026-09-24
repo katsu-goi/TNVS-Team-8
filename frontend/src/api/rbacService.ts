@@ -40,7 +40,10 @@ export interface RbacDashboardProfile {
 
 export interface RbacUser {
   id: string;
+  employeeId?: string;
   email: string;
+  firstName?: string;
+  lastName?: string;
   fullName: string;
   department?: string;
   position?: string;
@@ -48,6 +51,17 @@ export interface RbacUser {
   roles: string[];
   accountLocked?: boolean;
   lockedUntil?: string | null;
+}
+
+export interface AccountInput {
+  firstName: string;
+  lastName: string;
+  email: string;
+  employeeId?: string;
+  department?: string;
+  position?: string;
+  status?: 'ACTIVE' | 'INACTIVE';
+  password?: string;
 }
 
 function dataOf<T>(response: { data?: { data?: T } }): T {
@@ -93,5 +107,11 @@ export const rbacService = {
   },
   async unlockUser(userId: string): Promise<void> {
     await apiClient.post(`/admin/users/${userId}/unlock`);
+  },
+  async createUser(input: AccountInput & { password: string }): Promise<RbacUser> {
+    return dataOf<RbacUser>(await apiClient.post('/admin/users', input));
+  },
+  async updateUser(userId: string, input: AccountInput): Promise<RbacUser> {
+    return dataOf<RbacUser>(await apiClient.patch(`/admin/users/${userId}`, input));
   },
 };

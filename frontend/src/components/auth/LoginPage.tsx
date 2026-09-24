@@ -127,7 +127,7 @@ export const LoginPage: React.FC = () => {
               <h1 className="text-lg font-bold text-white tracking-tight">Hirna Portal</h1>
               <p className="text-[10px] text-[#FFC629] font-medium tracking-widest uppercase">Enterprise</p>
               <h2 className="text-3xl font-bold text-white tracking-tight mt-3 leading-tight">Welcome back</h2>
-              <p className="text-sm text-white/50 leading-relaxed mt-2 max-w-xs">Sign in to your account to continue.</p>
+              <p className="text-sm text-white/70 leading-relaxed mt-2 max-w-xs">Sign in to your account to continue.</p>
             </div>
 
             {locked ? (
@@ -165,7 +165,7 @@ export const LoginPage: React.FC = () => {
                     aria-describedby={fieldErrors.email ? 'login-email-error' : undefined}
                     placeholder="admin@photonicomega.com"
                     autoComplete="username"
-                    className={`w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white/10 text-white placeholder-white/40 text-sm focus:outline-none focus:ring-2 focus:ring-[#D02F34] focus:border-transparent transition-shadow disabled:opacity-60 disabled:cursor-not-allowed ${fieldErrors.email ? 'border-rose-400' : 'border-white/15'}`}
+                    className={`w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white/10 text-white placeholder-white/60 text-sm focus:outline-none focus:ring-2 focus:ring-[#D02F34] focus:border-transparent transition-shadow disabled:opacity-60 disabled:cursor-not-allowed ${fieldErrors.email ? 'border-rose-400' : 'border-white/15'}`}
                   />
                 </div>
                 {fieldErrors.email ? <p id="login-email-error" className="mt-1.5 text-xs font-medium text-rose-300">{fieldErrors.email}</p> : null}
@@ -194,7 +194,7 @@ export const LoginPage: React.FC = () => {
                     ].filter(Boolean).join(' ') || undefined}
                     placeholder="••••••••••••"
                     autoComplete="current-password"
-                    className={`w-full pl-4 pr-10 py-2.5 rounded-xl border bg-white/10 text-white placeholder-white/30 text-sm focus:outline-none focus:ring-2 focus:ring-[#D02F34] focus:border-transparent transition-shadow disabled:opacity-60 disabled:cursor-not-allowed ${fieldErrors.password ? 'border-rose-400' : 'border-white/15'}`}
+                    className={`w-full pl-4 pr-10 py-2.5 rounded-xl border bg-white/10 text-white placeholder-white/60 text-sm focus:outline-none focus:ring-2 focus:ring-[#D02F34] focus:border-transparent transition-shadow disabled:opacity-60 disabled:cursor-not-allowed ${fieldErrors.password ? 'border-rose-400' : 'border-white/15'}`}
                   />
                   <button type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'} className="absolute inset-y-0 right-0 pr-3 flex items-center text-white/50 hover:text-white">
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}

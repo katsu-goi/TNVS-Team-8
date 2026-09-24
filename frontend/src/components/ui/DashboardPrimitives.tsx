@@ -4,16 +4,18 @@ import { ChevronRight } from 'lucide-react';
 type DashboardHeroProps = {
   title: string;
   subtitle: string;
+  eyebrow?: string;
   actions?: React.ReactNode;
 };
 
-export const DashboardHero: React.FC<DashboardHeroProps> = ({ title, subtitle, actions }) => (
+export const DashboardHero: React.FC<DashboardHeroProps> = ({ title, subtitle, eyebrow, actions }) => (
   <section className="dashboard-hero">
     <div className="min-w-0">
+      {eyebrow && <p className="hero-eyebrow text-xs font-bold uppercase tracking-wider">{eyebrow}</p>}
       <h1 className="font-heading text-[34px] font-extrabold leading-tight">{title}</h1>
       <p className="mt-1 text-sm">{subtitle}</p>
     </div>
-    {actions && <div className="flex shrink-0 items-center gap-3">{actions}</div>}
+    {actions && <div className="flex shrink-0 flex-wrap items-center gap-3">{actions}</div>}
   </section>
 );
 

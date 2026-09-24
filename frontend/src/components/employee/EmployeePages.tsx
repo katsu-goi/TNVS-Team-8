@@ -9,6 +9,7 @@ import { employeeService } from '../../api/employeeService';
 import { DocumentUploadPanel } from '../documents/DocumentUploadPanel';
 import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
 import { ConfirmDialog, Modal as SharedModal } from '../ui/SharedUI';
+import { DashboardHero } from '../ui/DashboardPrimitives';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -127,13 +128,7 @@ const fmtDateTime = (v?: string) => {
 };
 
 const PageHeader: React.FC<{ title: string; subtitle: string; action?: React.ReactNode }> = ({ title, subtitle, action }) => (
-  <div className="glass-panel p-5 flex items-center justify-between">
-    <div>
-      <h1 className="text-2xl font-extrabold font-heading text-slate-900 leading-tight">{title}</h1>
-      <p className="text-slate-500 text-sm mt-1">{subtitle}</p>
-    </div>
-    {action}
-  </div>
+  <DashboardHero title={title} subtitle={subtitle} actions={action} />
 );
 
 const Modal: React.FC<{ title: string; onClose: () => void; children: React.ReactNode }> = ({ title, onClose, children }) => (

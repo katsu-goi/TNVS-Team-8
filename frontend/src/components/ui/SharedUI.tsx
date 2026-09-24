@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
-import { AlertCircle, Inbox, Loader2, X } from 'lucide-react';
+import { AlertCircle, Eye, EyeOff, Inbox, Loader2, X } from 'lucide-react';
+import { DashboardHero } from './DashboardPrimitives';
 
 const join = (...values: Array<string | undefined | false>) => values.filter(Boolean).join(' ');
 
@@ -13,14 +14,7 @@ export const PageHeader: React.FC<{
   eyebrow?: string;
   actions?: React.ReactNode;
 }> = ({ title, description, eyebrow, actions }) => (
-  <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-    <div className="min-w-0">
-      {eyebrow && <p className="text-xs font-bold uppercase tracking-wider text-brand-600">{eyebrow}</p>}
-      <h1 className="font-heading text-2xl font-bold text-slate-950 sm:text-3xl">{title}</h1>
-      {description && <p className="mt-1 max-w-3xl text-sm text-slate-500">{description}</p>}
-    </div>
-    {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
-  </header>
+  <DashboardHero title={title} subtitle={description || ''} eyebrow={eyebrow} actions={actions} />
 );
 
 export const Card: React.FC<React.HTMLAttributes<HTMLElement>> = ({ className, ...props }) => (
@@ -70,6 +64,32 @@ export const FormField: React.FC<React.InputHTMLAttributes<HTMLInputElement> & {
   const descriptorId = useId();
   return <FieldShell label={label} required={required} error={error} hint={hint} descriptorId={descriptorId}>
     <input required={required} aria-invalid={Boolean(error)} aria-describedby={error || hint ? descriptorId : undefined} className={join(fieldClass, className)} {...props} />
+  </FieldShell>;
+};
+
+export const PasswordField: React.FC<React.InputHTMLAttributes<HTMLInputElement> & { label: string; error?: string; hint?: string }> = ({ label, error, hint, required, className, ...props }) => {
+  const descriptorId = useId();
+  const [visible, setVisible] = useState(false);
+  return <FieldShell label={label} required={required} error={error} hint={hint} descriptorId={descriptorId}>
+    <span className="relative block">
+      <input
+        required={required}
+        type={visible ? 'text' : 'password'}
+        aria-invalid={Boolean(error)}
+        aria-describedby={error || hint ? descriptorId : undefined}
+        className={join(fieldClass, 'pr-11', className)}
+        {...props}
+      />
+      <button
+        type="button"
+        onClick={() => setVisible((current) => !current)}
+        className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-control text-slate-600 hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500/25 disabled:text-slate-500"
+        aria-label={visible ? 'Hide password' : 'Show password'}
+        disabled={props.disabled}
+      >
+        {visible ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
+      </button>
+    </span>
   </FieldShell>;
 };
 

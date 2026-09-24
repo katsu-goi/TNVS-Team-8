@@ -9,7 +9,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
 } from 'recharts';
-import { DashboardMetricCard as KpiCard } from '../ui/DashboardPrimitives';
+import { DashboardHero, DashboardMetricCard as KpiCard } from '../ui/DashboardPrimitives';
 
 const QuickActionCard: React.FC<{ label: string; desc: string; icon: React.ElementType; onClick?: () => void }> = ({ label, desc, icon: Icon, onClick }) => (
   <button onClick={onClick} className="card-stat p-4 text-left w-full cursor-pointer hover:border-emerald-300 hover:shadow-md transition-all group flex items-start space-x-3">
@@ -93,12 +93,8 @@ export const FacilitiesOfficerDashboard: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="dashboard-hero">
-        <div>
-          <h1 className="text-[34px] font-extrabold font-heading text-slate-900 leading-tight">Facilities Officer</h1>
-          <p className="text-slate-500 text-sm mt-1">Daily Facilities Operations &amp; Scheduling</p>
-        </div>
-        <div className="flex items-center space-x-3">
+      <DashboardHero title="Facilities Officer" subtitle="Daily Facilities Operations & Scheduling" actions={
+        <>
           <div className="flex items-center px-3 py-1.5 rounded-lg border bg-emerald-50 border-emerald-200">
             <Activity className="w-4 h-4 mr-2 text-emerald-600" />
             <span className="text-xs font-mono font-semibold text-emerald-600">ONLINE</span>
@@ -106,8 +102,8 @@ export const FacilitiesOfficerDashboard: React.FC = () => {
           <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition text-slate-400 hover:text-slate-700" title="Refresh">
             <RefreshCw className="w-4 h-4" />
           </button>
-        </div>
-      </div>
+        </>
+      } />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <KpiCard label="Today's Reservations" value={kpi.todaysReservations ?? 0} icon={Calendar} color={(kpi.todaysReservations ?? 0) > 0 ? 'text-emerald-600' : 'text-slate-400'} sub="Scheduled today" onClick={() => navigate('/facilities-officer/reservations')} />

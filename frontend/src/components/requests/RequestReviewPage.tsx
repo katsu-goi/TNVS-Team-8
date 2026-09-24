@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, XCircle, CheckCheck, Loader2, FileSignature } from 'lucide-react';
 import { requestReviewService, ReviewableRequest } from '../../api/requestReviewService';
 import { ReasonDialog } from '../ui/SharedUI';
+import { DashboardHero } from '../ui/DashboardPrimitives';
 
 /**
  * Shared review page for employee contract/legal requests, used by Contract
@@ -54,11 +55,8 @@ export const RequestReviewPage: React.FC = () => {
 
   return (
     <div className="p-8">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-heading font-bold text-slate-900">Request Review</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Approve, reject or complete employee contract/legal requests. Decisions notify the requester instantly.</p>
-        </div>
+      <div className="mb-6">
+        <DashboardHero title="Request Review" subtitle="Approve, reject or complete employee contract/legal requests. Decisions notify the requester instantly." actions={
         <button
           type="button"
           onClick={load}
@@ -66,6 +64,7 @@ export const RequestReviewPage: React.FC = () => {
         >
           Refresh
         </button>
+        } />
       </div>
 
       {error && (

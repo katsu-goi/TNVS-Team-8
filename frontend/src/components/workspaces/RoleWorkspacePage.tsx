@@ -11,6 +11,7 @@ import {
   CoDocumentsPage, CoRetentionPoliciesPage, CoAuditLogsPage,
 } from '../compliance/ComplianceOfficerPages';
 import { EmptyState, LoadingState, ReasonDialog } from '../ui/SharedUI';
+import { DashboardHero } from '../ui/DashboardPrimitives';
 import type { WorkspaceConfig } from './workspaceConfig';
 
 const toneClass = {
@@ -167,21 +168,14 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
 
   return (
     <div className="space-y-6">
-      <section className="dashboard-hero">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="hero-eyebrow text-xs font-bold uppercase tracking-wider text-hirna-yellow">{config.portalLabel}</p>
-            <h1 className="mt-1 text-3xl font-bold text-slate-950">{item.label}</h1>
-            <p className="mt-1 text-sm text-slate-400">{config.description}</p>
-          </div>
-          <div className="flex gap-2">
+      <DashboardHero eyebrow={config.portalLabel} title={item.label} subtitle={config.description} actions={
+          <>
             {config.slug === 'privacy' && section === 'retention' && (
               <button onClick={() => perform('retention', async () => { await governanceService.runRetention(); })} className="rounded-control bg-brand-500 px-4 py-2 text-xs font-bold text-white hover:bg-brand-700">Run Retention Enforcement</button>
             )}
             <button onClick={load} title="Refresh" className="rounded-lg border border-slate-300 bg-white p-2 text-slate-600 hover:bg-slate-50"><RefreshCw className="h-4 w-4" /></button>
-          </div>
-        </div>
-      </section>
+          </>
+      } />
 
       {error && (
         <div className="flex items-center gap-3 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">

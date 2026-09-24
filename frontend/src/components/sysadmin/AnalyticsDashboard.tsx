@@ -87,7 +87,7 @@ export const AnalyticsPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="glass-panel p-5">
+      <div className="dashboard-hero block">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex items-center gap-3"><span className="rounded-xl border border-emerald-200 bg-emerald-50 p-2.5"><Activity className="h-5 w-5 text-emerald-600" /></span><div><h1 className="text-2xl font-bold text-slate-900">System Operational Analytics</h1><p className="text-sm text-slate-500">Technical health only · Asia/Manila display · UTC persistence</p></div></div>
           <div className="flex flex-wrap items-center gap-2">

@@ -546,7 +546,7 @@ export const AiServicesPage: React.FC = () => {
       )}
 
       {/* HEADER SECTION */}
-      <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="dashboard-hero flex-col md:flex-row md:items-center">
         <div className="flex items-center space-x-4">
           <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-100 shadow-inner">
             <Cpu className="w-7 h-7 text-emerald-600" />

@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, FileWarning, Loader2, RefreshCw, Scale, Shie
 import { extractErrorMessage } from '../../api/client';
 import { governanceService, RetentionDisposalQueueItem } from '../../api/governanceService';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
+import { DashboardHero } from '../ui/DashboardPrimitives';
 
 const formatDateTime = (value: string) => {
   const date = new Date(value);
@@ -86,18 +87,11 @@ export const RecordsDisposalConsole: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <header className="border-b border-slate-200 pb-5">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-[#D02F34]">Records Governance</p>
-            <h1 className="mt-1 text-2xl font-bold text-slate-950">Lifecycle &amp; Defensible Disposal</h1>
-            <p className="mt-2 max-w-3xl text-sm text-slate-500">Review retention items flagged by the cloud disposal scheduler before recording a final decision.</p>
-          </div>
+      <DashboardHero eyebrow="Records Governance" title="Lifecycle & Defensible Disposal" subtitle="Review retention items flagged by the cloud disposal scheduler before recording a final decision." actions={
           <button onClick={() => void load()} title="Refresh disposal queue" aria-label="Refresh disposal queue" className="rounded-lg border border-slate-300 bg-white p-2 text-slate-600 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60" disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
-        </div>
-      </header>
+      } />
 
       {feedback && <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800"><CheckCircle2 className="h-5 w-5 shrink-0" />{feedback}</div>}
       {error && <div className="flex items-center gap-3 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700"><AlertCircle className="h-5 w-5 shrink-0" />{error}</div>}

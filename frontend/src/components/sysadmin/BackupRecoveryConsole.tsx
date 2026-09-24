@@ -249,7 +249,7 @@ export const BackupRecoveryConsole: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 border border-slate-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="dashboard-hero flex-col sm:flex-row sm:items-center">
         <div className="flex items-start gap-3">
           <div className="rounded-lg bg-red-50 p-2.5 text-red-700">
             <Database className="h-5 w-5" />

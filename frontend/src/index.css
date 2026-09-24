@@ -22,7 +22,10 @@
   --hirna-border: #f1dada;
   --hirna-header: #1d2027;
   --hirna-text: #171a21;
-  --hirna-text-muted: #64748b;
+  --hirna-text-muted: #475569;
+  --hirna-text-subtle: #475569;
+  --hirna-placeholder: #64748b;
+  --hirna-disabled-text: #475569;
   --hirna-success: #10b981;
   --hirna-warning: #f59e0b;
   --hirna-danger: #ef4444;
@@ -494,6 +497,41 @@ section {
   background-color: var(--hirna-surface);
   border-color: #dfc9cb;
   border-radius: 0.75rem;
+  color: var(--hirna-text);
+}
+
+.hirna-app :where(select option) {
+  background-color: #fffdfd;
+  color: #171a21;
+}
+
+.hirna-app :where(input, textarea)::placeholder {
+  color: var(--hirna-placeholder);
+  opacity: 1;
+}
+
+.hirna-app :where(input:not([type='checkbox']):not([type='radio']), select, textarea):disabled,
+.hirna-app :where(input:not([type='checkbox']):not([type='radio']), select, textarea)[readonly] {
+  background-color: #f1f5f9;
+  color: var(--hirna-disabled-text);
+  opacity: 1;
+  -webkit-text-fill-color: var(--hirna-disabled-text);
+}
+
+/* Slate 300/400 is decorative on white, but not readable for small user-facing
+   copy. Raise textual uses to WCAG-AA slate while leaving icon color utilities
+   available for non-text decoration. */
+.hirna-app :where(p, span, div, label, dt, dd, th, td, li).text-slate-300,
+.hirna-app :where(p, span, div, label, dt, dd, th, td, li).text-slate-400 {
+  color: var(--hirna-text-subtle);
+}
+
+.hirna-app :where(.bg-slate-800, .bg-slate-900, .bg-slate-950, .bg-surface-primary, .bg-surface-secondary, .bg-surface-tertiary) :where(.text-slate-300, .text-slate-400) {
+  color: #cbd5e1;
+}
+
+.hirna-app button:disabled {
+  opacity: 0.65;
 }
 
 .hirna-app :where(input:not([type='checkbox']):not([type='radio']), select, textarea):focus {

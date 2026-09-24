@@ -90,7 +90,7 @@ export const HRAssistancePage: React.FC = () => {
               <h1 className="text-lg font-bold text-white tracking-tight">Hirna Portal</h1>
               <p className="text-[10px] text-[#FFC629] font-medium tracking-widest uppercase">Enterprise</p>
               <h2 className="text-2xl font-bold text-white tracking-tight mt-3 leading-tight">HR Department</h2>
-              <p className="text-sm text-white/50 leading-relaxed mt-2 max-w-xs">
+              <p className="text-sm text-white/70 leading-relaxed mt-2 max-w-xs">
                 Request assistance with account access or password recovery. The HR Department will contact you shortly.
               </p>
             </div>
@@ -128,11 +128,11 @@ export const HRAssistancePage: React.FC = () => {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-white/80 mb-1.5">Corporate email</label>
-                    <input type="email" value={email} onChange={(e) => handleEmailChange(e.target.value)} placeholder="employee@photonicomega.com" autoComplete="email" className="w-full px-4 py-2.5 rounded-xl border border-white/15 bg-white/10 text-white placeholder-white/40 text-sm focus:outline-none focus:ring-2 focus:ring-[#D02F34] focus:border-transparent transition-shadow" />
+                    <input type="email" value={email} onChange={(e) => handleEmailChange(e.target.value)} placeholder="employee@photonicomega.com" autoComplete="email" className="w-full px-4 py-2.5 rounded-xl border border-white/15 bg-white/10 text-white placeholder-white/60 text-sm focus:outline-none focus:ring-2 focus:ring-[#D02F34] focus:border-transparent transition-shadow" />
                     {emailError ? (
                       <p className="mt-1.5 text-[11px] text-rose-300">{emailError}</p>
                     ) : (
-                      <p className="mt-1.5 text-[11px] text-white/40">Personal email providers (e.g. @gmail.com) are not accepted. Use your corporate email.</p>
+                      <p className="mt-1.5 text-[11px] text-white/70">Personal email providers (e.g. @gmail.com) are not accepted. Use your corporate email.</p>
                     )}
                   </div>
                   <div>
