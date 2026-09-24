@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { GitBranch, LockKeyhole, Plus, RefreshCw, Save, ShieldAlert, UnlockKeyhole, UsersRound } from 'lucide-react';
 import { extractErrorMessage } from '../../api/client';
 import {
+  getAccountUpdateErrorMessage,
   rbacService,
   RbacConflict,
   RbacPermission,
@@ -47,8 +48,8 @@ export const RbacAdminPage: React.FC = () => {
   const [createAccount, setCreateAccount] = useState<AccountForm>(emptyAccountForm);
   const [editAccount, setEditAccount] = useState<AccountForm>(emptyAccountForm);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (showPageLoading = true) => {
+    if (showPageLoading) setLoading(true);
     setError('');
     try {
       const [nextUsers, nextRoles, nextPermissions, nextConflicts] = await Promise.all([
@@ -68,7 +69,7 @@ export const RbacAdminPage: React.FC = () => {
     } catch (reason) {
       setError(extractErrorMessage(reason));
     } finally {
-      setLoading(false);
+      if (showPageLoading) setLoading(false);
     }
   }, []);
 
@@ -93,17 +94,21 @@ export const RbacAdminPage: React.FC = () => {
     });
   }, [selectedUser]);
 
-  const mutate = async (operation: () => Promise<void>, successMessage: string) => {
+  const mutate = async (
+    operation: () => Promise<void>,
+    successMessage: string,
+    errorMessage: (reason: unknown) => string = extractErrorMessage,
+  ) => {
     setSaving(true);
     setError('');
     setMessage('');
     try {
       await operation();
       setMessage(successMessage);
-      await load();
+      await load(false);
       return true;
     } catch (reason) {
-      setError(extractErrorMessage(reason));
+      setError(errorMessage(reason));
       return false;
     } finally {
       setSaving(false);
@@ -123,12 +128,15 @@ export const RbacAdminPage: React.FC = () => {
   };
 
   const saveSelectedAccount = async () => {
-    if (!selectedUser) return;
+    if (!selectedUser || saving) return;
     const payload = { ...editAccount };
     if (!payload.password) delete (payload as Partial<AccountForm>).password;
-    await mutate(() => rbacService.updateUser(selectedUser.id, payload).then(() => undefined),
-      payload.password ? 'Account and password updated. Existing sessions were revoked.' : 'Account details updated.');
-    setEditAccount((current) => ({ ...current, password: '' }));
+    const saved = await mutate(
+      () => rbacService.updateUser(selectedUser.id, payload).then(() => undefined),
+      payload.password ? 'Password updated. Existing sessions were revoked.' : 'Account updated successfully.',
+      getAccountUpdateErrorMessage,
+    );
+    if (saved) setEditAccount((current) => ({ ...current, password: '' }));
   };
 
   if (loading) {
@@ -139,7 +147,7 @@ export const RbacAdminPage: React.FC = () => {
     <div className="space-y-6">
       <DashboardHero title="RBAC3 Administration" subtitle="Account credentials, role hierarchy, permissions, and Separation of Duties." eyebrow="Super Administrator" actions={<>
         <button onClick={() => setShowCreateAccount(true)} className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold"><Plus className="h-4 w-4" />Create account</button>
-        <button onClick={load} className="rounded-xl border p-2" title="Refresh"><RefreshCw className="h-4 w-4" /></button>
+        <button onClick={() => void load()} className="rounded-xl border p-2" title="Refresh"><RefreshCw className="h-4 w-4" /></button>
       </>} />
 
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>}

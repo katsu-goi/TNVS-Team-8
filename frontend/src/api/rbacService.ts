@@ -1,4 +1,5 @@
 import { apiClient } from './client';
+import axios from 'axios';
 
 export interface RbacRole {
   id: string;
@@ -68,6 +69,16 @@ function dataOf<T>(response: { data?: { data?: T } }): T {
   return response.data?.data as T;
 }
 
+export function getAccountUpdateErrorMessage(error: unknown): string {
+  const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+  if (status === 400) return 'Please check the account information.';
+  if (status === 401) return 'Your session has expired. Please sign in again.';
+  if (status === 403) return 'You do not have permission to modify this account.';
+  if (status === 404) return 'User account not found.';
+  if (status === 409) return 'An account with this email already exists.';
+  return 'Unable to update the account right now. Please try again.';
+}
+
 export const rbacService = {
   async getDashboard(): Promise<RbacDashboardProfile> {
     return dataOf<RbacDashboardProfile>(await apiClient.get('/rbac/me/dashboard'));
@@ -112,6 +123,8 @@ export const rbacService = {
     return dataOf<RbacUser>(await apiClient.post('/admin/users', input));
   },
   async updateUser(userId: string, input: AccountInput): Promise<RbacUser> {
-    return dataOf<RbacUser>(await apiClient.patch(`/admin/users/${userId}`, input));
+    const payload = { ...input };
+    if (!payload.password) delete payload.password;
+    return dataOf<RbacUser>(await apiClient.patch(`/admin/users/${userId}`, payload));
   },
 };

@@ -6,6 +6,7 @@ import { writeAudit } from "../_shared/lockout.ts";
 import { resolveClientIp } from "../_shared/ip.ts";
 import { findUserById } from "../_shared/auth-users.ts";
 import { hashPassword } from "../_shared/password.ts";
+import { ACCOUNT_UPDATE_ALLOWED_ROLES, prepareAccountUpdate } from "./account-update-policy.ts";
 import {
   assignedRoleIds,
   findConflict,
@@ -410,36 +411,22 @@ async function handleCreateUser(ctx: AuthContext | null, req: Request, body: unk
 
 async function handleUpdateUser(ctx: AuthContext | null, req: Request, body: unknown, p: RouteParams) {
   const existing = await rbacUser(p.id);
-  if (!existing) return notFound("User not found");
-  const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
-  const errors: string[] = [];
-  const fields: Record<string, unknown> = { updated_by: ctx!.email, updated_at: nowIso() };
-  const mappings = [["firstName", "first_name"], ["lastName", "last_name"], ["employeeId", "employee_id"], ["department", "department"], ["position", "position"]] as const;
-  for (const [inputKey, column] of mappings) {
-    if (!(inputKey in b)) continue;
-    const value = optionalText(b, inputKey);
-    if ((inputKey === "firstName" || inputKey === "lastName") && !value) errors.push(`${inputKey === "firstName" ? "First" : "Last"} name is required`);
-    fields[column] = value;
+  if (!existing) return notFound("User account not found.");
+  const policy = prepareAccountUpdate(existing, ctx!.userId, body, ctx!.email, nowIso());
+  if (!policy.ok) return jsonResponse(fail("Validation failed", "VALIDATION_ERROR", policy.errors), 400);
+  const { fields, password, credentialsChanged, changedFields } = policy.update;
+
+  if (typeof fields.email === "string" && fields.email !== existing.email) {
+    const { data: duplicate, error: duplicateError } = await db.from("users")
+      .select("id").eq("email", fields.email).eq("is_deleted", false).neq("id", p.id).maybeSingle();
+    if (duplicateError) throw new Error(`email uniqueness check failed: ${duplicateError.message}`);
+    if (duplicate) {
+      return jsonResponse(fail("An account with this email already exists.", "CONFLICT"), 409);
+    }
   }
-  if ("email" in b) {
-    const email = typeof b.email === "string" ? b.email.trim().toLowerCase() : "";
-    if (!EMAIL_PATTERN.test(email)) errors.push("Enter a valid email address");
-    else fields.email = email;
-  }
-  if ("status" in b) {
-    if (b.status !== "ACTIVE" && b.status !== "INACTIVE") errors.push("Status must be ACTIVE or INACTIVE");
-    else if (p.id === ctx!.userId && b.status === "INACTIVE") errors.push("You cannot deactivate your own administrator account");
-    else fields.status = b.status;
-  }
-  const password = typeof b.password === "string" ? b.password : "";
-  validatePassword(password, false, errors);
-  if (errors.length) return jsonResponse(fail("Validation failed", "VALIDATION_ERROR", errors), 400);
+
   if (password) {
     fields.password_hash = await hashPassword(password);
-    fields.auth_version = (existing.auth_version ?? 0) + 1;
-    fields.failed_login_attempts = 0;
-    fields.last_failed_attempt_at = null;
-    fields.locked_until = null;
   }
 
   const { error } = await db.from("users").update(fields).eq("id", p.id).eq("is_deleted", false);
@@ -447,16 +434,9 @@ async function handleUpdateUser(ctx: AuthContext | null, req: Request, body: unk
     if (error.code === "23505") return jsonResponse(fail("An account with that email or employee ID already exists", "CONFLICT"), 409);
     throw new Error(`user update failed: ${error.message}`);
   }
-  const credentialsChanged = Boolean(password) ||
-    (typeof fields.email === "string" && fields.email !== existing.email) ||
-    (typeof fields.status === "string" && fields.status !== existing.status);
-  if (!password && typeof fields.email === "string" && fields.email !== existing.email) {
-    const { error: versionError } = await db.from("users").update({ auth_version: (existing.auth_version ?? 0) + 1 }).eq("id", p.id);
-    if (versionError) throw new Error(`session version update failed: ${versionError.message}`);
-  }
-  if (credentialsChanged) await revokeUserRefreshTokens(p.id);
-  await writeAudit(ctx!.user, password ? "USER_CREDENTIALS_UPDATED" : "USER_UPDATED", "ADMIN", "User", p.id,
-    password ? `Updated account details and set a new password for ${String(fields.email ?? existing.email)}` : `Updated account ${String(fields.email ?? existing.email)}`,
+  if (credentialsChanged) await revokeUserCredentialSessions(p.id);
+  await writeAudit(ctx!.user, password ? "USER_PASSWORD_RESET" : "USER_ACCOUNT_UPDATED", "ADMIN", "User", p.id,
+    `Updated account fields: ${changedFields.join(", ") || "none"}`,
     resolveClientIp(req).ip);
   return jsonResponse(ok(await userWithRoles(p.id), "Account updated successfully"), 200);
 }
@@ -1899,6 +1879,13 @@ async function revokeUserRefreshTokens(userId: string) {
   if (error) throw new Error(`refresh-token revocation failed: ${error.message}`);
 }
 
+async function revokeUserCredentialSessions(userId: string) {
+  await revokeUserRefreshTokens(userId);
+  const { error } = await db.from("active_sessions").update({ status: "REVOKED" })
+    .eq("user_id", userId).eq("status", "ACTIVE");
+  if (error) throw new Error(`active-session revocation failed: ${error.message}`);
+}
+
 async function revokeAllRefreshTokens() {
   const { error } = await db.from("refresh_tokens").update({
     is_revoked: true,
@@ -2180,6 +2167,7 @@ async function handleDeactivateConflict(ctx: AuthContext | null, req: Request, _
 // ---------------------------------------------------------------------------
 
 const SUPER_ADMIN_ONLY = { kind: "roles", roles: ["SUPER_ADMIN"] } as const;
+const ACCOUNT_UPDATE_ONLY = { kind: "roles", roles: [...ACCOUNT_UPDATE_ALLOWED_ROLES] } as const;
 const SYSTEM_ADMIN_ONLY = { kind: "roles", roles: ["SYSTEM_ADMIN"] } as const;
 const ADMIN_PORTAL_ROLES = { kind: "roles", roles: ["SUPER_ADMIN", "SYSTEM_ADMIN"] } as const;
 const OVERSIGHT_ADMIN_ROLES = { kind: "roles", roles: ["SUPER_ADMIN", "COMPLIANCE_MANAGER"] } as const;
@@ -2187,7 +2175,7 @@ const OVERSIGHT_ADMIN_ROLES = { kind: "roles", roles: ["SUPER_ADMIN", "COMPLIANC
 const routes = [
   { method: "GET", path: "/admin/users", guard: SUPER_ADMIN_ONLY, handler: handleListUsers },
   { method: "POST", path: "/admin/users", guard: SUPER_ADMIN_ONLY, handler: handleCreateUser },
-  { method: "PATCH", path: "/admin/users/:id", guard: SUPER_ADMIN_ONLY, handler: handleUpdateUser },
+  { method: "PATCH", path: "/admin/users/:id", guard: ACCOUNT_UPDATE_ONLY, handler: handleUpdateUser },
   { method: "GET", path: "/admin/account-lockouts", guard: SYSTEM_ADMIN_ONLY, handler: handleListLockedUsers },
   { method: "POST", path: "/admin/users/:id/unlock", guard: ADMIN_PORTAL_ROLES, handler: handleUnlockUser },
   { method: "GET", path: "/admin/rbac/users", guard: SUPER_ADMIN_ONLY, handler: handleListUsers },
