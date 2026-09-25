@@ -1,4 +1,5 @@
 import { apiClient } from './client';
+import type { FacilityType, RoomType } from '../contracts/facilityTypes';
 
 export const FACILITY_FLOORPLAN_BUCKET = 'facility-floorplans';
 
@@ -27,7 +28,7 @@ export type ManagedFacility = {
 export type FacilityInput = {
   facilityName: string;
   code: string;
-  type: string;
+  type: FacilityType;
   description?: string;
   capacity: number;
   amenities: string[];
@@ -50,7 +51,7 @@ export type FacilitySpace = {
   active: boolean;
 };
 
-export type FacilitySpaceInput = Omit<FacilitySpace, 'id' | 'facilityId'>;
+export type FacilitySpaceInput = Omit<FacilitySpace, 'id' | 'facilityId' | 'type'> & { type: RoomType };
 export type WorkspaceRecord = Record<string, unknown> & { id: string };
 
 export type FacilityPin = {

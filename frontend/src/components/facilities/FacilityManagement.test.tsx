@@ -61,4 +61,59 @@ describe('Facility Management cards', () => {
     fireEvent.click(screen.getByRole('button', { name: /save facility/i }));
     expect(api.createFacility).not.toHaveBeenCalled();
   });
+
+  it('creates a headquarters from facility-only options', async () => {
+    api.listFacilities.mockResolvedValue([]);
+    api.createFacility.mockResolvedValue({ ...facility, type: 'HEADQUARTERS' });
+    renderPage();
+    await screen.findByText('No facilities configured');
+    fireEvent.click(screen.getAllByRole('button', { name: /add facility/i })[0]);
+    const typeSelect = screen.getByLabelText('Facility type') as HTMLSelectElement;
+    expect(typeSelect.value).toBe('HEADQUARTERS');
+    expect(Array.from(typeSelect.options).map((option) => option.text)).toContain('Operations Hub');
+    expect(Array.from(typeSelect.options).map((option) => option.text)).not.toContain('Meeting Room');
+    const textboxes = screen.getAllByRole('textbox');
+    fireEvent.change(textboxes[0], { target: { value: 'Hirna Head Office' } });
+    fireEvent.change(screen.getByPlaceholderText('HQ-MNL'), { target: { value: 'HQ-EMP' } });
+    fireEvent.click(screen.getByRole('button', { name: /save facility/i }));
+    await waitFor(() => expect(api.createFacility).toHaveBeenCalledWith(expect.objectContaining({ type: 'HEADQUARTERS' })));
+  });
+
+  it('saves an existing valid facility without forcing a type reselection', async () => {
+    api.listFacilities.mockResolvedValue([facility]);
+    api.updateFacility.mockResolvedValue(facility);
+    renderPage();
+    await screen.findByText('Hirna Main Hub');
+    fireEvent.click(screen.getByRole('button', { name: /actions for hirna main hub/i }));
+    fireEvent.click(screen.getByRole('button', { name: /edit facility/i }));
+    const typeSelect = screen.getByLabelText('Facility type') as HTMLSelectElement;
+    expect(typeSelect.value).toBe('OFFICE');
+    fireEvent.click(screen.getByRole('button', { name: /save facility/i }));
+    await waitFor(() => expect(api.updateFacility).toHaveBeenCalledWith('facility-a', expect.objectContaining({ type: 'OFFICE' })));
+  });
+
+  it('changes an existing facility to another canonical type', async () => {
+    api.listFacilities.mockResolvedValue([facility]);
+    api.updateFacility.mockResolvedValue({ ...facility, type: 'OPERATIONS_HUB' });
+    renderPage();
+    await screen.findByText('Hirna Main Hub');
+    fireEvent.click(screen.getByRole('button', { name: /actions for hirna main hub/i }));
+    fireEvent.click(screen.getByRole('button', { name: /edit facility/i }));
+    fireEvent.change(screen.getByLabelText('Facility type'), { target: { value: 'OPERATIONS_HUB' } });
+    fireEvent.click(screen.getByRole('button', { name: /save facility/i }));
+    await waitFor(() => expect(api.updateFacility).toHaveBeenCalledWith('facility-a', expect.objectContaining({ type: 'OPERATIONS_HUB' })));
+  });
+
+  it('shows and blocks a legacy room type until a valid facility type is selected', async () => {
+    api.listFacilities.mockResolvedValue([{ ...facility, type: 'MEETING_ROOM' }]);
+    renderPage();
+    await screen.findByText('Hirna Main Hub');
+    fireEvent.click(screen.getByRole('button', { name: /actions for hirna main hub/i }));
+    fireEvent.click(screen.getByRole('button', { name: /edit facility/i }));
+    expect(screen.getByLabelText('Facility type')).toHaveValue('MEETING_ROOM');
+    expect(screen.getByRole('option', { name: /legacy: meeting room/i })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: /save facility/i }));
+    expect(await screen.findByText('Select a valid facility type.')).toBeInTheDocument();
+    expect(api.updateFacility).not.toHaveBeenCalled();
+  });
 });

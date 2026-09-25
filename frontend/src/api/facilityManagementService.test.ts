@@ -29,7 +29,7 @@ describe('facility management application API integration', () => {
     expect(api.post).not.toHaveBeenCalled();
   });
   it('creates a facility without requiring an image and archives through status', async () => {
-    const input = { facilityName: 'Hub', code: 'HUB-1', type: 'OFFICE', capacity: 20, amenities: [], status: 'AVAILABLE', active: true };
+    const input = { facilityName: 'Hub', code: 'HUB-1', type: 'OFFICE' as const, capacity: 20, amenities: [], status: 'AVAILABLE', active: true };
     api.post
       .mockResolvedValueOnce({ data: { data: { id: 'f1', facility_name: 'Hub', code: 'HUB-1', capacity: 20, active: true } } })
       .mockResolvedValueOnce({ data: { data: { id: 'f1', facility_name: 'Hub', code: 'HUB-1', capacity: 20, active: false, status: 'INACTIVE' } } });
@@ -57,13 +57,13 @@ describe('facility management application API integration', () => {
     expect(api.get).toHaveBeenNthCalledWith(3, '/facilities/management/f1/reservations', { params: { status: 'CONFIRMED' } });
   });
   it('uses scoped PATCH routes for facility, space, and pin updates', async () => {
-    const facility = { facilityName: 'Hub', code: 'HUB-1', type: 'OFFICE', capacity: 20, amenities: [], status: 'AVAILABLE', active: true };
+    const facility = { facilityName: 'Hub', code: 'HUB-1', type: 'OFFICE' as const, capacity: 20, amenities: [], status: 'AVAILABLE', active: true };
     api.patch
       .mockResolvedValueOnce({ data: { data: { id: 'f1', facility_name: 'Hub', code: 'HUB-1', capacity: 20 } } })
       .mockResolvedValueOnce({ data: { data: { id: 's1', facility_id: 'f1', name: 'Room', room_number: '1', capacity: 2 } } })
       .mockResolvedValueOnce({ data: { data: { id: 'p1', facility_id: 'f1', title: 'Door', x: 1, y: 2 } } });
     await service.updateFacility('f1', facility);
-    await service.updateSpace('f1', 's1', { name: 'Room', roomNumber: '1', building: null, floor: null, floorNumber: null, capacity: 2, type: 'OFFICE', status: 'AVAILABLE', description: null, active: true });
+    await service.updateSpace('f1', 's1', { name: 'Room', roomNumber: '1', building: null, floor: null, floorNumber: null, capacity: 2, type: 'OFFICE_ROOM', status: 'AVAILABLE', description: null, active: true });
     await service.updatePin('f1', 'p1', { title: 'Door', x: 1, y: 2 });
     expect(api.patch.mock.calls.map(([path]) => path)).toEqual(['/facilities/management/f1', '/facilities/management/f1/spaces/s1', '/facilities/management/f1/pins/p1']);
   });

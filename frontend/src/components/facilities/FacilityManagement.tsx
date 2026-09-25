@@ -3,6 +3,7 @@ import { AlertCircle, Building2, CalendarCheck, ImagePlus, Loader2, MoreVertical
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { extractErrorMessage } from '../../api/client';
 import { facilityManagementService, type FacilityInput, type ManagedFacility } from '../../api/facilityManagementService';
+import { FACILITY_TYPE_OPTIONS, isFacilityType, type FacilityType } from '../../contracts/facilityTypes';
 import { DashboardHero } from '../ui/DashboardPrimitives';
 
 type FormState = {
@@ -10,7 +11,7 @@ type FormState = {
   amenities: string; status: string; active: boolean;
 };
 
-const emptyForm: FormState = { facilityName: '', code: '', type: 'MEETING_ROOM', description: '', capacity: '8', amenities: '', status: 'AVAILABLE', active: true };
+const emptyForm: FormState = { facilityName: '', code: '', type: 'HEADQUARTERS', description: '', capacity: '8', amenities: '', status: 'AVAILABLE', active: true };
 const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-red-700 focus:ring-2 focus:ring-red-700/10';
 
 function safeLoadError(error: unknown) {
@@ -24,7 +25,7 @@ function pretty(value: string | null) {
 
 function toForm(facility: ManagedFacility): FormState {
   return {
-    facilityName: facility.facilityName, code: facility.code ?? '', type: facility.type ?? 'MEETING_ROOM',
+    facilityName: facility.facilityName, code: facility.code ?? '', type: facility.type ?? '',
     description: facility.description ?? '', capacity: String(facility.capacity || 1), amenities: facility.amenities.join(', '),
     status: facility.status === 'INACTIVE' ? 'AVAILABLE' : facility.status, active: facility.active,
   };
@@ -97,8 +98,8 @@ export const FacilityManagement: React.FC = () => {
     setFloorPlanFile(file); setPreviewUrl(URL.createObjectURL(file)); setFormError('');
   };
 
-  const input = (): FacilityInput => ({
-    facilityName: form.facilityName, code: form.code, type: form.type, description: form.description,
+  const input = (type: FacilityType): FacilityInput => ({
+    facilityName: form.facilityName, code: form.code, type, description: form.description,
     capacity: Number(form.capacity), amenities: form.amenities.split(',').map((item) => item.trim()).filter(Boolean),
     status: form.status, active: form.active,
   });
@@ -107,9 +108,10 @@ export const FacilityManagement: React.FC = () => {
     event.preventDefault(); setFormError('');
     if (!form.facilityName.trim() || !form.code.trim()) { setFormError('Facility name and code are required.'); return; }
     if (!Number.isSafeInteger(Number(form.capacity)) || Number(form.capacity) < 1) { setFormError('Capacity must be a positive whole number.'); return; }
+    if (!isFacilityType(form.type)) { setFormError('Select a valid facility type.'); return; }
     setSaving(true);
     try {
-      let saved = editing ? await facilityManagementService.updateFacility(editing.id, input()) : await facilityManagementService.createFacility(input());
+      let saved = editing ? await facilityManagementService.updateFacility(editing.id, input(form.type)) : await facilityManagementService.createFacility(input(form.type));
       if (floorPlanFile) saved = await facilityManagementService.uploadFloorPlan(saved.id, floorPlanFile);
       setFacilities((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
       closeModal();
@@ -163,7 +165,7 @@ export const FacilityManagement: React.FC = () => {
         <label className="block sm:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-slate-500">Facility name *</span><input autoFocus value={form.facilityName} onChange={(event) => setForm({ ...form, facilityName: event.target.value })} className={inputClass} maxLength={160} /></label>
         <label><span className="mb-1.5 block text-xs font-semibold text-slate-500">Facility code *</span><input value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value.toUpperCase() })} className={inputClass} maxLength={32} placeholder="HQ-MNL" /></label>
         <label><span className="mb-1.5 block text-xs font-semibold text-slate-500">Capacity *</span><input type="number" min="1" max="100000" step="1" value={form.capacity} onChange={(event) => setForm({ ...form, capacity: event.target.value })} className={inputClass} /></label>
-        <label><span className="mb-1.5 block text-xs font-semibold text-slate-500">Type</span><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })} className={inputClass}>{['MEETING_ROOM','CONFERENCE_ROOM','BOARD_ROOM','TRAINING_ROOM','EVENT_HALL','OFFICE','WAREHOUSE','OTHER'].map((value) => <option key={value} value={value}>{pretty(value)}</option>)}</select></label>
+        <label><span className="mb-1.5 block text-xs font-semibold text-slate-500">Facility type *</span><select aria-label="Facility type" value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })} className={inputClass}>{!isFacilityType(form.type) && <option value={form.type} disabled>Legacy: {pretty(form.type)} — select a facility type</option>}{FACILITY_TYPE_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label><span className="mb-1.5 block text-xs font-semibold text-slate-500">Status</span><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })} className={inputClass}><option value="AVAILABLE">Available</option><option value="MAINTENANCE">Maintenance</option></select></label>
         <label className="sm:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-slate-500">Description</span><textarea rows={3} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} className={inputClass} maxLength={2000} /></label>
         <label className="sm:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-slate-500">Amenities</span><input value={form.amenities} onChange={(event) => setForm({ ...form, amenities: event.target.value })} className={inputClass} placeholder="Projector, Whiteboard, Wi-Fi" /></label>

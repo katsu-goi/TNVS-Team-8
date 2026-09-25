@@ -9,6 +9,7 @@ import { TimePicker } from '../ui/TimePicker';
 import { ReasonDialog } from '../ui/SharedUI';
 import { DashboardHero } from '../ui/DashboardPrimitives';
 import { FacilitiesAnalyticsPage } from './FacilitiesAnalyticsPage';
+import { FACILITY_TYPE_OPTIONS } from '../../contracts/facilityTypes';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -784,8 +785,8 @@ export const RoomsPage: React.FC = () => {
               <div>
                 <label className="font-bold text-slate-700">Type</label>
                 <select value={facilityForm.type} onChange={e => setFacilityForm({ ...facilityForm, type: e.target.value })} className="w-full mt-1 bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none">
-                  {['HEADQUARTERS', 'REGIONAL_OFFICE', 'OPERATIONS_HUB', 'MAINTENANCE_DEPOT', 'LOGISTICS_CENTER'].map(t => (
-                    <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>
+                  {FACILITY_TYPE_OPTIONS.map(({ value, label }) => (
+                    <option key={value} value={value}>{label}</option>
                   ))}
                 </select>
               </div>

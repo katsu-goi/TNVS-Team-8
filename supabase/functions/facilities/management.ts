@@ -3,6 +3,7 @@ import { jsonResponse } from "../_shared/cors.ts";
 import { ok, fail } from "../_shared/envelope.ts";
 import { writeAudit } from "../_shared/lockout.ts";
 import type { AuthContext, RouteParams } from "../_shared/guard.ts";
+import { parseFacilityType, parseRoomType } from "../_shared/facility-types.ts";
 
 const db = adminDb();
 const bucket = "facility-floorplans";
@@ -12,7 +13,6 @@ const invalid = (message: string, code = "INVALID_REQUEST") => jsonResponse(fail
 const conflict = (message: string, code: string) => jsonResponse(fail(message, code), 409);
 const missing = () => jsonResponse(fail("Facility not found.", "FACILITY_NOT_FOUND"), 404);
 const columns = "id,name,facility_name,code,type,description,capacity,total_capacity,amenities_json,status,active,floor_plan_path,floor_plan_file_name,floor_plan_mime_type,floor_plan_size,created_at,updated_at";
-const facilityTypes = new Set(["MEETING_ROOM", "CONFERENCE_ROOM", "BOARD_ROOM", "TRAINING_ROOM", "EVENT_HALL", "OFFICE", "WAREHOUSE", "OTHER"]);
 const facilityStatuses = new Set(["AVAILABLE", "MAINTENANCE", "INACTIVE"]);
 const roomStatuses = new Set(["AVAILABLE", "VACANT", "OCCUPIED", "RESERVED", "MAINTENANCE", "OUT_OF_SERVICE", "INACTIVE"]);
 
@@ -82,13 +82,13 @@ function normalizedFacility(body: unknown) {
   const b = (body ?? {}) as Row;
   const name = String(b.facility_name ?? b.name ?? "").trim();
   const code = String(b.code ?? "").trim().toUpperCase();
-  const type = String(b.type ?? "MEETING_ROOM").trim().toUpperCase();
+  const type = parseFacilityType(b.type);
   const capacity = Number(b.capacity ?? b.total_capacity);
   const active = b.active !== false;
   const status = active ? String(b.status ?? "AVAILABLE").trim().toUpperCase() : "INACTIVE";
   if (!name) return { error: invalid("Facility name is required.") };
   if (!code || !/^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(code)) return { error: invalid("Facility code is required and must use 2-32 letters, numbers, hyphens, or underscores.") };
-  if (!facilityTypes.has(type)) return { error: invalid("Select a supported facility type.") };
+  if (!type) return { error: invalid("Select a valid facility type.") };
   if (!facilityStatuses.has(status)) return { error: invalid("Select a supported facility status.") };
   if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 100000) return { error: invalid("Capacity must be a whole number between 1 and 100,000.") };
   const amenities = Array.isArray(b.amenities_json)
@@ -204,9 +204,11 @@ function normalizedSpace(body: unknown) {
   const name = String(b.name ?? "").trim();
   const roomNumber = String(b.room_number ?? b.roomNumber ?? "").trim();
   const capacity = Number(b.capacity);
+  const type = parseRoomType(b.type);
   const status = String(b.status ?? "AVAILABLE").trim().toUpperCase();
   if (!name || !roomNumber) return { error: invalid("Space name and room number are required.") };
   if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 10000) return { error: invalid("Space capacity must be a whole number between 1 and 10,000.") };
+  if (!type) return { error: invalid("Select a valid room or space type.") };
   if (!roomStatuses.has(status)) return { error: invalid("Select a supported space status.") };
   return { payload: {
     name,
@@ -215,7 +217,7 @@ function normalizedSpace(body: unknown) {
     floor: String(b.floor ?? "").trim() || null,
     floor_number: b.floor_number == null && b.floorNumber == null ? null : Number(b.floor_number ?? b.floorNumber),
     capacity,
-    type: String(b.type ?? "MEETING_ROOM").trim().toUpperCase(),
+    type,
     status,
     description: String(b.description ?? "").trim().slice(0, 2000) || null,
     active: b.active !== false,
