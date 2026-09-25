@@ -11,6 +11,7 @@ export const Team8LoginPage: React.FC = () => {
   const location = useLocation();
   const setAuthTokens = useAuthStore((state) => state.setAuthTokens);
   const verifyLoginSession = useAuthStore((state) => state.verifyLoginSession);
+  const logout = useAuthStore((state) => state.logout);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -39,7 +40,9 @@ export const Team8LoginPage: React.FC = () => {
       setAuthTokens(session.user, session.accessToken, session.refreshToken);
       const verifiedUser = await verifyLoginSession();
       if (!verifiedUser || !isTeam8Email(verifiedUser.email)) {
-        throw new Error('This account is not authorized for the Team 8 reservation portal.');
+        logout();
+        setError('This account is not authorized for the Team 8 reservation portal.');
+        return;
       }
       const returnTo = new URLSearchParams(location.search).get('returnTo');
       const protectedReservationReturn = returnTo === '/reservation-portal'
