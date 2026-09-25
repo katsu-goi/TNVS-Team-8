@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
   listFacilities: vi.fn(), createFacility: vi.fn(), updateFacility: vi.fn(), uploadFloorPlan: vi.fn(), setFacilityActive: vi.fn(),
@@ -21,6 +21,7 @@ const renderPage = () => render(<MemoryRouter initialEntries={['/facilities/room
 
 describe('Facility Management cards', () => {
   beforeEach(() => vi.resetAllMocks());
+  afterEach(() => cleanup());
 
   it('renders live card fields and opens the correct dedicated facility route', async () => {
     api.listFacilities.mockResolvedValue([facility]);
@@ -46,5 +47,18 @@ describe('Facility Management cards', () => {
     renderPage();
     await waitFor(() => expect(screen.getByText(/temporarily unavailable/i)).toBeInTheDocument());
     expect(screen.queryByText(/No route for GET/i)).not.toBeInTheDocument();
+  });
+
+  it('blocks invalid capacity before calling the create API', async () => {
+    api.listFacilities.mockResolvedValue([]);
+    renderPage();
+    await screen.findByText('No facilities configured');
+    fireEvent.click(screen.getAllByRole('button', { name: /add facility/i })[0]);
+    const textboxes = screen.getAllByRole('textbox');
+    fireEvent.change(textboxes[0], { target: { value: 'Invalid Hub' } });
+    fireEvent.change(screen.getByPlaceholderText('HQ-MNL'), { target: { value: 'BAD-1' } });
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '0' } });
+    fireEvent.click(screen.getByRole('button', { name: /save facility/i }));
+    expect(api.createFacility).not.toHaveBeenCalled();
   });
 });

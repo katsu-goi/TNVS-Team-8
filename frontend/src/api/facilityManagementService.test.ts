@@ -23,6 +23,21 @@ describe('facility management application API integration', () => {
     await expect(service.uploadFloorPlan('f1', new File(['<svg/>'], 'plan.svg', { type: 'image/svg+xml' }))).rejects.toThrow('PNG, JPEG, or WebP');
     expect(api.post).not.toHaveBeenCalled();
   });
+  it('rejects floor plans larger than 5 MB before upload', async () => {
+    const file = new File([new Uint8Array(5 * 1024 * 1024 + 1)], 'large.png', { type: 'image/png' });
+    await expect(service.uploadFloorPlan('f1', file)).rejects.toThrow('5 MB');
+    expect(api.post).not.toHaveBeenCalled();
+  });
+  it('creates a facility without requiring an image and archives through status', async () => {
+    const input = { facilityName: 'Hub', code: 'HUB-1', type: 'OFFICE', capacity: 20, amenities: [], status: 'AVAILABLE', active: true };
+    api.post
+      .mockResolvedValueOnce({ data: { data: { id: 'f1', facility_name: 'Hub', code: 'HUB-1', capacity: 20, active: true } } })
+      .mockResolvedValueOnce({ data: { data: { id: 'f1', facility_name: 'Hub', code: 'HUB-1', capacity: 20, active: false, status: 'INACTIVE' } } });
+    expect(await service.createFacility(input)).toEqual(expect.objectContaining({ id: 'f1', code: 'HUB-1' }));
+    expect(await service.setFacilityActive('f1', false)).toEqual(expect.objectContaining({ active: false, status: 'INACTIVE' }));
+    expect(api.post).toHaveBeenNthCalledWith(1, '/facilities/management', expect.objectContaining({ code: 'HUB-1', capacity: 20 }));
+    expect(api.post).toHaveBeenNthCalledWith(2, '/facilities/management/f1/status', { active: false });
+  });
   it('maps saved pins and propagates failed writes', async () => {
     api.post.mockResolvedValue({ data: { data: { id: 'p1', facility_id: 'f1', x: '25', y: '50', title: 'Door' } } });
     expect(await service.createPin({ facilityId: 'f1', x: 25, y: 50, title: 'Door' })).toEqual(expect.objectContaining({ id: 'p1', facilityId: 'f1', x: 25, y: 50 }));

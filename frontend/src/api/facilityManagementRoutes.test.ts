@@ -34,4 +34,13 @@ describe('facility management Edge route contract', () => {
       expect(source).toContain(action);
     }
   });
+
+  it('enforces duplicate-code, file, and facility scoping rules in the service-role API', () => {
+    expect(source).toContain('FACILITY_CODE_EXISTS');
+    expect(source).toContain('file.size > 5 * 1024 * 1024');
+    expect(source).toContain('Use a valid PNG, JPEG, or WebP image.');
+    expect(source).toContain('.eq("facility_id", params.id)');
+    expect(source).toContain('roomIdsForFacility(params.id)');
+    expect(source).toContain('.eq("id", params.spaceId).eq("facility_id", params.id)');
+  });
 });
