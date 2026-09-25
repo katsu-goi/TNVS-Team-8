@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   AlertCircle, RefreshCw, Plus, X, Pencil, Ban, CheckCircle2,
-  Bell,
+  CalendarClock, Users, FileText, FileSignature, Bell,
   Building2, MapPin, Users as UsersIcon, Upload, Download, Trash2, Check,
 } from 'lucide-react';
 import { employeeService } from '../../api/employeeService';
@@ -10,7 +10,6 @@ import { DocumentUploadPanel } from '../documents/DocumentUploadPanel';
 import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
 import { ConfirmDialog, Modal as SharedModal } from '../ui/SharedUI';
 import { DashboardHero } from '../ui/DashboardPrimitives';
-import { DataTable, DataTableStatusBadge, type DataTableColumn } from '../ui/data-table';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -79,9 +78,53 @@ const useToast = () => {
 const inputCls = 'mt-1 w-full text-sm bg-white text-slate-900 placeholder-slate-400 border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-200';
 const labelCls = 'text-[11px] font-semibold text-slate-500 uppercase';
 
+const reservationStatusBadge = (status?: string) => {
+  switch ((status || '').toUpperCase()) {
+    case 'APPROVED': return 'bg-emerald-50 text-emerald-600';
+    case 'CONFIRMED': return 'bg-emerald-50 text-emerald-700';
+    case 'PENDING_MANAGER_APPROVAL': return 'bg-purple-50 text-purple-700';
+    case 'PENDING': return 'bg-amber-50 text-amber-600';
+    case 'REJECTED': return 'bg-rose-50 text-rose-600';
+    case 'CANCELLED': return 'bg-slate-100 text-slate-500';
+    case 'CHECKED_IN': return 'bg-blue-50 text-blue-600';
+    case 'COMPLETED': return 'bg-teal-50 text-teal-600';
+    default: return 'bg-slate-100 text-slate-500';
+  }
+};
+const requestStatusBadge = (status?: string) => {
+  switch ((status || '').toUpperCase()) {
+    case 'APPROVED': return 'bg-emerald-50 text-emerald-600';
+    case 'PENDING': return 'bg-amber-50 text-amber-600';
+    case 'IN_REVIEW': return 'bg-blue-50 text-blue-600';
+    case 'REJECTED': return 'bg-rose-50 text-rose-600';
+    case 'CANCELLED': return 'bg-slate-100 text-slate-500';
+    default: return 'bg-slate-100 text-slate-500';
+  }
+};
+
+const visitorStatusBadge = (status?: string) => {
+  switch ((status || '').toUpperCase()) {
+    case 'REGISTERED': return 'bg-blue-50 text-blue-600';
+    case 'CHECKED_IN': return 'bg-emerald-50 text-emerald-600';
+    case 'CHECKED_OUT': return 'bg-slate-100 text-slate-500';
+    case 'CANCELLED': return 'bg-rose-50 text-rose-600';
+    default: return 'bg-slate-100 text-slate-500';
+  }
+};
+
+const docStatusBadge = (status?: string) => {
+  switch ((status || '').toUpperCase()) {
+    case 'APPROVED': return 'bg-emerald-50 text-emerald-600';
+    case 'PENDING_REVIEW': return 'bg-amber-50 text-amber-600';
+    case 'ARCHIVED': return 'bg-slate-100 text-slate-500';
+    case 'REJECTED': return 'bg-rose-50 text-rose-600';
+    default: return 'bg-blue-50 text-blue-600';
+  }
+};
+
 const fmtDateTime = (v?: string) => {
   if (!v) return '—';
-  try { return new Date(v).toLocaleString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return v; }
+  try { return new Date(v).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return v; }
 };
 
 const PageHeader: React.FC<{ title: string; subtitle: string; action?: React.ReactNode }> = ({ title, subtitle, action }) => (
@@ -203,27 +246,34 @@ export const EmpReservationsPage: React.FC = () => {
       <PageHeader title="Facilities Reservation" subtitle="Book rooms and track approval status"
         action={<ActionButton onClick={openNew} icon={Plus} variant="primary">New Reservation</ActionButton>} />
 
-      <DataTable
-        data={rows}
-        rowKey={(row: any) => row.id}
-        caption="My facility reservations"
-        loading={loading}
-        error={error}
-        onRetry={() => setRetry(value => value + 1)}
-        columns={[
-          { id: 'reservation', header: 'Reservation', searchableValue: (row: any) => `${row.title ?? ''} ${row.rejectionReason ?? ''}`, cell: (row: any) => <><p className="font-semibold text-slate-900">{row.title}</p>{row.rejectionReason && <p className="mt-1 max-w-sm text-xs text-rose-700">Rejected: {row.rejectionReason}</p>}</>, sortable: true },
-          { id: 'room', header: 'Room / space', accessor: (row: any) => row.roomName || '—', sortable: true },
-          { id: 'start', header: 'Start', accessor: (row: any) => fmtDateTime(row.startTime), sortValue: (row: any) => row.startTime ? new Date(row.startTime) : null, sortable: true },
-          { id: 'end', header: 'End', accessor: (row: any) => fmtDateTime(row.endTime), sortValue: (row: any) => row.endTime ? new Date(row.endTime) : null, sortable: true, optional: true },
-          { id: 'status', header: 'Status', accessor: (row: any) => <DataTableStatusBadge value={row.status} />, searchableValue: (row: any) => row.status, sortable: true },
-        ] satisfies DataTableColumn<any>[]}
-        searchableText={(row: any) => `${row.title ?? ''} ${row.roomName ?? ''} ${row.status ?? ''} ${row.rejectionReason ?? ''}`}
-        searchPlaceholder="Search my reservations…"
-        onRefresh={() => setRetry(value => value + 1)}
-        rowActions={(row: any) => { const editable = (row.status || '').toUpperCase() === 'PENDING'; const cancellable = !['CHECKED_IN', 'COMPLETED', 'CANCELLED', 'REJECTED'].includes((row.status || '').toUpperCase()); return <div className="flex flex-wrap justify-end gap-2">{editable && <ActionButton onClick={() => openEdit(row)} icon={Pencil}>Edit</ActionButton>}{cancellable && <ActionButton onClick={() => setCancelTarget(row)} icon={Ban} variant="danger">Cancel</ActionButton>}</div>; }}
-        emptyTitle="No reservations yet"
-        emptyDescription="Create a reservation request to book a room. It will appear here with its approval status."
-      />
+      {rows.length === 0 ? (
+        <EmptyState icon={CalendarClock} title="No reservations yet" desc="Create a reservation request to book a room. It will appear here with its approval status." />
+      ) : (
+        <div className="card-stat overflow-hidden">
+          <div className="divide-y divide-slate-50">
+            {rows.map((r) => {
+              const editable = (r.status || '').toUpperCase() === 'PENDING';
+              const cancellable = !['CHECKED_IN', 'COMPLETED', 'CANCELLED', 'REJECTED'].includes((r.status || '').toUpperCase());
+              return (
+                <div key={r.id} className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-semibold text-slate-900">{r.title}</p>
+                      <Badge text={r.status} className={reservationStatusBadge(r.status)} />
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">{r.roomName || '—'} · {fmtDateTime(r.startTime)} – {fmtDateTime(r.endTime)}</p>
+                    {r.rejectionReason && <p className="text-[11px] text-rose-500 mt-0.5">Rejected: {r.rejectionReason}</p>}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {editable && <ActionButton onClick={() => openEdit(r)} icon={Pencil}>Edit</ActionButton>}
+                    {cancellable && <ActionButton onClick={() => setCancelTarget(r)} icon={Ban} variant="danger">Cancel</ActionButton>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {showModal && (
         <Modal title={editing ? 'Edit Reservation' : 'New Reservation'} onClose={() => setShowModal(false)}>
@@ -347,27 +397,30 @@ export const EmpVisitorsPage: React.FC = () => {
       <PageHeader title="Visitor Management" subtitle="Register visitors and monitor their status"
         action={<ActionButton onClick={openNew} icon={Plus} variant="primary">Register Visitor</ActionButton>} />
 
-      <DataTable
-        data={rows}
-        rowKey={(row: any) => row.id}
-        caption="My registered visitors"
-        loading={loading}
-        error={error}
-        onRetry={() => setRetry(value => value + 1)}
-        columns={[
-          { id: 'visitor', header: 'Visitor', accessor: (row: any) => row.fullName, sortable: true },
-          { id: 'company', header: 'Company', accessor: (row: any) => row.company || '—', sortable: true },
-          { id: 'purpose', header: 'Purpose', accessor: (row: any) => row.purposeOfVisit || '—' },
-          { id: 'arrival', header: 'Expected arrival', accessor: (row: any) => fmtDateTime(row.expectedArrival), sortValue: (row: any) => row.expectedArrival ? new Date(row.expectedArrival) : null, sortable: true },
-          { id: 'status', header: 'Status', accessor: (row: any) => <DataTableStatusBadge value={row.status} />, searchableValue: (row: any) => row.status, sortable: true },
-        ] satisfies DataTableColumn<any>[]}
-        searchableText={(row: any) => `${row.fullName ?? ''} ${row.company ?? ''} ${row.purposeOfVisit ?? ''} ${row.status ?? ''}`}
-        searchPlaceholder="Search my visitors…"
-        onRefresh={() => setRetry(value => value + 1)}
-        rowActions={(row: any) => (row.status || '').toUpperCase() === 'REGISTERED' ? <ActionButton onClick={() => openEdit(row)} icon={Pencil}>Edit</ActionButton> : null}
-        emptyTitle="No visitors yet"
-        emptyDescription="Register a visitor to generate a visit record. You can edit it before check-in."
-      />
+      {rows.length === 0 ? (
+        <EmptyState icon={Users} title="No visitors yet" desc="Register a visitor to generate a visit record. You can edit it before check-in." />
+      ) : (
+        <div className="card-stat overflow-hidden">
+          <div className="divide-y divide-slate-50">
+            {rows.map((v) => {
+              const editable = (v.status || '').toUpperCase() === 'REGISTERED';
+              return (
+                <div key={v.id} className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-semibold text-slate-900">{v.fullName}</p>
+                      <Badge text={v.status} className={visitorStatusBadge(v.status)} />
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">{v.company || '—'} · {v.purposeOfVisit}</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5 font-mono">Expected {fmtDateTime(v.expectedArrival)}</p>
+                  </div>
+                  {editable && <ActionButton onClick={() => openEdit(v)} icon={Pencil}>Edit</ActionButton>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {showModal && (
         <Modal title={editing ? 'Edit Visitor' : 'Register Visitor'} onClose={() => setShowModal(false)}>
@@ -443,26 +496,29 @@ export const EmpDocumentsPage: React.FC = () => {
         onUploaded={() => setRetry(r => r + 1)}
       />
 
-      <DataTable
-        data={rows}
-        rowKey={(row: any) => row.id}
-        caption="My documents"
-        loading={loading}
-        error={error}
-        onRetry={() => setRetry(value => value + 1)}
-        columns={[
-          { id: 'document', header: 'Document', searchableValue: (row: any) => `${row.title ?? ''} ${row.fileName ?? ''}`, cell: (row: any) => <><p className="font-semibold text-slate-900">{row.title}</p><p className="text-xs text-slate-500">{row.fileName || '—'}</p></>, sortable: true },
-          { id: 'classification', header: 'Classification', accessor: (row: any) => row.classificationLevel || '—', sortable: true },
-          { id: 'type', header: 'File type', accessor: (row: any) => row.fileType || '—', sortable: true, optional: true },
-          { id: 'status', header: 'Status', accessor: (row: any) => <DataTableStatusBadge value={row.status} />, searchableValue: (row: any) => row.status, sortable: true },
-        ] satisfies DataTableColumn<any>[]}
-        searchableText={(row: any) => `${row.title ?? ''} ${row.fileName ?? ''} ${row.classificationLevel ?? ''} ${row.fileType ?? ''} ${row.status ?? ''}`}
-        searchPlaceholder="Search my documents…"
-        onRefresh={() => setRetry(value => value + 1)}
-        rowActions={(row: any) => <ActionButton onClick={() => { if (row.supabaseStorageUrl) window.open(row.supabaseStorageUrl, '_blank', 'noopener,noreferrer'); else show('No file available to download.', 'err'); }} icon={Download} disabled={(row.status || '').toUpperCase() !== 'APPROVED'}>Download</ActionButton>}
-        emptyTitle="No documents yet"
-        emptyDescription="Upload document metadata to submit it for review. Approved documents can be downloaded."
-      />
+      {rows.length === 0 ? (
+        <EmptyState icon={FileText} title="No documents yet" desc="Upload document metadata to submit it for review. Approved documents can be downloaded." />
+      ) : (
+        <div className="card-stat overflow-hidden">
+          <div className="divide-y divide-slate-50">
+            {rows.map((d) => {
+              const approved = (d.status || '').toUpperCase() === 'APPROVED';
+              return (
+                <div key={d.id} className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-semibold text-slate-900">{d.title}</p>
+                      <Badge text={(d.status || '').replace(/_/g, ' ')} className={docStatusBadge(d.status)} />
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5 font-mono">{d.fileName} · {d.classificationLevel}</p>
+                  </div>
+                  <ActionButton onClick={() => { if (d.supabaseStorageUrl) window.open(d.supabaseStorageUrl, '_blank'); else show('No file available to download.', 'err'); }} icon={Download} disabled={!approved}>Download</ActionButton>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {showModal && (
         <Modal title="Upload Document" onClose={() => setShowModal(false)}>
@@ -544,26 +600,31 @@ export const EmpRequestsPage: React.FC = () => {
       <PageHeader title="Requests" subtitle="Submit contract and legal requests and track their status"
         action={<ActionButton onClick={openNew} icon={Plus} variant="primary">Submit Request</ActionButton>} />
 
-      <DataTable
-        data={rows}
-        rowKey={(row: any) => row.id}
-        caption="My contract and legal requests"
-        loading={loading}
-        error={error}
-        onRetry={() => setRetry(value => value + 1)}
-        columns={[
-          { id: 'request', header: 'Request', searchableValue: (row: any) => `${row.title ?? ''} ${row.description ?? ''} ${row.decisionNotes ?? ''}`, cell: (row: any) => <><p className="font-semibold text-slate-900">{row.title}</p>{row.description && <p className="mt-1 max-w-sm truncate text-xs text-slate-500" title={row.description}>{row.description}</p>}{row.decisionNotes && <p className="mt-1 max-w-sm text-xs text-slate-500">Notes: {row.decisionNotes}</p>}</>, sortable: true },
-          { id: 'type', header: 'Type', accessor: (row: any) => <DataTableStatusBadge value={row.type} />, searchableValue: (row: any) => row.type, sortable: true },
-          { id: 'created', header: 'Created', accessor: (row: any) => fmtDateTime(row.createdAt), sortValue: (row: any) => row.createdAt ? new Date(row.createdAt) : null, sortable: true, optional: true },
-          { id: 'status', header: 'Status', accessor: (row: any) => <DataTableStatusBadge value={row.status} />, searchableValue: (row: any) => row.status, sortable: true },
-        ] satisfies DataTableColumn<any>[]}
-        searchableText={(row: any) => `${row.title ?? ''} ${row.description ?? ''} ${row.decisionNotes ?? ''} ${row.type ?? ''} ${row.status ?? ''}`}
-        searchPlaceholder="Search my requests…"
-        onRefresh={() => setRetry(value => value + 1)}
-        rowActions={(row: any) => ['PENDING', 'IN_REVIEW'].includes((row.status || '').toUpperCase()) ? <ActionButton onClick={() => setCancelTarget(row)} icon={Ban} variant="danger">Cancel</ActionButton> : null}
-        emptyTitle="No requests yet"
-        emptyDescription="Submit a contract or legal request. You can cancel it while it is still pending or in review."
-      />
+      {rows.length === 0 ? (
+        <EmptyState icon={FileSignature} title="No requests yet" desc="Submit a contract or legal request. You can cancel it while it's still pending or in review." />
+      ) : (
+        <div className="card-stat overflow-hidden">
+          <div className="divide-y divide-slate-50">
+            {rows.map((r) => {
+              const cancellable = ['PENDING', 'IN_REVIEW'].includes((r.status || '').toUpperCase());
+              return (
+                <div key={r.id} className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-semibold text-slate-900">{r.title}</p>
+                      <Badge text={r.type} className="bg-slate-100 text-slate-600" />
+                      <Badge text={(r.status || '').replace(/_/g, ' ')} className={requestStatusBadge(r.status)} />
+                    </div>
+                    {r.description && <p className="text-xs text-slate-500 mt-0.5">{r.description}</p>}
+                    {r.decisionNotes && <p className="text-[11px] text-slate-400 mt-0.5">Notes: {r.decisionNotes}</p>}
+                  </div>
+                  {cancellable && <ActionButton onClick={() => setCancelTarget(r)} icon={Ban} variant="danger">Cancel</ActionButton>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {showModal && (
         <Modal title="Submit Request" onClose={() => setShowModal(false)}>

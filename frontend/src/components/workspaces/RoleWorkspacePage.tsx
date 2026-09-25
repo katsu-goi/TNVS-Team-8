@@ -10,10 +10,9 @@ import {
   CoComplianceAlertsPage, CoContractsPage, CoDisposalApprovalsPage,
   CoDocumentsPage, CoRetentionPoliciesPage, CoAuditLogsPage,
 } from '../compliance/ComplianceOfficerPages';
-import { ReasonDialog } from '../ui/SharedUI';
+import { EmptyState, ReasonDialog } from '../ui/SharedUI';
 import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 import { DashboardHero } from '../ui/DashboardPrimitives';
-import { DataTable, DataTableMobileCard, DataTableStatusBadge, type DataTableColumn } from '../ui/data-table';
 import type { WorkspaceConfig } from './workspaceConfig';
 
 const toneClass = {
@@ -24,12 +23,6 @@ const toneClass = {
 };
 
 const prettify = (value: string) => value.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
-
-const workspaceDate = (value: unknown) => {
-  if (!value) return '—';
-  const date = new Date(String(value));
-  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' });
-};
 
 function rowTitle(row: Record<string, any>): string {
   return row.item_title || row.request_title || row.title || row.contract?.title || row.document?.title ||
@@ -74,7 +67,6 @@ export const RoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
 const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: string }> = ({ config, section }) => {
   const [payload, setPayload] = useState<WorkspacePayload | null>(null);
   const [error, setError] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState('');
   const [revealed, setRevealed] = useState<Record<string, Record<string, any>>>({});
   const [reasonBusy, setReasonBusy] = useState(false);
@@ -91,14 +83,10 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
 
   const load = useCallback(async () => {
     setError('');
-    setRefreshing(true);
     try {
       setPayload(await governanceService.getWorkspace(config.slug, section));
     } catch (reason) {
-      console.error('Unable to load governance workspace records', reason);
-      setError('Unable to load workspace records. Please try again.');
-    } finally {
-      setRefreshing(false);
+      setError(extractErrorMessage(reason));
     }
   }, [config.slug, section]);
 
@@ -177,16 +165,6 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
     return null;
   };
 
-  const columns: DataTableColumn<Record<string, any>>[] = [
-    { id: 'record', header: 'Record', sortable: true, sortValue: rowTitle, searchableValue: rowTitle, cell: (row) => <div><p className="font-semibold text-slate-900">{rowTitle(row)}</p>{row.description && <p className="mt-1 max-w-sm truncate text-xs text-slate-500" title={String(row.description)}>{String(row.description)}</p>}</div> },
-    { id: 'reference', header: 'Reference', sortable: true, optional: true, sortValue: (row) => row.request_reference || row.signoff_reference || row.approval_reference || row.incident_reference || row.contract?.contract_number || row.permit_number || '', accessor: (row) => row.request_reference || row.signoff_reference || row.approval_reference || row.incident_reference || row.contract?.contract_number || row.permit_number || '—' },
-    { id: 'type', header: 'Type', optional: true, searchableValue: (row) => row.item_type || row.request_type || row.violation_category || row.contract?.type || row.data_category || row.permit_type, accessor: (row) => prettify(String(row.item_type || row.request_type || row.violation_category || row.contract?.type || row.data_category || row.permit_type || 'Not provided')) },
-    { id: 'owner', header: 'Owner', optional: true, searchableValue: (row) => row.submittedByName || row.requester_name || row.owner_email || row.submitted_by, accessor: (row) => row.submittedByName || row.requester_name || row.owner_email || row.submitted_by || 'Not assigned' },
-    { id: 'scope', header: 'Hub / Department', optional: true, accessor: (row) => row.hub_name || row.facility_name || row.department_name || row.contract?.counter_party || '—' },
-    { id: 'due', header: 'Due / Expiry', sortable: true, optional: true, sortValue: (row) => row.due_at || row.notification_due_at || row.statutory_deadline || row.expiration_date || row.retention_expires_at, accessor: (row) => workspaceDate(row.due_at || row.notification_due_at || row.statutory_deadline || row.expiration_date || row.retention_expires_at) },
-    { id: 'status', header: 'Status', sortable: true, sortValue: (row) => rowStatus(row), searchableValue: rowStatus, cell: (row) => rowStatus(row) ? <DataTableStatusBadge value={rowStatus(row)} /> : <span className="text-slate-500">Not provided</span> },
-  ];
-
   if (!payload && !error) return <PortalLoadingOverlay message={`Loading ${item.label.toLowerCase()}...`} />;
 
   return (
@@ -219,29 +197,42 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
 
       {config.slug === 'compliance-management' && section === 'team-supervision' && <OversightPanel />}
 
-      <div>
-        <div className="mb-3">
-          <h2 className="text-sm font-bold text-slate-900">Live Workspace Records</h2>
-          <p className="mt-1 text-xs text-slate-500">Supabase cloud data · updated {payload?.generatedAt ? workspaceDate(payload.generatedAt) : '—'} · Asia/Manila</p>
-        </div>
-        <DataTable
-          data={payload?.rows ?? []}
-          columns={columns}
-          rowKey={(row) => row.id || rowTitle(row)}
-          caption={`${item.label} records`}
-          loading={refreshing}
-          error={error || undefined}
-          onRetry={load}
-          onRefresh={load}
-          searchPlaceholder={`Search ${item.label.toLowerCase()}...`}
-          searchableText={(row) => `${rowTitle(row)} ${rowDetails(row).map((entry) => entry[1]).join(' ')} ${rowStatus(row) ?? ''}`}
-          emptyTitle={`No ${item.label.toLowerCase()} records`}
-          emptyDescription="No records are currently available for this workspace."
-          filteredEmptyTitle={`No ${item.label.toLowerCase()} records match your search`}
-          rowActions={(row) => busyId === row.id ? <Loader2 className="h-5 w-5 animate-spin text-brand-500" aria-label="Updating record" /> : renderActions(row)}
-          renderMobileCard={(row) => <DataTableMobileCard title={rowTitle(row)} badge={rowStatus(row) ? <DataTableStatusBadge value={rowStatus(row)} /> : undefined} fields={rowDetails(row).slice(0, 5).map(([label, value]) => ({ label, value: revealed[row.id] && label === 'Protected Data' ? JSON.stringify(revealed[row.id]) : value }))} actions={busyId === row.id ? <Loader2 className="h-5 w-5 animate-spin text-brand-500" aria-label="Updating record" /> : renderActions(row)} />}
-        />
-      </div>
+      <section className="overflow-hidden rounded-card border border-slate-200 bg-white shadow-card">
+          <div className="border-b border-slate-200 px-5 py-4">
+            <h2 className="text-sm font-bold text-slate-900">Live Workspace Records</h2>
+            <p className="mt-1 text-xs text-slate-500">Supabase cloud data · updated {payload?.generatedAt ? new Date(payload.generatedAt).toLocaleString() : ''}</p>
+          </div>
+          {!payload?.rows?.length ? (
+            <EmptyState className="rounded-none border-0" description="No records are currently available for this workspace." />
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {payload.rows.map((row) => {
+                const status = rowStatus(row);
+                return (
+                  <article key={row.id || rowTitle(row)} className="p-5 transition-colors hover:bg-[var(--hirna-surface-hover)]">
+                    <div className="flex flex-col items-start justify-between gap-5 lg:flex-row">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-semibold text-slate-900">{rowTitle(row)}</h3>
+                          {status && <span className="rounded-full bg-slate-100 px-2 py-1 font-mono text-[10px] text-slate-600">{prettify(status)}</span>}
+                        </div>
+                        <dl className="mt-3 grid gap-x-6 gap-y-2 text-xs md:grid-cols-2 xl:grid-cols-3">
+                          {rowDetails(row).map(([label, value]) => (
+                            <div key={`${label}-${value}`} className="min-w-0">
+                              <dt className="font-semibold text-slate-400">{label}</dt>
+                              <dd className="mt-0.5 break-words text-slate-700">{revealed[row.id] && label === 'Protected Data' ? JSON.stringify(revealed[row.id]) : value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </div>
+                      <div className="shrink-0">{busyId === row.id ? <Loader2 className="h-5 w-5 animate-spin text-brand-500" /> : renderActions(row)}</div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+      </section>
 
       {payload?.alerts?.length ? (
         <section className="rounded-lg border border-amber-200 bg-amber-50 p-5">

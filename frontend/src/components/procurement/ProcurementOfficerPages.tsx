@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   AlertCircle, RefreshCw, FileText, FileSignature, Building2,
-  ScrollText, CheckCircle2, Trash2, Plus,
+  ScrollText, Filter, CheckCircle2, Trash2, Plus,
   X, BellRing, Bell, ShieldAlert, Ban, Gavel, Send, PlayCircle,
   RotateCcw, Pencil, ChevronRight, Gauge, CalendarClock,
 } from 'lucide-react';
@@ -9,7 +9,6 @@ import { safeFetchJson } from '../../api/client';
 import { ContractAiPanel } from '../contracts/ContractAiPanel';
 import { Modal as SharedModal } from '../ui/SharedUI';
 import { DashboardHero } from '../ui/DashboardPrimitives';
-import { DataTable, DataTableRowActions, DataTableStatusBadge, type DataTableColumn } from '../ui/data-table';
 
 // POST/PUT helper that preserves the API envelope and propagates failures.
 const mutate = async (url: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown) => {
@@ -90,6 +89,16 @@ const useToast = () => {
 const inputCls = 'mt-1 w-full text-sm border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-200';
 const labelCls = 'text-[11px] font-semibold text-slate-500 uppercase';
 
+const docStatusBadge = (status?: string) => {
+  switch ((status || '').toUpperCase()) {
+    case 'APPROVED': return 'bg-emerald-50 text-emerald-600';
+    case 'PENDING_REVIEW': return 'bg-amber-50 text-amber-600';
+    case 'ARCHIVED': return 'bg-slate-100 text-slate-500';
+    case 'REJECTED': return 'bg-rose-50 text-rose-600';
+    default: return 'bg-blue-50 text-blue-600';
+  }
+};
+
 const contractStatusBadge = (status?: string) => {
   switch ((status || '').toUpperCase()) {
     case 'ACTIVE': return 'bg-emerald-50 text-emerald-600';
@@ -119,6 +128,18 @@ const obligationStatusBadge = (status?: string) => {
     case 'IN_PROGRESS': return 'bg-blue-50 text-blue-600';
     case 'PENDING': return 'bg-amber-50 text-amber-600';
     case 'OVERDUE': return 'bg-rose-50 text-rose-600';
+    default: return 'bg-slate-100 text-slate-500';
+  }
+};
+
+const caseStatusBadge = (status?: string) => {
+  switch ((status || '').toUpperCase()) {
+    case 'OPEN': return 'bg-blue-50 text-blue-600';
+    case 'IN_PROGRESS': return 'bg-amber-50 text-amber-600';
+    case 'PENDING_HEARING': return 'bg-orange-50 text-orange-600';
+    case 'SETTLED': return 'bg-emerald-50 text-emerald-600';
+    case 'CLOSED': return 'bg-slate-100 text-slate-500';
+    case 'APPEALED': return 'bg-purple-50 text-purple-600';
     default: return 'bg-slate-100 text-slate-500';
   }
 };
@@ -267,43 +288,68 @@ export const PoContractsPage: React.FC = () => {
         </div>
       } />
 
-      <DataTable
-        data={contracts}
-        columns={[
-          { id: 'contract', header: 'Contract', sortable: true, sortValue: (c: any) => c.title, searchableValue: (c: any) => `${c.title} ${c.contractNumber} ${c.type}`, cell: (c: any) => <div><p className="font-semibold text-slate-900">{c.title || 'Untitled contract'}</p><p className="mt-1 text-xs text-slate-500">{c.contractNumber || 'No contract number'} · {(c.type || 'Not specified').replace(/_/g, ' ')}</p></div> },
-          { id: 'party', header: 'Vendor / Counterparty', sortable: true, accessor: (c: any) => c.vendorName || c.counterParty || 'Not provided', sortValue: (c: any) => c.vendorName || c.counterParty },
-          { id: 'value', header: 'Value', sortable: true, align: 'right', accessor: (c: any) => formatCurrency(c.contractValue), sortValue: (c: any) => Number(c.contractValue || 0) },
-          { id: 'end', header: 'Expiration', sortable: true, accessor: (c: any) => c.endDate || 'Not provided', sortValue: (c: any) => c.endDate },
-          { id: 'risk', header: 'AI risk', sortable: true, cell: (c: any) => <DataTableStatusBadge value={c.aiAssessedRiskLevel || 'NOT_ASSESSED'} />, sortValue: (c: any) => c.aiAssessedRiskLevel },
-          { id: 'status', header: 'Status', sortable: true, cell: (c: any) => <DataTableStatusBadge value={c.status} />, sortValue: (c: any) => c.status },
-        ] satisfies DataTableColumn<any>[]}
-        rowKey={(c: any) => c.id}
-        caption="Procurement contracts"
-        loading={loading}
-        error={error}
-        onRetry={load}
-        onRefresh={load}
-        searchableText={(c: any) => `${c.title} ${c.contractNumber} ${c.type} ${c.vendorName} ${c.counterParty} ${c.status} ${c.aiAssessedRiskLevel}`}
-        searchPlaceholder="Search contracts..."
-        filters={<select aria-label="Contract status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="min-h-10 rounded-control border border-slate-300 bg-white px-3 text-sm text-slate-700">{statuses.map((status) => <option key={status || 'ALL'} value={status}>{status ? status.replace(/_/g, ' ') : 'All statuses'}</option>)}</select>}
-        activeFilters={statusFilter ? [{ id: 'status', label: 'Status', value: statusFilter.replace(/_/g, ' '), onRemove: () => setStatusFilter('') }] : []}
-        onClearFilters={() => setStatusFilter('')}
-        emptyTitle="No contracts"
-        emptyDescription="No procurement contracts are available."
-        filteredEmptyTitle="No contracts match the current filters"
-        rowActions={(c: any) => {
-          const status = String(c.status || '').toUpperCase();
-          const busy = busyId === c.id;
-          return <DataTableRowActions row={c} label={`Actions for ${c.title || 'contract'}`} actions={[
-            { id: 'details', label: 'View details', icon: ChevronRight, disabled: busy, onSelect: () => setDetail(c) },
-            { id: 'edit', label: 'Edit contract', icon: Pencil, disabled: busy, onSelect: () => openEdit(c) },
-            { id: 'submit', label: 'Submit for review', icon: Send, hidden: status !== 'DRAFT', disabled: busy, onSelect: () => runAction(c.id, 'submit-review', 'Submitted for review') },
-            { id: 'activate', label: 'Activate contract', icon: PlayCircle, hidden: status !== 'APPROVED', disabled: busy, onSelect: () => runAction(c.id, 'activate', 'Contract activated') },
-            { id: 'renew', label: 'Renew contract', icon: RotateCcw, hidden: !['ACTIVE', 'EXPIRED'].includes(status), disabled: busy, onSelect: () => runAction(c.id, 'renew', 'Contract renewed') },
-            { id: 'terminate', label: 'Terminate contract', icon: Ban, hidden: status === 'TERMINATED', destructive: true, disabled: busy, onSelect: () => runAction(c.id, 'terminate', 'Contract terminated') },
-          ]} />;
-        }}
-      />
+      <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+        <Filter className="w-4 h-4 text-slate-400" />
+        {statuses.map(s => (
+          <button key={s || 'ALL'} onClick={() => setStatusFilter(s)}
+            className={`text-[11px] font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+              statusFilter === s ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-500 border-slate-200 hover:border-emerald-300'
+            }`}>
+            {s ? s.replace('_', ' ') : 'ALL'}
+          </button>
+        ))}
+      </div>
+
+      {contracts.length === 0 ? (
+        <EmptyState icon={FileSignature} title="No Contracts" desc="No contracts match the current filter." />
+      ) : (
+        <div className="card-stat overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left">
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Contract</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Vendor / Counterparty</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Value</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">End Date</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Risk</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {contracts.map((c: any) => {
+                  const status = (c.status || '').toUpperCase();
+                  const busy = busyId === c.id;
+                  return (
+                    <tr key={c.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                      <td className="p-3">
+                        <p className="font-medium text-slate-900">{c.title}</p>
+                        <p className="text-[11px] text-slate-400 font-mono">{c.contractNumber} · {c.type}</p>
+                      </td>
+                      <td className="p-3 text-slate-600">{c.vendorName || c.counterParty || '-'}</td>
+                      <td className="p-3 text-slate-600 font-mono text-xs">{formatCurrency(c.contractValue)}</td>
+                      <td className="p-3 text-xs text-slate-400 font-mono">{c.endDate || '-'}</td>
+                      <td className="p-3"><Badge text={c.aiAssessedRiskLevel} className={riskBadge(c.aiAssessedRiskLevel)} /></td>
+                      <td className="p-3"><Badge text={c.status} className={contractStatusBadge(c.status)} /></td>
+                      <td className="p-3">
+                        <div className="flex items-center justify-end space-x-1.5 flex-wrap gap-y-1">
+                          <ActionButton onClick={() => setDetail(c)} icon={ChevronRight} disabled={busy}>Details</ActionButton>
+                          <ActionButton onClick={() => openEdit(c)} icon={Pencil} disabled={busy}>Edit</ActionButton>
+                          {status === 'DRAFT' && <ActionButton onClick={() => runAction(c.id, 'submit-review', 'Submitted for review')} icon={Send} variant="primary" disabled={busy}>Submit</ActionButton>}
+                          {status === 'APPROVED' && <ActionButton onClick={() => runAction(c.id, 'activate', 'Contract activated')} icon={PlayCircle} variant="primary" disabled={busy}>Activate</ActionButton>}
+                          {(status === 'ACTIVE' || status === 'EXPIRED') && <ActionButton onClick={() => runAction(c.id, 'renew', 'Contract renewed')} icon={RotateCcw} disabled={busy}>Renew</ActionButton>}
+                          {status !== 'TERMINATED' && <ActionButton onClick={() => runAction(c.id, 'terminate', 'Contract terminated')} icon={Ban} variant="danger" disabled={busy}>Terminate</ActionButton>}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {editing && (
         <Modal title={editing.id ? 'Edit Contract' : 'New Contract'} icon={FileSignature} onClose={() => !saving && setEditing(null)} wide>
@@ -585,34 +631,58 @@ export const PoVendorsPage: React.FC = () => {
         </div>
       } />
 
-      <DataTable
-        data={vendors}
-        columns={[
-          { id: 'vendor', header: 'Vendor', sortable: true, sortValue: (v: any) => v.name, searchableValue: (v: any) => `${v.name} ${v.vendorCode}`, cell: (v: any) => <div><p className="font-semibold text-slate-900">{v.name || 'Unnamed vendor'}</p><p className="mt-1 text-xs text-slate-500">{v.vendorCode || 'No vendor code'}</p></div> },
-          { id: 'category', header: 'Category', sortable: true, accessor: (v: any) => (v.category || 'Not specified').replace(/_/g, ' '), sortValue: (v: any) => v.category },
-          { id: 'performance', header: 'Performance', sortable: true, align: 'right', accessor: (v: any) => v.performanceScore ?? 'Not rated', sortValue: (v: any) => v.performanceScore ?? -1 },
-          { id: 'sla', header: 'SLA', sortable: true, align: 'right', accessor: (v: any) => v.slaComplianceRate != null ? `${v.slaComplianceRate}%` : 'Not provided', sortValue: (v: any) => v.slaComplianceRate ?? -1 },
-          { id: 'status', header: 'Status', sortable: true, cell: (v: any) => <DataTableStatusBadge value={v.status} />, sortValue: (v: any) => v.status },
-        ] satisfies DataTableColumn<any>[]}
-        rowKey={(v: any) => v.id}
-        caption="Procurement vendors"
-        loading={loading}
-        error={error}
-        onRetry={load}
-        onRefresh={load}
-        searchableText={(v: any) => `${v.name} ${v.vendorCode} ${v.category} ${v.status}`}
-        searchPlaceholder="Search vendors..."
-        filters={<select aria-label="Vendor status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="min-h-10 rounded-control border border-slate-300 bg-white px-3 text-sm text-slate-700">{statuses.map((status) => <option key={status || 'ALL'} value={status}>{status ? status.replace(/_/g, ' ') : 'All statuses'}</option>)}</select>}
-        activeFilters={statusFilter ? [{ id: 'status', label: 'Status', value: statusFilter.replace(/_/g, ' '), onRemove: () => setStatusFilter('') }] : []}
-        onClearFilters={() => setStatusFilter('')}
-        emptyTitle="No vendors"
-        emptyDescription="No vendors are available."
-        filteredEmptyTitle="No vendors match the current filters"
-        rowActions={(v: any) => <DataTableRowActions row={v} label={`Actions for ${v.name || 'vendor'}`} actions={[
-          { id: 'manage', label: 'Manage vendor', icon: ChevronRight, onSelect: () => setDetail(v) },
-          { id: 'edit', label: 'Edit vendor', icon: Pencil, onSelect: () => openEdit(v) },
-        ]} />}
-      />
+      <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+        <Filter className="w-4 h-4 text-slate-400" />
+        {statuses.map(s => (
+          <button key={s || 'ALL'} onClick={() => setStatusFilter(s)}
+            className={`text-[11px] font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+              statusFilter === s ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-500 border-slate-200 hover:border-emerald-300'
+            }`}>
+            {s ? s.replace('_', ' ') : 'ALL'}
+          </button>
+        ))}
+      </div>
+
+      {vendors.length === 0 ? (
+        <EmptyState icon={Building2} title="No Vendors" desc="No vendors match the current filter." />
+      ) : (
+        <div className="card-stat overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left">
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Vendor</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Category</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Performance</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">SLA</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vendors.map((v: any) => (
+                  <tr key={v.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                    <td className="p-3">
+                      <p className="font-medium text-slate-900">{v.name}</p>
+                      <p className="text-[11px] text-slate-400 font-mono">{v.vendorCode}</p>
+                    </td>
+                    <td className="p-3 text-slate-600 text-xs">{(v.category || '').replace(/_/g, ' ')}</td>
+                    <td className="p-3"><span className={`text-sm font-bold ${perfColor(v.performanceScore)}`}>{v.performanceScore ?? '—'}</span></td>
+                    <td className="p-3 text-slate-600 font-mono text-xs">{v.slaComplianceRate != null ? `${v.slaComplianceRate}%` : '-'}</td>
+                    <td className="p-3"><Badge text={v.status} className={vendorStatusBadge(v.status)} /></td>
+                    <td className="p-3">
+                      <div className="flex items-center justify-end space-x-1.5">
+                        <ActionButton onClick={() => setDetail(v)} icon={ChevronRight} variant="primary">Manage</ActionButton>
+                        <ActionButton onClick={() => openEdit(v)} icon={Pencil}>Edit</ActionButton>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {editing && (
         <Modal title={editing.id ? 'Edit Vendor' : 'New Vendor'} icon={Building2} onClose={() => !saving && setEditing(null)} wide>
@@ -1100,31 +1170,63 @@ export const PoDocumentsPage: React.FC = () => {
         <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" aria-label="Refresh contract documents"><RefreshCw className="h-4 w-4" /></button>
       } />
 
-      <DataTable
-        data={documents}
-        columns={[
-          { id: 'document', header: 'Document', sortable: true, sortValue: (d: any) => d.title, searchableValue: (d: any) => `${d.title} ${d.fileName}`, cell: (d: any) => <div><p className="font-semibold text-slate-900">{d.title || 'Untitled document'}</p><p className="mt-1 max-w-52 truncate text-xs text-slate-500" title={d.fileName}>{d.fileName || 'No file name'}</p></div> },
-          { id: 'classification', header: 'Classification', sortable: true, cell: (d: any) => <DataTableStatusBadge value={d.classificationLevel || 'UNCLASSIFIED'} />, sortValue: (d: any) => d.classificationLevel },
-          { id: 'version', header: 'Version', align: 'right', optional: true, accessor: (d: any) => `v${d.versionNumber ?? 1}` },
-          { id: 'size', header: 'Size', align: 'right', optional: true, accessor: (d: any) => formatSize(d.fileSize) },
-          { id: 'status', header: 'Status', sortable: true, cell: (d: any) => <DataTableStatusBadge value={d.status} />, sortValue: (d: any) => d.status },
-        ] satisfies DataTableColumn<any>[]}
-        rowKey={(d: any) => d.id}
-        caption="Procurement documents"
-        loading={loading}
-        error={error}
-        onRetry={load}
-        onRefresh={load}
-        searchableText={(d: any) => `${d.title} ${d.fileName} ${d.classificationLevel} ${d.status}`}
-        searchPlaceholder="Search procurement documents..."
-        filters={<select aria-label="Document status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="min-h-10 rounded-control border border-slate-300 bg-white px-3 text-sm text-slate-700">{statuses.map((status) => <option key={status || 'ALL'} value={status}>{status ? status.replace(/_/g, ' ') : 'All statuses'}</option>)}</select>}
-        activeFilters={statusFilter ? [{ id: 'status', label: 'Status', value: statusFilter.replace(/_/g, ' '), onRemove: () => setStatusFilter('') }] : []}
-        onClearFilters={() => setStatusFilter('')}
-        emptyTitle="No documents"
-        emptyDescription="No procurement documents are available."
-        filteredEmptyTitle="No documents match the current filters"
-        rowActions={(d: any) => String(d.status || '').toUpperCase() === 'PENDING_REVIEW' ? <DataTableRowActions row={d} label={`Actions for ${d.title || 'document'}`} actions={[{ id: 'approve', label: 'Approve document', icon: CheckCircle2, disabled: busyId === d.id, onSelect: () => approve(d.id) }]} /> : <span className="text-xs font-semibold text-slate-500">No actions</span>}
-      />
+      <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+        <Filter className="w-4 h-4 text-slate-400" />
+        {statuses.map(s => (
+          <button key={s || 'ALL'} onClick={() => setStatusFilter(s)}
+            className={`text-[11px] font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+              statusFilter === s ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-500 border-slate-200 hover:border-emerald-300'
+            }`}>
+            {s ? s.replace('_', ' ') : 'ALL'}
+          </button>
+        ))}
+      </div>
+
+      {documents.length === 0 ? (
+        <EmptyState icon={FileText} title="No Documents" desc="No documents match the current filter." />
+      ) : (
+        <div className="card-stat overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left">
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Title</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Classification</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Version</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Size</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {documents.map((d: any) => {
+                  const status = (d.status || '').toUpperCase();
+                  const busy = busyId === d.id;
+                  return (
+                    <tr key={d.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                      <td className="p-3">
+                        <p className="font-medium text-slate-900">{d.title}</p>
+                        <p className="text-[11px] text-slate-400 font-mono">{d.fileName}</p>
+                      </td>
+                      <td className="p-3"><Badge text={d.classificationLevel} className="bg-slate-100 text-slate-600" /></td>
+                      <td className="p-3 text-slate-600 font-mono text-xs">v{d.versionNumber ?? 1}</td>
+                      <td className="p-3 text-xs text-slate-400">{formatSize(d.fileSize)}</td>
+                      <td className="p-3"><Badge text={d.status} className={docStatusBadge(d.status)} /></td>
+                      <td className="p-3">
+                        <div className="flex items-center justify-end space-x-1.5">
+                          {status === 'PENDING_REVIEW' ? (
+                            <ActionButton onClick={() => approve(d.id)} icon={CheckCircle2} variant="primary" disabled={busy}>Approve</ActionButton>
+                          ) : <span className="text-[11px] text-slate-300">No actions</span>}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -1166,27 +1268,39 @@ export const PoLegalCasesPage: React.FC = () => {
         <span>Read-only view of legal cases managed by the Legal Officer</span>
       </div>
 
-      <DataTable
-        data={cases}
-        columns={[
-          { id: 'case', header: 'Case', sortable: true, sortValue: (c: any) => c.title, searchableValue: (c: any) => `${c.title} ${c.caseNumber} ${c.courtName}`, cell: (c: any) => <div><p className="font-semibold text-slate-900">{c.title || 'Untitled case'}</p><p className="mt-1 text-xs text-slate-500">{c.caseNumber || 'No case number'}{c.courtName ? ` · ${c.courtName}` : ''}</p></div> },
-          { id: 'type', header: 'Category', sortable: true, accessor: (c: any) => (c.caseType || 'Not specified').replace(/_/g, ' '), sortValue: (c: any) => c.caseType },
-          { id: 'opposing', header: 'Opposing party', optional: true, accessor: (c: any) => c.opposingParty || 'Not provided' },
-          { id: 'priority', header: 'Risk / Priority', sortable: true, cell: (c: any) => <DataTableStatusBadge value={c.priority || 'NOT_SET'} />, sortValue: (c: any) => c.priority },
-          { id: 'status', header: 'Status', sortable: true, cell: (c: any) => <DataTableStatusBadge value={c.status} />, sortValue: (c: any) => c.status },
-        ] satisfies DataTableColumn<any>[]}
-        rowKey={(c: any) => c.id}
-        caption="Read-only legal cases"
-        loading={loading}
-        error={error}
-        onRetry={load}
-        onRefresh={load}
-        searchableText={(c: any) => `${c.title} ${c.caseNumber} ${c.courtName} ${c.caseType} ${c.opposingParty} ${c.priority} ${c.status}`}
-        searchPlaceholder="Search visible legal cases..."
-        emptyTitle="No legal cases"
-        emptyDescription="No legal cases are available in the authorized procurement view."
-        filteredEmptyTitle="No legal cases match your search"
-      />
+      {cases.length === 0 ? (
+        <EmptyState icon={Gavel} title="No Legal Cases" desc="No legal cases are on record." />
+      ) : (
+        <div className="card-stat overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left">
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Case</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Type</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Opposing</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Priority</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cases.map((c: any) => (
+                  <tr key={c.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                    <td className="p-3">
+                      <p className="font-medium text-slate-900">{c.title}</p>
+                      <p className="text-[11px] text-slate-400 font-mono">{c.caseNumber}{c.courtName ? ` · ${c.courtName}` : ''}</p>
+                    </td>
+                    <td className="p-3 text-slate-600 text-xs">{(c.caseType || '').replace(/_/g, ' ')}</td>
+                    <td className="p-3 text-slate-600">{c.opposingParty || '-'}</td>
+                    <td className="p-3"><Badge text={c.priority} className={riskBadge(c.priority)} /></td>
+                    <td className="p-3"><Badge text={c.status} className={caseStatusBadge(c.status)} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -1214,6 +1328,15 @@ export const PoAuditLogsPage: React.FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
+  const severityBadge = (sev?: string) => {
+    switch ((sev || '').toUpperCase()) {
+      case 'CRITICAL': return 'bg-rose-50 text-rose-600';
+      case 'HIGH': return 'bg-orange-50 text-orange-600';
+      case 'WARNING': case 'MEDIUM': return 'bg-amber-50 text-amber-600';
+      default: return 'bg-slate-100 text-slate-500';
+    }
+  };
+
   if (loading && logs.length === 0) return <LoadingSkeleton />;
   if (error && logs.length === 0) return <ErrorState message={error} onRetry={() => setRetry(r => r + 1)} />;
 
@@ -1228,28 +1351,41 @@ export const PoAuditLogsPage: React.FC = () => {
         <span>Read-only view of system audit events for contract &amp; procurement oversight</span>
       </div>
 
-      <DataTable
-        data={logs}
-        columns={[
-          { id: 'time', header: 'Timestamp', sortable: true, sortValue: (a: any) => a.createdAt, accessor: (a: any) => a.createdAt ? new Date(a.createdAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' }) : '—' },
-          { id: 'actor', header: 'Actor', sortable: true, accessor: (a: any) => a.userEmail || 'Unknown actor', sortValue: (a: any) => a.userEmail },
-          { id: 'action', header: 'Action', sortable: true, accessor: (a: any) => <span className="font-semibold text-slate-900">{a.action || 'Not provided'}</span>, sortValue: (a: any) => a.action },
-          { id: 'module', header: 'Module', sortable: true, accessor: (a: any) => a.module || '—', sortValue: (a: any) => a.module },
-          { id: 'entity', header: 'Entity', optional: true, cell: (a: any) => <div><p>{a.entityName || a.entityType || 'Not provided'}</p>{a.entityType && <p className="mt-1 text-[10px] text-slate-500">{a.entityType}</p>}</div> },
-          { id: 'severity', header: 'Severity', sortable: true, cell: (a: any) => <DataTableStatusBadge value={a.severity || 'INFO'} />, sortValue: (a: any) => a.severity },
-        ] satisfies DataTableColumn<any>[]}
-        rowKey={(a: any) => a.id}
-        caption="Procurement audit trail"
-        loading={loading}
-        error={error}
-        onRetry={load}
-        onRefresh={load}
-        searchableText={(a: any) => `${a.action} ${a.entityName} ${a.entityType} ${a.module} ${a.userEmail} ${a.severity}`}
-        searchPlaceholder="Search procurement audit events..."
-        emptyTitle="No audit events"
-        emptyDescription="No procurement audit events were recorded in the last 30 days."
-        filteredEmptyTitle="No audit events match your search"
-      />
+      {logs.length === 0 ? (
+        <EmptyState icon={ScrollText} title="No Audit Events" desc="No audit events recorded in the last 30 days." />
+      ) : (
+        <div className="card-stat overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left">
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Action</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Entity</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Module</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">User</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Severity</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map((a: any) => (
+                  <tr key={a.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                    <td className="p-3 font-medium text-slate-900">{a.action}</td>
+                    <td className="p-3 text-slate-600">
+                      <p className="text-xs">{a.entityName || a.entityType || '-'}</p>
+                      <p className="text-[10px] text-slate-400 font-mono">{a.entityType}</p>
+                    </td>
+                    <td className="p-3 text-slate-600 text-xs">{a.module || '-'}</td>
+                    <td className="p-3 text-slate-600 text-xs font-mono">{a.userEmail || '-'}</td>
+                    <td className="p-3"><Badge text={a.severity} className={severityBadge(a.severity)} /></td>
+                    <td className="p-3 text-[10px] text-slate-400 font-mono">{a.createdAt ? new Date(a.createdAt).toLocaleString() : '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

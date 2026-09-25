@@ -45,8 +45,7 @@ describe('RoleWorkspacePage loading transitions', () => {
     render(<RoleWorkspacePage config={config} section="dashboard" />);
 
     expect(screen.getByText('Loading executive dashboard...')).toBeInTheDocument();
-    expect(await screen.findAllByText('Unable to load workspace records. Please try again.')).not.toHaveLength(0);
-    expect(screen.queryByText('Workspace service unavailable')).not.toBeInTheDocument();
+    expect(await screen.findByText('Workspace service unavailable')).toBeInTheDocument();
     expect(screen.queryByText('Loading executive dashboard...')).not.toBeInTheDocument();
   });
 });

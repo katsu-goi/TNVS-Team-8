@@ -4,11 +4,10 @@ import { extractErrorMessage } from '../../api/client';
 import { governanceService, RetentionDisposalQueueItem } from '../../api/governanceService';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { DashboardHero } from '../ui/DashboardPrimitives';
-import { DataTable, DataTableRowActions, DataTableStatusBadge, type DataTableColumn } from '../ui/data-table';
 
 const formatDateTime = (value: string) => {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? 'Unknown' : date.toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' });
+  return Number.isNaN(date.getTime()) ? 'Unknown' : date.toLocaleString();
 };
 
 export const RecordsDisposalConsole: React.FC = () => {
@@ -86,13 +85,6 @@ export const RecordsDisposalConsole: React.FC = () => {
     }
   };
 
-  const columns: DataTableColumn<RetentionDisposalQueueItem>[] = [
-    { id: 'record', header: 'Record', searchableValue: (item) => `${item.source_table} ${item.id}`, cell: (item) => <div><p className="font-semibold text-slate-900">{item.source_table.replace(/_/g, ' ')}</p><p className="mt-1 font-mono text-[10px] text-slate-500" title={item.id}>Queue {item.id.slice(0, 8)}…</p></div> },
-    { id: 'reason', header: 'Disposition reason', searchableValue: (item) => item.reason, cell: (item) => <p className="max-w-xl truncate text-sm text-slate-700" title={item.reason}>{item.reason || 'Not provided'}</p> },
-    { id: 'flagged', header: 'Flagged at', sortable: true, sortValue: (item) => item.flagged_at, accessor: (item) => formatDateTime(item.flagged_at) },
-    { id: 'status', header: 'Status', cell: () => <DataTableStatusBadge value="PENDING_DELETION" /> },
-  ];
-
   return (
     <div className="space-y-6">
       <DashboardHero eyebrow="Records Governance" title="Lifecycle & Defensible Disposal" subtitle="Review retention items flagged by the cloud disposal scheduler before recording a final decision." actions={
@@ -122,27 +114,55 @@ export const RecordsDisposalConsole: React.FC = () => {
         </div>
       </section>
 
-      <div>
-        <div className="mb-3 flex items-center justify-between gap-4"><div><h2 className="text-sm font-bold text-slate-900">Pending Disposal Queue</h2><p className="mt-1 text-xs text-slate-500">Only server-authorized records with status <span className="font-mono">PENDING_DELETION</span> are shown.</p></div><DataTableStatusBadge value={`${items.length} PENDING`} tone="warning" /></div>
-        <DataTable
-          data={items}
-          columns={columns}
-          rowKey={(item) => item.id}
-          caption="Pending records disposal queue"
-          loading={loading}
-          error={error || undefined}
-          onRetry={load}
-          onRefresh={load}
-          searchableText={(item) => `${item.source_table} ${item.reason} ${item.id}`}
-          searchPlaceholder="Search pending disposal records..."
-          emptyTitle="No pending disposal items"
-          emptyDescription="The queue is clear for the current retention cycle."
-          rowActions={(item) => busyAction.endsWith(`:${item.id}`) ? <Loader2 className="h-5 w-5 animate-spin text-brand-500" aria-label="Updating disposal item" /> : <DataTableRowActions row={item} label={`Actions for ${item.source_table}`} actions={[
-            { id: 'hold', label: 'Place on legal hold', icon: Scale, disabled: Boolean(busyAction), onSelect: handleLegalHold },
-            { id: 'dispose', label: 'Execute disposal', icon: Trash2, destructive: true, disabled: Boolean(busyAction), onSelect: (row) => { setSelectedItem(row); setNotes(''); setError(''); setFeedback(''); } },
-          ]} />}
-        />
-      </div>
+      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-bold text-slate-900">Pending Disposal Queue</h2>
+              <p className="mt-1 text-xs text-slate-500">Only records with status <span className="font-mono">PENDING_DELETION</span> are shown.</p>
+            </div>
+            <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-800">{items.length} pending</span>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center gap-3 p-12 text-sm text-slate-500"><Loader2 className="h-5 w-5 animate-spin text-[#D02F34]" />Loading disposal queue...</div>
+        ) : !items.length ? (
+          <div className="p-12 text-center"><ShieldCheck className="mx-auto h-8 w-8 text-emerald-600" /><p className="mt-3 text-sm font-semibold text-slate-900">No pending disposal items</p><p className="mt-1 text-xs text-slate-500">The queue is clear for the current retention cycle.</p></div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-[980px] w-full text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-5 py-3 font-bold">Queue ID</th>
+                  <th className="px-5 py-3 font-bold">Source Table</th>
+                  <th className="px-5 py-3 font-bold">Reason</th>
+                  <th className="px-5 py-3 font-bold">Flagged At</th>
+                  <th className="px-5 py-3 text-right font-bold">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {items.map((item) => {
+                  const isBusy = busyAction.endsWith(`:${item.id}`);
+                  return (
+                    <tr key={item.id} className="align-top hover:bg-slate-50/70">
+                      <td className="px-5 py-4 font-mono text-xs text-slate-700">{item.id}</td>
+                      <td className="px-5 py-4"><code className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-700">{item.source_table}</code></td>
+                      <td className="max-w-md px-5 py-4 text-sm text-slate-700">{item.reason}</td>
+                      <td className="whitespace-nowrap px-5 py-4 text-xs text-slate-600">{formatDateTime(item.flagged_at)}</td>
+                      <td className="px-5 py-4"><div className="flex justify-end gap-2">
+                        <button onClick={() => { setSelectedItem(item); setNotes(''); setError(''); setFeedback(''); }} disabled={Boolean(busyAction)} className="inline-flex items-center gap-2 rounded-lg bg-red-700 px-3 py-2 text-xs font-bold text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"><Trash2 className="h-4 w-4" />Execute Disposal</button>
+                        <button onClick={() => void handleLegalHold(item)} disabled={Boolean(busyAction)} className="inline-flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"><Scale className="h-4 w-4" />Place on Legal Hold</button>
+                        {isBusy && <Loader2 className="h-5 w-5 animate-spin self-center text-[#D02F34]" />}
+                      </div></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {selectedItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) closeModal(); }}>

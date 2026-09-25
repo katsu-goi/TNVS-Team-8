@@ -12,7 +12,6 @@ import {
 import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 import { Button, FormField, Modal, PasswordField, SelectField } from '../ui/SharedUI';
 import { DashboardHero } from '../ui/DashboardPrimitives';
-import { DataTable, DataTableStatusBadge, type DataTableColumn } from '../ui/data-table';
 
 type AccountForm = {
   firstName: string;
@@ -48,7 +47,6 @@ export const RbacAdminPage: React.FC = () => {
   const [showCreateAccount, setShowCreateAccount] = useState(false);
   const [createAccount, setCreateAccount] = useState<AccountForm>(emptyAccountForm);
   const [editAccount, setEditAccount] = useState<AccountForm>(emptyAccountForm);
-  const [editAccountUserId, setEditAccountUserId] = useState('');
 
   const load = useCallback(async (showPageLoading = true) => {
     if (showPageLoading) setLoading(true);
@@ -94,7 +92,6 @@ export const RbacAdminPage: React.FC = () => {
       position: selectedUser.position || '',
       status: selectedUser.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
     });
-    setEditAccountUserId(selectedUser.id);
   }, [selectedUser]);
 
   const mutate = async (
@@ -159,27 +156,11 @@ export const RbacAdminPage: React.FC = () => {
       <div className="grid gap-6 xl:grid-cols-2">
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex items-center gap-2"><UsersRound className="h-5 w-5 text-[#D02F34]" /><h2 className="font-bold text-slate-900">User Role Assignments</h2></div>
-          <div className="mt-4">
-            <DataTable
-              data={users}
-              rowKey={(row) => row.id}
-              caption="RBAC user accounts"
-              columns={[
-                { id: 'identity', header: 'User', searchableValue: (row) => `${row.fullName} ${row.email}`, cell: (row) => <><p className="font-semibold text-slate-900">{row.fullName}</p><p className="text-xs text-slate-500">{row.email}</p></>, sortable: true },
-                { id: 'employeeId', header: 'Employee ID', accessor: (row) => row.employeeId || '—', sortable: true },
-                { id: 'department', header: 'Department', accessor: (row) => row.department || 'Not assigned', sortable: true, optional: true },
-                { id: 'roles', header: 'Roles', searchableValue: (row) => row.roles.join(' '), cell: (row) => <span className="line-clamp-2 text-xs">{row.roles.length ? row.roles.join(', ') : 'No roles assigned'}</span> },
-                { id: 'status', header: 'Status', accessor: (row) => <DataTableStatusBadge value={row.accountLocked ? 'LOCKED' : row.status} />, searchableValue: (row) => `${row.accountLocked ? 'LOCKED' : ''} ${row.status}`, sortable: true },
-              ] satisfies DataTableColumn<RbacUser>[]}
-              searchableText={(row) => `${row.fullName} ${row.email} ${row.employeeId ?? ''} ${row.department ?? ''} ${row.roles.join(' ')} ${row.status}`}
-              searchPlaceholder="Search user accounts…"
-              onRowClick={(row) => setSelectedUserId(row.id)}
-              rowActions={(row) => <button type="button" onClick={() => setSelectedUserId(row.id)} className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold ${selectedUserId === row.id ? 'border-red-200 bg-red-50 text-red-700' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>{selectedUserId === row.id ? 'Selected' : 'Manage'}</button>}
-              emptyTitle="No user accounts"
-              emptyDescription="Create an account to assign roles and permissions."
-            />
-          </div>
-          {selectedUser && editAccountUserId === selectedUser.id && (
+          <select value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}
+            aria-label="Select user account" className="mt-4 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950">
+            {users.map((user) => <option key={user.id} value={user.id}>{user.fullName} - {user.email}</option>)}
+          </select>
+          {selectedUser && (
             <div className={`mt-3 flex items-center justify-between rounded-xl border px-3 py-3 ${selectedUser.accountLocked ? 'border-rose-200 bg-rose-50' : 'border-emerald-200 bg-emerald-50'}`}>
               <div className="flex items-center gap-2">
                 {selectedUser.accountLocked ? <LockKeyhole className="h-4 w-4 text-rose-600" /> : <UnlockKeyhole className="h-4 w-4 text-emerald-600" />}
@@ -191,7 +172,7 @@ export const RbacAdminPage: React.FC = () => {
               {selectedUser.accountLocked && <button disabled={saving} onClick={() => mutate(() => rbacService.unlockUser(selectedUser.id), 'Account unlocked successfully.')} className="inline-flex items-center gap-1 rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50" title="Unlock account"><UnlockKeyhole className="h-3.5 w-3.5" />Unlock</button>}
             </div>
           )}
-          {selectedUser && editAccountUserId === selectedUser.id && (
+          {selectedUser && (
             <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
               <h3 className="text-sm font-bold text-slate-900">Account credentials</h3>
               <p className="mt-1 text-xs text-slate-600">Update the login email or set a new password. The current password is never displayed.</p>
@@ -275,24 +256,16 @@ export const RbacAdminPage: React.FC = () => {
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center gap-2"><ShieldAlert className="h-5 w-5 text-[#D02F34]" /><h2 className="font-bold text-slate-900">Separation of Duties Constraints</h2></div>
-        <div className="mt-4">
-          <DataTable
-            data={conflicts}
-            rowKey={(row) => row.id}
-            caption="Separation of duties constraints"
-            columns={[
-              { id: 'code', header: 'Constraint', searchableValue: (row) => `${row.code} ${row.description ?? ''}`, cell: (row) => <><p className="font-semibold text-slate-900">{row.code}</p><p className="mt-1 max-w-sm truncate text-xs text-slate-500" title={row.description}>{row.description || '—'}</p></>, sortable: true },
-              { id: 'firstRole', header: 'First role', accessor: (row) => row.firstRole, sortable: true },
-              { id: 'secondRole', header: 'Conflicting role', accessor: (row) => row.secondRole, sortable: true },
-              { id: 'status', header: 'Status', accessor: (row) => <DataTableStatusBadge value={row.active ? 'ACTIVE' : 'INACTIVE'} />, sortValue: (row) => row.active ? 1 : 0, sortable: true },
-            ] satisfies DataTableColumn<RbacConflict>[]}
-            searchableText={(row) => `${row.code} ${row.firstRole} ${row.secondRole} ${row.description ?? ''}`}
-            searchPlaceholder="Search constraints…"
-            paginationEnabled={false}
-            rowActions={(row) => row.active ? <button type="button" disabled={saving} onClick={() => void mutate(() => rbacService.deactivateConflict(row.id), 'Constraint deactivated.')} className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50">Deactivate</button> : null}
-            emptyTitle="No separation-of-duties constraints"
-            emptyDescription="Create a constraint below when two roles must not be assigned together."
-          />
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {conflicts.map((conflict) => (
+            <div key={conflict.id} className={`rounded-xl border p-4 ${conflict.active ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-slate-50'}`}>
+              <p className="text-xs font-bold text-slate-800">{conflict.code}</p>
+              <p className="mt-1 text-sm text-slate-700">{conflict.firstRole} ↔ {conflict.secondRole}</p>
+              <p className="mt-1 text-xs text-slate-500">{conflict.description}</p>
+              {conflict.active && <button disabled={saving} onClick={() => mutate(() => rbacService.deactivateConflict(conflict.id), 'Constraint deactivated.')}
+                className="mt-3 text-xs font-semibold text-rose-600">Deactivate</button>}
+            </div>
+          ))}
         </div>
 
         <div className="mt-5 grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-2 xl:grid-cols-5">

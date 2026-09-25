@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   AlertCircle, RefreshCw, FileText, FileSignature, Archive,
-  ScrollText, CheckCircle2, Trash2, Plus,
+  ScrollText, Filter, CheckCircle2, Trash2, Plus,
   X, BellRing, Bell, ShieldAlert, Gavel, Send, Pencil, ChevronRight,
 } from 'lucide-react';
 import { safeFetchJson } from '../../api/client';
@@ -9,7 +9,6 @@ import { governanceService } from '../../api/governanceService';
 import { ContractAiPanel } from '../contracts/ContractAiPanel';
 import { Modal as SharedModal } from '../ui/SharedUI';
 import { DashboardHero } from '../ui/DashboardPrimitives';
-import { DataTable, DataTableRowActions, DataTableStatusBadge, type DataTableColumn } from '../ui/data-table';
 
 // POST/PUT helper that preserves the API envelope and propagates failures.
 const mutate = async (url: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown) => {
@@ -88,6 +87,16 @@ const useToast = () => {
 const inputCls = 'mt-1 w-full text-sm border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-200';
 const labelCls = 'text-[11px] font-semibold text-slate-500 uppercase';
 
+const docStatusBadge = (status?: string) => {
+  switch ((status || '').toUpperCase()) {
+    case 'APPROVED': return 'bg-emerald-50 text-emerald-600';
+    case 'PENDING_REVIEW': return 'bg-amber-50 text-amber-600';
+    case 'ARCHIVED': return 'bg-slate-100 text-slate-500';
+    case 'REJECTED': return 'bg-rose-50 text-rose-600';
+    default: return 'bg-blue-50 text-blue-600';
+  }
+};
+
 const contractStatusBadge = (status?: string) => {
   switch ((status || '').toUpperCase()) {
     case 'COUNSEL_APPROVED': return 'bg-emerald-50 text-emerald-600';
@@ -101,6 +110,18 @@ const contractStatusBadge = (status?: string) => {
     case 'RENEWED': return 'bg-purple-50 text-purple-600';
     case 'TERMINATED': return 'bg-slate-100 text-slate-500';
     default: return 'bg-blue-50 text-blue-600';
+  }
+};
+
+const caseStatusBadge = (status?: string) => {
+  switch ((status || '').toUpperCase()) {
+    case 'OPEN': return 'bg-blue-50 text-blue-600';
+    case 'IN_PROGRESS': return 'bg-amber-50 text-amber-600';
+    case 'PENDING_HEARING': return 'bg-orange-50 text-orange-600';
+    case 'SETTLED': return 'bg-emerald-50 text-emerald-600';
+    case 'CLOSED': return 'bg-slate-100 text-slate-500';
+    case 'APPEALED': return 'bg-purple-50 text-purple-600';
+    default: return 'bg-slate-100 text-slate-500';
   }
 };
 
@@ -260,40 +281,66 @@ export const LoContractsPage: React.FC = () => {
         </div>
       } />
 
-      <DataTable
-        data={contracts}
-        columns={[
-          { id: 'contract', header: 'Contract', sortable: true, sortValue: (c: any) => c.title, searchableValue: (c: any) => `${c.title} ${c.contractNumber} ${c.type}`, cell: (c: any) => <div><p className="font-semibold text-slate-900">{c.title || 'Untitled contract'}</p><p className="mt-1 text-xs text-slate-500">{c.contractNumber || 'No contract number'} · {(c.type || 'Not specified').replace(/_/g, ' ')}</p></div> },
-          { id: 'party', header: 'Counterparty', sortable: true, accessor: (c: any) => c.counterParty || 'Not provided', sortValue: (c: any) => c.counterParty },
-          { id: 'value', header: 'Value', sortable: true, align: 'right', accessor: (c: any) => formatCurrency(c.contractValue), sortValue: (c: any) => Number(c.contractValue || 0) },
-          { id: 'end', header: 'Expiration', sortable: true, accessor: (c: any) => c.endDate || 'Not provided', sortValue: (c: any) => c.endDate },
-          { id: 'risk', header: 'Risk', sortable: true, cell: (c: any) => <DataTableStatusBadge value={c.aiAssessedRiskLevel || 'NOT_ASSESSED'} />, sortValue: (c: any) => c.aiAssessedRiskLevel },
-          { id: 'status', header: 'Status', sortable: true, cell: (c: any) => <DataTableStatusBadge value={c.status} />, sortValue: (c: any) => c.status },
-        ] satisfies DataTableColumn<any>[]}
-        rowKey={(c: any) => c.id}
-        caption="Legal contracts"
-        loading={loading}
-        error={error}
-        onRetry={load}
-        onRefresh={load}
-        searchableText={(c: any) => `${c.title} ${c.contractNumber} ${c.type} ${c.counterParty} ${c.status} ${c.aiAssessedRiskLevel}`}
-        searchPlaceholder="Search legal contracts..."
-        filters={<select aria-label="Contract status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="min-h-10 rounded-control border border-slate-300 bg-white px-3 text-sm text-slate-700">{statuses.map((status) => <option key={status || 'ALL'} value={status}>{status ? status.replace(/_/g, ' ') : 'All statuses'}</option>)}</select>}
-        activeFilters={statusFilter ? [{ id: 'status', label: 'Status', value: statusFilter.replace(/_/g, ' '), onRemove: () => setStatusFilter('') }] : []}
-        onClearFilters={() => setStatusFilter('')}
-        emptyTitle="No contracts"
-        emptyDescription="No legal contracts are available."
-        filteredEmptyTitle="No contracts match the current filters"
-        rowActions={(c: any) => {
-          const status = String(c.status || '').toUpperCase();
-          const busy = busyId === c.id;
-          return <DataTableRowActions row={c} label={`Actions for ${c.title || 'contract'}`} actions={[
-            { id: 'details', label: status === 'REJECTED_REVISION' ? 'View counsel comments' : 'View details', icon: ChevronRight, disabled: busy, onSelect: () => setDetail(c) },
-            { id: 'edit', label: 'Edit contract', icon: Pencil, hidden: Boolean(c.workflowLocked), disabled: busy, onSelect: () => openEdit(c) },
-            { id: 'submit', label: 'Submit to counsel', icon: Send, hidden: !['DRAFT', 'REJECTED_REVISION'].includes(status), disabled: busy, onSelect: () => submitToCounsel(c) },
-          ]} />;
-        }}
-      />
+      <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+        <Filter className="w-4 h-4 text-slate-400" />
+        {statuses.map(s => (
+          <button key={s || 'ALL'} onClick={() => setStatusFilter(s)}
+            className={`text-[11px] font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+              statusFilter === s ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-500 border-slate-200 hover:border-emerald-300'
+            }`}>
+            {s ? s.replace('_', ' ') : 'ALL'}
+          </button>
+        ))}
+      </div>
+
+      {contracts.length === 0 ? (
+        <EmptyState icon={FileSignature} title="No Contracts" desc="No contracts match the current filter." />
+      ) : (
+        <div className="card-stat overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left">
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Contract</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Counterparty</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Value</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">End Date</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Risk</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {contracts.map((c: any) => {
+                  const status = (c.status || '').toUpperCase();
+                  const busy = busyId === c.id;
+                  return (
+                    <tr key={c.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                      <td className="p-3">
+                        <p className="font-medium text-slate-900">{c.title}</p>
+                        <p className="text-[11px] text-slate-400 font-mono">{c.contractNumber} · {c.type}</p>
+                      </td>
+                      <td className="p-3 text-slate-600">{c.counterParty || '-'}</td>
+                      <td className="p-3 text-slate-600 font-mono text-xs">{formatCurrency(c.contractValue)}</td>
+                      <td className="p-3 text-xs text-slate-400 font-mono">{c.endDate || '-'}</td>
+                      <td className="p-3"><Badge text={c.aiAssessedRiskLevel} className={riskBadge(c.aiAssessedRiskLevel)} /></td>
+                      <td className="p-3"><Badge text={c.status} className={contractStatusBadge(c.status)} /></td>
+                      <td className="p-3">
+                        <div className="flex items-center justify-end space-x-1.5 flex-wrap gap-y-1">
+                          <ActionButton onClick={() => setDetail(c)} icon={ChevronRight} disabled={busy}>Details</ActionButton>
+                          {!c.workflowLocked && <ActionButton onClick={() => openEdit(c)} icon={Pencil} disabled={busy}>Edit</ActionButton>}
+                          {(status === 'DRAFT' || status === 'REJECTED_REVISION') && <ActionButton onClick={() => submitToCounsel(c)} icon={Send} variant="primary" disabled={busy}>Submit to Counsel</ActionButton>}
+                          {status === 'REJECTED_REVISION' && <ActionButton onClick={() => setDetail(c)} icon={ShieldAlert} disabled={busy}>View Counsel Comments</ActionButton>}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {editing && (
         <Modal title={editing.id ? 'Edit Contract' : 'New Contract'} icon={FileSignature} onClose={() => !saving && setEditing(null)} wide>
@@ -587,34 +634,58 @@ export const LoLegalCasesPage: React.FC = () => {
         </div>
       } />
 
-      <DataTable
-        data={cases}
-        columns={[
-          { id: 'case', header: 'Case', sortable: true, sortValue: (c: any) => c.title, searchableValue: (c: any) => `${c.title} ${c.caseNumber} ${c.courtName}`, cell: (c: any) => <div><p className="font-semibold text-slate-900">{c.title || 'Untitled case'}</p><p className="mt-1 text-xs text-slate-500">{c.caseNumber || 'No case number'}{c.courtName ? ` · ${c.courtName}` : ''}</p></div> },
-          { id: 'type', header: 'Category', sortable: true, accessor: (c: any) => (c.caseType || 'Not specified').replace(/_/g, ' '), sortValue: (c: any) => c.caseType },
-          { id: 'opposing', header: 'Opposing party', optional: true, accessor: (c: any) => c.opposingParty || 'Not provided' },
-          { id: 'priority', header: 'Risk / Priority', sortable: true, cell: (c: any) => <DataTableStatusBadge value={c.priority || 'NOT_SET'} />, sortValue: (c: any) => c.priority },
-          { id: 'status', header: 'Status', sortable: true, cell: (c: any) => <DataTableStatusBadge value={c.status} />, sortValue: (c: any) => c.status },
-        ] satisfies DataTableColumn<any>[]}
-        rowKey={(c: any) => c.id}
-        caption="Legal cases"
-        loading={loading}
-        error={error}
-        onRetry={load}
-        onRefresh={load}
-        searchableText={(c: any) => `${c.title} ${c.caseNumber} ${c.courtName} ${c.caseType} ${c.opposingParty} ${c.priority} ${c.status}`}
-        searchPlaceholder="Search legal cases..."
-        filters={<select aria-label="Case status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="min-h-10 rounded-control border border-slate-300 bg-white px-3 text-sm text-slate-700">{statuses.map((status) => <option key={status || 'ALL'} value={status}>{status ? status.replace(/_/g, ' ') : 'All statuses'}</option>)}</select>}
-        activeFilters={statusFilter ? [{ id: 'status', label: 'Status', value: statusFilter.replace(/_/g, ' '), onRemove: () => setStatusFilter('') }] : []}
-        onClearFilters={() => setStatusFilter('')}
-        emptyTitle="No legal cases"
-        emptyDescription="No legal cases are available."
-        filteredEmptyTitle="No legal cases match the current filters"
-        rowActions={(c: any) => <DataTableRowActions row={c} label={`Actions for ${c.title || 'case'}`} actions={[
-          { id: 'edit', label: 'Edit case', icon: Pencil, onSelect: () => openEdit(c) },
-          { id: 'status', label: 'Change status', icon: ChevronRight, onSelect: () => openStatus(c) },
-        ]} />}
-      />
+      <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+        <Filter className="w-4 h-4 text-slate-400" />
+        {statuses.map(s => (
+          <button key={s || 'ALL'} onClick={() => setStatusFilter(s)}
+            className={`text-[11px] font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+              statusFilter === s ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-500 border-slate-200 hover:border-emerald-300'
+            }`}>
+            {s ? s.replace('_', ' ') : 'ALL'}
+          </button>
+        ))}
+      </div>
+
+      {cases.length === 0 ? (
+        <EmptyState icon={Gavel} title="No Legal Cases" desc="No cases match the current filter." />
+      ) : (
+        <div className="card-stat overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left">
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Case</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Type</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Opposing</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Priority</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cases.map((c: any) => (
+                  <tr key={c.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                    <td className="p-3">
+                      <p className="font-medium text-slate-900">{c.title}</p>
+                      <p className="text-[11px] text-slate-400 font-mono">{c.caseNumber}{c.courtName ? ` · ${c.courtName}` : ''}</p>
+                    </td>
+                    <td className="p-3 text-slate-600 text-xs">{(c.caseType || '').replace(/_/g, ' ')}</td>
+                    <td className="p-3 text-slate-600">{c.opposingParty || '-'}</td>
+                    <td className="p-3"><Badge text={c.priority} className={riskBadge(c.priority)} /></td>
+                    <td className="p-3"><Badge text={c.status} className={caseStatusBadge(c.status)} /></td>
+                    <td className="p-3">
+                      <div className="flex items-center justify-end space-x-1.5">
+                        <ActionButton onClick={() => openEdit(c)} icon={Pencil}>Edit</ActionButton>
+                        <ActionButton onClick={() => openStatus(c)} icon={ChevronRight} variant="primary">Status</ActionButton>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {editing && (
         <Modal title={editing.id ? 'Edit Case' : 'New Legal Case'} icon={Gavel} onClose={() => !saving && setEditing(null)} wide>
@@ -855,31 +926,63 @@ export const LoDocumentsPage: React.FC = () => {
         <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" aria-label="Refresh legal documents"><RefreshCw className="h-4 w-4" /></button>
       } />
 
-      <DataTable
-        data={documents}
-        columns={[
-          { id: 'document', header: 'Document', sortable: true, sortValue: (d: any) => d.title, searchableValue: (d: any) => `${d.title} ${d.fileName}`, cell: (d: any) => <div><p className="font-semibold text-slate-900">{d.title || 'Untitled document'}</p><p className="mt-1 max-w-52 truncate text-xs text-slate-500" title={d.fileName}>{d.fileName || 'No file name'}</p></div> },
-          { id: 'classification', header: 'Classification', sortable: true, cell: (d: any) => <DataTableStatusBadge value={d.classificationLevel || 'UNCLASSIFIED'} />, sortValue: (d: any) => d.classificationLevel },
-          { id: 'version', header: 'Version', align: 'right', optional: true, accessor: (d: any) => `v${d.versionNumber ?? 1}` },
-          { id: 'size', header: 'Size', align: 'right', optional: true, accessor: (d: any) => formatSize(d.fileSize) },
-          { id: 'status', header: 'Status', sortable: true, cell: (d: any) => <DataTableStatusBadge value={d.status} />, sortValue: (d: any) => d.status },
-        ] satisfies DataTableColumn<any>[]}
-        rowKey={(d: any) => d.id}
-        caption="Legal documents"
-        loading={loading}
-        error={error}
-        onRetry={load}
-        onRefresh={load}
-        searchableText={(d: any) => `${d.title} ${d.fileName} ${d.classificationLevel} ${d.status}`}
-        searchPlaceholder="Search legal documents..."
-        filters={<select aria-label="Document status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="min-h-10 rounded-control border border-slate-300 bg-white px-3 text-sm text-slate-700">{statuses.map((status) => <option key={status || 'ALL'} value={status}>{status ? status.replace(/_/g, ' ') : 'All statuses'}</option>)}</select>}
-        activeFilters={statusFilter ? [{ id: 'status', label: 'Status', value: statusFilter.replace(/_/g, ' '), onRemove: () => setStatusFilter('') }] : []}
-        onClearFilters={() => setStatusFilter('')}
-        emptyTitle="No documents"
-        emptyDescription="No legal documents are available."
-        filteredEmptyTitle="No documents match the current filters"
-        rowActions={(d: any) => String(d.status || '').toUpperCase() === 'PENDING_REVIEW' ? <DataTableRowActions row={d} label={`Actions for ${d.title || 'document'}`} actions={[{ id: 'approve', label: 'Approve document', icon: CheckCircle2, disabled: busyId === d.id, onSelect: () => approve(d.id) }]} /> : <span className="text-xs font-semibold text-slate-500">No actions</span>}
-      />
+      <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+        <Filter className="w-4 h-4 text-slate-400" />
+        {statuses.map(s => (
+          <button key={s || 'ALL'} onClick={() => setStatusFilter(s)}
+            className={`text-[11px] font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+              statusFilter === s ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-500 border-slate-200 hover:border-emerald-300'
+            }`}>
+            {s ? s.replace('_', ' ') : 'ALL'}
+          </button>
+        ))}
+      </div>
+
+      {documents.length === 0 ? (
+        <EmptyState icon={FileText} title="No Documents" desc="No documents match the current filter." />
+      ) : (
+        <div className="card-stat overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left">
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Title</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Classification</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Version</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Size</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {documents.map((d: any) => {
+                  const status = (d.status || '').toUpperCase();
+                  const busy = busyId === d.id;
+                  return (
+                    <tr key={d.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                      <td className="p-3">
+                        <p className="font-medium text-slate-900">{d.title}</p>
+                        <p className="text-[11px] text-slate-400 font-mono">{d.fileName}</p>
+                      </td>
+                      <td className="p-3"><Badge text={d.classificationLevel} className="bg-slate-100 text-slate-600" /></td>
+                      <td className="p-3 text-slate-600 font-mono text-xs">v{d.versionNumber ?? 1}</td>
+                      <td className="p-3 text-xs text-slate-400">{formatSize(d.fileSize)}</td>
+                      <td className="p-3"><Badge text={d.status} className={docStatusBadge(d.status)} /></td>
+                      <td className="p-3">
+                        <div className="flex items-center justify-end space-x-1.5">
+                          {status === 'PENDING_REVIEW' ? (
+                            <ActionButton onClick={() => approve(d.id)} icon={CheckCircle2} variant="primary" disabled={busy}>Approve</ActionButton>
+                          ) : <span className="text-[11px] text-slate-300">No actions</span>}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -985,40 +1088,68 @@ export const LoAuditLogsPage: React.FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
+  const severityBadge = (sev?: string) => {
+    switch ((sev || '').toUpperCase()) {
+      case 'CRITICAL': return 'bg-rose-50 text-rose-600';
+      case 'HIGH': return 'bg-orange-50 text-orange-600';
+      case 'WARNING': case 'MEDIUM': return 'bg-amber-50 text-amber-600';
+      default: return 'bg-slate-100 text-slate-500';
+    }
+  };
+
   if (loading && logs.length === 0) return <LoadingSkeleton />;
   if (error && logs.length === 0) return <ErrorState message={error} onRetry={() => setRetry(r => r + 1)} />;
 
   return (
     <div className="space-y-6">
-      <DashboardHero title="Audit Trail" subtitle="Read-only legal audit events (last 30 days)" actions={<button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" aria-label="Refresh legal audit trail"><RefreshCw className="h-4 w-4" /></button>} />
+      <div className="glass-panel p-5 flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">Audit Trail</h2>
+          <p className="text-xs text-slate-500">Read-only legal audit events (last 30 days)</p>
+        </div>
+        <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
+      </div>
 
       <div className="flex items-center space-x-2 text-xs text-slate-500 bg-white border border-slate-200 rounded-xl px-4 py-3">
         <ScrollText className="w-4 h-4 text-amber-500" />
         <span>Read-only view of system audit events for legal oversight</span>
       </div>
 
-      <DataTable
-        data={logs}
-        columns={[
-          { id: 'time', header: 'Timestamp', sortable: true, sortValue: (a: any) => a.createdAt, accessor: (a: any) => a.createdAt ? new Date(a.createdAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' }) : '—' },
-          { id: 'actor', header: 'Actor', sortable: true, accessor: (a: any) => a.userEmail || 'Unknown actor', sortValue: (a: any) => a.userEmail },
-          { id: 'action', header: 'Action', sortable: true, accessor: (a: any) => <span className="font-semibold text-slate-900">{a.action || 'Not provided'}</span>, sortValue: (a: any) => a.action },
-          { id: 'module', header: 'Module', sortable: true, accessor: (a: any) => a.module || '—', sortValue: (a: any) => a.module },
-          { id: 'entity', header: 'Entity', optional: true, cell: (a: any) => <div><p>{a.entityName || a.entityType || 'Not provided'}</p>{a.entityType && <p className="mt-1 text-[10px] text-slate-500">{a.entityType}</p>}</div> },
-          { id: 'severity', header: 'Severity', sortable: true, cell: (a: any) => <DataTableStatusBadge value={a.severity || 'INFO'} />, sortValue: (a: any) => a.severity },
-        ] satisfies DataTableColumn<any>[]}
-        rowKey={(a: any) => a.id}
-        caption="Legal audit trail"
-        loading={loading}
-        error={error}
-        onRetry={load}
-        onRefresh={load}
-        searchableText={(a: any) => `${a.action} ${a.entityName} ${a.entityType} ${a.module} ${a.userEmail} ${a.severity}`}
-        searchPlaceholder="Search legal audit events..."
-        emptyTitle="No audit events"
-        emptyDescription="No legal audit events were recorded in the last 30 days."
-        filteredEmptyTitle="No audit events match your search"
-      />
+      {logs.length === 0 ? (
+        <EmptyState icon={ScrollText} title="No Audit Events" desc="No audit events recorded in the last 30 days." />
+      ) : (
+        <div className="card-stat overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left">
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Action</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Entity</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Module</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">User</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Severity</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map((a: any) => (
+                  <tr key={a.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                    <td className="p-3 font-medium text-slate-900">{a.action}</td>
+                    <td className="p-3 text-slate-600">
+                      <p className="text-xs">{a.entityName || a.entityType || '-'}</p>
+                      <p className="text-[10px] text-slate-400 font-mono">{a.entityType}</p>
+                    </td>
+                    <td className="p-3 text-slate-600 text-xs">{a.module || '-'}</td>
+                    <td className="p-3 text-slate-600 text-xs font-mono">{a.userEmail || '-'}</td>
+                    <td className="p-3"><Badge text={a.severity} className={severityBadge(a.severity)} /></td>
+                    <td className="p-3 text-[10px] text-slate-400 font-mono">{a.createdAt ? new Date(a.createdAt).toLocaleString() : '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
