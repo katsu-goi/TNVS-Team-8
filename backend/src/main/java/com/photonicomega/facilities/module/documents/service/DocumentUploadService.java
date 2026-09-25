@@ -152,17 +152,12 @@ public class DocumentUploadService {
             folderRepository.findById(folderId).ifPresent(document::setFolder);
         }
 
-        // --- AI pipeline: OCR -> classify -> summarise -> confidence ---
-        String extractedText = ocrService.extractTextFromImageOrPdf(
-                readOcrSample(stored.absolutePath()), originalFilename);
-        String predictedCategory = aiService.classifyDocument(extractedText);
-
-        document.setOcrExtractedText(extractedText);
-        document.setAiPredictedCategory(predictedCategory);
-        document.setAiSummary(aiService.summarizeDocument(extractedText));
-        document.setConfidenceScore(estimateConfidence(predictedCategory, extractedText));
-
-        document.setTags(resolveAutoTags(predictedCategory));
+        // --- Authoritative AI Document Classification pipeline is handled by Supabase Edge Functions ---
+        // Legacy Spring Boot mock OCR / Classification service calls have been disconnected.
+        document.setOcrExtractedText(null);
+        document.setAiPredictedCategory(null);
+        document.setAiSummary(null);
+        document.setConfidenceScore(null);
 
         Document saved = documentRepository.save(document);
 

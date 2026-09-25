@@ -54,11 +54,32 @@ async function handleSuggestTitle(_ctx: AuthContext | null, req: Request) {
     validateDocumentUpload(extension, file.type, bytes);
     const extraction = await extractDocumentContent(extension, bytes);
     const { result: analysis } = await classifyDocumentContent(db, extraction.text, extraction.method);
+    const metadata = analysis.metadataSuggestions ?? {};
+    const firstStr = (v: unknown): string | null => {
+      if (typeof v === "string" && v.trim() !== "") return v.trim();
+      if (Array.isArray(v) && typeof v[0] === "string" && v[0].trim() !== "") return v[0].trim();
+      return null;
+    };
+    const tagsArr = Array.isArray(metadata.keywords)
+      ? metadata.keywords.filter((k): k is string => typeof k === "string")
+      : [];
+
+    const computedTitle = firstStr(metadata.suggestedTitle) || buildSuggestedTitle(analysis);
+
     return jsonResponse(ok({
-      suggestedTitle: buildSuggestedTitle(analysis),
+      document_type: (analysis.detectedDocumentType || analysis.predictedCategoryName || "DOCUMENT").toUpperCase(),
+      suggested_title: computedTitle,
+      suggestedTitle: computedTitle,
+      document_number: firstStr(metadata.documentNumber) || firstStr(metadata.referenceNumber),
+      department: firstStr(metadata.department),
+      classification: firstStr(metadata.classification) || "INTERNAL",
+      document_date: firstStr(metadata.documentDate),
+      effective_date: firstStr(metadata.effectiveDate),
+      retention_category: firstStr(metadata.retentionCategory),
       summary: analysis.summary,
-      detectedDocumentType: analysis.detectedDocumentType,
+      tags: tagsArr,
       confidence: analysis.confidence,
+      detectedDocumentType: analysis.detectedDocumentType,
       extractionMethod: extraction.method,
     }, "AI document title suggested"), 200);
   } catch (error) {

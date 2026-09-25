@@ -37,8 +37,22 @@ function isGenericTitle(title: string, file: File | null): boolean {
   return /^(img|image|scan|document|file|untitled)[ _-]?\d*$/i.test(value);
 }
 
+export interface AiAnalysisResult {
+  document_type?: string;
+  suggested_title?: string;
+  suggestedTitle?: string;
+  document_number?: string | null;
+  department?: string | null;
+  classification?: string | null;
+  document_date?: string | null;
+  effective_date?: string | null;
+  retention_category?: string | null;
+  summary?: string;
+  tags?: string[];
+  confidence?: number;
+}
+
 interface DocumentUploadPanelProps {
-  /** Called after a successful upload, e.g. to refresh a list. */
   onUploaded?: (document: DocumentSummary) => void;
   title?: string;
   subtitle?: string;
@@ -47,13 +61,6 @@ interface DocumentUploadPanelProps {
   onDocumentCategoryChange?: (category: string) => void;
 }
 
-/**
- * Real file upload against POST /v1/documents/upload, with the AI pipeline
- * result (extracted content, predicted category, confidence, summary, auto-tags) rendered
- * inline as soon as the response comes back.
- *
- * Purely additive: drop it into a page, it owns all of its own state.
- */
 export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
   onUploaded,
   title = 'Upload a Document',
@@ -65,21 +72,25 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [docTitle, setDocTitle] = useState('');
+  const [userEditedTitle, setUserEditedTitle] = useState(false);
   const [classification, setClassification] = useState<ClassificationLevel>('INTERNAL');
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<DocumentSummary | null>(null);
-  const [aiTitleSuggestion, setAiTitleSuggestion] = useState<string | null>(null);
+  const [aiAnalysis, setAiAnalysis] = useState<AiAnalysisResult | null>(null);
   const [aiTitleLoading, setAiTitleLoading] = useState(false);
+  const [aiFallbackActive, setAiFallbackActive] = useState(false);
 
   const reset = () => {
     setFile(null);
     setDocTitle('');
+    setUserEditedTitle(false);
     setProgress(0);
     setError(null);
-    setAiTitleSuggestion(null);
+    setAiAnalysis(null);
     setAiTitleLoading(false);
+    setAiFallbackActive(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -89,17 +100,46 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
     setError(validationError);
     setFile(selected);
     setResult(null);
-    setAiTitleSuggestion(null);
+    setAiAnalysis(null);
+    setAiFallbackActive(false);
+
     if (selected && !validationError) {
       setAiTitleLoading(true);
       void documentService.suggestTitle(selected)
-        .then((suggestion) => {
-          setAiTitleSuggestion(suggestion.suggestedTitle);
-          setDocTitle(suggestion.suggestedTitle);
+        .then((suggestion: any) => {
+          setAiAnalysis(suggestion);
+          setAiFallbackActive(false);
           setError(null);
+
+          const suggested = suggestion.suggested_title || suggestion.suggestedTitle;
+          if (suggested && !userEditedTitle) {
+            setDocTitle(suggested);
+          }
+          if (suggestion.classification && CLASSIFICATIONS.includes(suggestion.classification as ClassificationLevel)) {
+            setClassification(suggestion.classification as ClassificationLevel);
+          }
         })
-        .catch((err) => setError(`AI title suggestion unavailable: ${extractErrorMessage(err)} Enter a descriptive title manually.`))
+        .catch((err) => {
+          setAiFallbackActive(true);
+          setError('AI analysis is temporarily unavailable. You can continue entering the document information manually.');
+        })
         .finally(() => setAiTitleLoading(false));
+    }
+  };
+
+  const applySuggestions = () => {
+    if (!aiAnalysis) return;
+    const titleToApply = aiAnalysis.suggested_title || aiAnalysis.suggestedTitle;
+    if (titleToApply) {
+      setDocTitle(titleToApply);
+      setUserEditedTitle(false);
+    }
+    if (aiAnalysis.classification && CLASSIFICATIONS.includes(aiAnalysis.classification as ClassificationLevel)) {
+      setClassification(aiAnalysis.classification as ClassificationLevel);
+    }
+    if (aiAnalysis.document_type && documentCategoryOptions?.length && onDocumentCategoryChange) {
+      const match = documentCategoryOptions.find(c => c.toLowerCase() === aiAnalysis.document_type?.toLowerCase());
+      if (match) onDocumentCategoryChange(match);
     }
   };
 
@@ -159,8 +199,9 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
 
       <div className="grid gap-3 md:grid-cols-3">
         <div className="md:col-span-3">
-          <label className={labelCls}>File</label>
+          <label htmlFor="document-file-input" className={labelCls}>File</label>
           <input
+            id="document-file-input"
             ref={fileInputRef}
             type="file"
             accept={UPLOAD_ACCEPT_ATTRIBUTE}
@@ -175,18 +216,35 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
         </div>
 
         <div className="md:col-span-2">
-          <label className={labelCls}>Title <span className="text-rose-500">*</span></label>
+          <label htmlFor="document-title-input" className={labelCls}>Title <span className="text-rose-500">*</span></label>
           <input
+            id="document-title-input"
             value={docTitle}
-            onChange={(e) => { setDocTitle(e.target.value); setError(null); }}
+            onChange={(e) => {
+              setDocTitle(e.target.value);
+              setUserEditedTitle(true);
+              setError(null);
+            }}
             disabled={uploading}
-            placeholder={aiTitleLoading ? 'Generating a descriptive title…' : 'e.g. Fire Safety Inspection Report - 2026'}
+            placeholder={aiTitleLoading ? 'Analyzing document content with AI…' : 'e.g. Facilities Maintenance Memorandum - 2026'}
             className={inputCls}
           />
           <div className="mt-1 flex items-center gap-2 text-[10px]">
-            {aiTitleLoading && <><Loader2 className="h-3 w-3 animate-spin text-emerald-600" /><span className="text-slate-500">AI is reading the document content...</span></>}
-            {!aiTitleLoading && aiTitleSuggestion && <><Sparkles className="h-3 w-3 text-emerald-600" /><span className="text-emerald-700">AI-generated title applied. Review it before upload.</span></>}
-            {!aiTitleLoading && file && isGenericTitle(docTitle, file) && <span className="text-rose-600">Generic or blank titles are blocked.</span>}
+            {aiTitleLoading && (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin text-emerald-600" />
+                <span className="text-slate-500">AI is analyzing document text...</span>
+              </>
+            )}
+            {!aiTitleLoading && aiAnalysis && (
+              <>
+                <Sparkles className="h-3 w-3 text-emerald-600" />
+                <span className="text-emerald-700 font-medium">AI Document Analysis complete. Review suggestions below.</span>
+              </>
+            )}
+            {!aiTitleLoading && file && isGenericTitle(docTitle, file) && (
+              <span className="text-rose-600">Generic or blank titles are blocked. Enter or apply a descriptive title.</span>
+            )}
           </div>
         </div>
 
@@ -220,6 +278,59 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
           </div>
         ) : null}
       </div>
+
+      {aiAnalysis && (
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2 text-xs">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 font-bold text-slate-800">
+              <Sparkles className="w-4 h-4 text-emerald-600" />
+              <span>AI Document Analysis</span>
+              {aiAnalysis.confidence !== undefined && (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 ml-1">
+                  Confidence: {Math.round(aiAnalysis.confidence * 100)}%
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={applySuggestions}
+              className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+            >
+              <Sparkles className="w-3 h-3" />
+              <span>Apply Suggestions</span>
+            </button>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2 text-[11px] text-slate-600">
+            <p><span className="font-semibold text-slate-700">Document Type:</span> {aiAnalysis.document_type || '—'}</p>
+            <p><span className="font-semibold text-slate-700">Suggested Title:</span> {aiAnalysis.suggested_title || aiAnalysis.suggestedTitle || '—'}</p>
+            <p><span className="font-semibold text-slate-700">Department:</span> {aiAnalysis.department || '—'}</p>
+            <p><span className="font-semibold text-slate-700">Classification:</span> {aiAnalysis.classification || '—'}</p>
+            <p><span className="font-semibold text-slate-700">Document Number:</span> {aiAnalysis.document_number || '—'}</p>
+            <p><span className="font-semibold text-slate-700">Document Date:</span> {aiAnalysis.document_date || '—'}</p>
+            <p><span className="font-semibold text-slate-700">Effective Date:</span> {aiAnalysis.effective_date || '—'}</p>
+            <p><span className="font-semibold text-slate-700">Retention:</span> {aiAnalysis.retention_category || '—'}</p>
+          </div>
+
+          {aiAnalysis.summary && (
+            <div className="pt-1">
+              <p className="font-semibold text-slate-700">Summary:</p>
+              <p className="text-slate-600 italic mt-0.5">{aiAnalysis.summary}</p>
+            </div>
+          )}
+
+          {!!aiAnalysis.tags?.length && (
+            <div className="pt-1 flex items-center gap-1.5 flex-wrap">
+              <span className="font-semibold text-slate-700">Tags:</span>
+              {aiAnalysis.tags.map((tag, idx) => (
+                <span key={idx} className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {uploading && (
         <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
@@ -255,7 +366,7 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
         <div className="border-t border-slate-100 pt-4 space-y-3">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            <p className="text-sm font-bold text-slate-900">AI Suggestion Ready for Review</p>
+            <p className="text-sm font-bold text-slate-900">AI Document Analysis Persisted</p>
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-50 text-amber-600">
               {(result.status || '').replace(/_/g, ' ')}
             </span>

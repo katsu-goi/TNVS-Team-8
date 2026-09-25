@@ -78,11 +78,10 @@ public class DocumentController {
             doc.setDepartment(user.getDepartment());
         }
 
-        // AI OCR & Classification enrichment
-        String extractedText = ocrService.extractTextFromImageOrPdf(new byte[0], doc.getFileName());
-        doc.setOcrExtractedText(extractedText);
-        doc.setAiPredictedCategory(aiService.classifyDocument(extractedText));
-        doc.setAiSummary(aiService.summarizeDocument(extractedText));
+        // Authoritative AI Document Classification pipeline is handled by Supabase Edge Functions
+        doc.setOcrExtractedText(null);
+        doc.setAiPredictedCategory(null);
+        doc.setAiSummary(null);
 
         return ResponseEntity.ok(ApiResponse.success(documentRepository.save(doc), "Document uploaded & processed by AI"));
     }

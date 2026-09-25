@@ -76,8 +76,14 @@ function normalizeApiPath(url: string): string {
   return url;
 }
 
+export const getSupabaseFunctionBaseUrl = (): string => {
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
+  if (supabaseUrl) return `${supabaseUrl.replace(/\/+$/, '')}/functions/v1`;
+  if (API_BASE_URL.includes('/functions/v1')) return API_BASE_URL;
+  return '/functions/v1';
+};
+
 function routeSupabaseFunction(url: string): string {
-  if (!API_BASE_URL.includes('/functions/v1')) return url;
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
 
   const normalized = url.startsWith('/') ? url : `/${url}`;
@@ -86,16 +92,23 @@ function routeSupabaseFunction(url: string): string {
   const functionName = firstSegment ? SUPABASE_FUNCTION_ALIASES[firstSegment] : undefined;
   if (!functionName) return normalized;
 
-  if (firstSegment === functionName) {
-    return `${pathname}${query ? `?${query}` : ''}`;
+  const targetPath = firstSegment === functionName
+    ? pathname
+    : `/${functionName}${pathname.slice(firstSegment.length + 1)}`;
+  const queryString = query ? `?${query}` : '';
+
+  const edgeBaseUrl = getSupabaseFunctionBaseUrl();
+  if (edgeBaseUrl.startsWith('http://') || edgeBaseUrl.startsWith('https://')) {
+    return `${edgeBaseUrl}${targetPath.startsWith('/') ? targetPath : `/${targetPath}`}${queryString}`;
   }
 
-  return `/${functionName}${pathname}${query ? `?${query}` : ''}`;
+  return `${targetPath}${queryString}`;
 }
 
 export function getApiUrl(url: string): string {
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
   const routed = routeSupabaseFunction(normalizeApiPath(url));
+  if (routed.startsWith('http://') || routed.startsWith('https://')) return routed;
   return `${API_BASE_URL}${routed.startsWith('/') ? routed : `/${routed}`}`;
 }
 
