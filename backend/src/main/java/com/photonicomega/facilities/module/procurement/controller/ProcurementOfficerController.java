@@ -482,7 +482,8 @@ public class ProcurementOfficerController {
     @Transactional(readOnly = true)
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getAuditLogs() {
         List<Map<String, Object>> result = auditLogRepository
-                .findByCreatedAtAfterOrderByCreatedAtDesc(LocalDateTime.now().minusDays(30)).stream()
+                .findByModuleAndCreatedAtAfterOrderByCreatedAtDesc(
+                        "PROCUREMENT", LocalDateTime.now().minusDays(30)).stream()
                 .map(this::toAuditDto).collect(Collectors.toList());
         return ResponseEntity.ok(ApiResponse.success(result, "Audit logs retrieved"));
     }

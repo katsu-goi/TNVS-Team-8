@@ -195,7 +195,7 @@ export const AuditLogsPage: React.FC = () => {
     try {
       const params: Record<string, string> = { page: String(page), size: '20' };
       if (riskFilter) params.riskLevel = riskFilter;
-      const result = await securityService.getLogs(params);
+      const result = await securityService.getAuditLogs(params);
       setLogs(result);
     } catch (err: any) {
       setError(err?.message || 'Failed to load logs');

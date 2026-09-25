@@ -1110,9 +1110,11 @@ async function handleDismissNotice(ctx: AuthContext | null, req: Request, _body:
 async function handleAuditLogs(ctx: AuthContext | null) {
   const { data, error } = await db
     .from("audit_logs")
-    .select("*")
+    .select("id,action,entity_type,entity_name,module,user_email,severity,status,created_at")
+    .eq("module", MODULE)
     .gte("created_at", naiveIso(new Date(Date.now() - 30 * 86400000)))
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(500);
   if (error) throw new Error(`audit logs query failed: ${error.message}`);
   const result = ((data as unknown as Row[]) ?? []).map(toAuditDto);
   return jsonResponse(ok(result, "Audit logs retrieved"), 200);

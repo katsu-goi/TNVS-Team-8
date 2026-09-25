@@ -62,6 +62,16 @@ async function usersById(userIds: Array<string | null | undefined>): Promise<Map
   return new Map(users.map((user) => [user.id, user]));
 }
 
+async function departmentAuditUserIds(ctx: AuthContext): Promise<string[]> {
+  const department = ctx.user.row.department?.trim();
+  if (!department) return [ctx.userId];
+  const departmentUsers = await rows("users", "id", (query) => query
+    .eq("department", department)
+    .eq("status", "ACTIVE")
+    .eq("is_deleted", false));
+  return [...new Set([ctx.userId, ...departmentUsers.map((user) => String(user.id))])];
+}
+
 function userLabel(user: any): string | null {
   if (!user) return null;
   const name = `${user.first_name ?? ""} ${user.last_name ?? ""}`.trim();
@@ -122,7 +132,11 @@ function maskPii(raw: Record<string, unknown>): Record<string, unknown> {
   return masked;
 }
 
-async function workspacePayload(workspace: string, section: string): Promise<Record<string, unknown>> {
+async function workspacePayload(
+  ctx: AuthContext,
+  workspace: string,
+  section: string,
+): Promise<Record<string, unknown>> {
   const payload: Record<string, unknown> = {
     workspace,
     section,
@@ -266,7 +280,12 @@ async function workspacePayload(workspace: string, section: string): Promise<Rec
     } else if (section === "supervision") {
       payload.rows = await rows("management_signoffs", "*", (query) => query.order("submitted_at", { ascending: false }));
     } else if (section === "activity") {
-      payload.rows = await rows("audit_logs", "id, user_email, user_full_name, action, module, description, severity, status, created_at", (query) => query.order("created_at", { ascending: false }).limit(100));
+      const userIds = await departmentAuditUserIds(ctx);
+      payload.rows = await rows(
+        "audit_logs",
+        "id, user_email, user_full_name, action, module, description, severity, status, created_at",
+        (query) => query.in("user_id", userIds).order("created_at", { ascending: false }).limit(100),
+      );
     } else if (section === "reports") {
       payload.rows = await rows("department_scope_assignments", "*", (query) => query.order("department_name"));
     }
@@ -322,7 +341,7 @@ async function workspacePayload(workspace: string, section: string): Promise<Rec
 async function handleWorkspace(ctx: AuthContext | null, _req: Request, _body: unknown, params: RouteParams) {
   const denied = validateWorkspace(ctx, params.workspace);
   if (denied) return denied;
-  return jsonResponse(ok(await workspacePayload(params.workspace, params.section)), 200);
+  return jsonResponse(ok(await workspacePayload(ctx!, params.workspace, params.section)), 200);
 }
 
 async function handleSubmitLegal(ctx: AuthContext | null, _req: Request, _body: unknown, params: RouteParams) {

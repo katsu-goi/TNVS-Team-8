@@ -24,6 +24,16 @@ function accessDenied() {
   return jsonResponse(fail("Access denied: insufficient permissions", "ACCESS_DENIED"), 403);
 }
 
+function invalidFilter(message: string) {
+  return jsonResponse(fail(message, "INVALID_FILTER"), 400);
+}
+
+function boundedInteger(rawValue: string | null, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number.parseInt(rawValue ?? "", 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(maximum, Math.max(minimum, parsed));
+}
+
 type WorkflowRpcResult = { ok: boolean; data?: Record<string, unknown>; errorCode?: string; message?: string };
 
 function workflowResponse(result: WorkflowRpcResult, successMessage: string) {
@@ -194,6 +204,22 @@ function toRequestDto(r: RequestRow) {
     decisionNotes: r.decision_notes,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+  };
+}
+
+function toSelfAuditDto(row: Record<string, unknown>) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    action: row.action,
+    module: row.module,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    description: row.description,
+    ipAddress: row.ip_address,
+    severity: row.severity,
+    status: row.status,
+    createdAt: row.created_at,
   };
 }
 
@@ -1091,6 +1117,63 @@ async function handleComplete(ctx: AuthContext | null, _req: Request, _body: unk
 }
 
 // ---------------------------------------------------------------------------
+// Self audit history
+// ---------------------------------------------------------------------------
+
+async function handleSelfAuditLogs(ctx: AuthContext | null, req: Request) {
+  const qp = new URL(req.url).searchParams;
+  const page = boundedInteger(qp.get("page"), 0, 0, 10_000);
+  const size = boundedInteger(qp.get("size"), 20, 1, 100);
+  const action = qp.get("action")?.trim().toUpperCase() || null;
+  const module = qp.get("module")?.trim().toUpperCase() || null;
+  const startDate = qp.get("startDate")?.trim() || null;
+  const endDate = qp.get("endDate")?.trim() || null;
+  const safeToken = /^[A-Z][A-Z0-9_]{0,99}$/;
+
+  if ((action && !safeToken.test(action)) || (module && !safeToken.test(module))) {
+    return invalidFilter("Invalid audit filter");
+  }
+  if ((startDate && Number.isNaN(Date.parse(startDate))) || (endDate && Number.isNaN(Date.parse(endDate)))) {
+    return invalidFilter("Invalid audit date range");
+  }
+
+  // Deliberately ignore client-supplied user/actor identifiers. The custom
+  // JWT-derived context is the only source of the owner predicate.
+  let query = db
+    .from("audit_logs")
+    .select(
+      "id,user_id,action,module,entity_type,entity_id,description,ip_address,severity,status,created_at",
+      { count: "exact" },
+    )
+    .eq("user_id", ctx!.userId);
+  if (action) query = query.eq("action", action);
+  if (module) query = query.eq("module", module);
+  if (startDate) query = query.gte("created_at", startDate);
+  if (endDate) query = query.lte("created_at", endDate);
+
+  const from = page * size;
+  const { data, count, error } = await query
+    .order("created_at", { ascending: false })
+    .range(from, from + size - 1);
+  if (error) throw new Error(`self audit logs query failed: ${error.message}`);
+
+  const content = ((data ?? []) as Record<string, unknown>[]).map(toSelfAuditDto);
+  const totalElements = count ?? 0;
+  const totalPages = Math.ceil(totalElements / size);
+  return jsonResponse(ok({
+    content,
+    totalElements,
+    totalPages,
+    size,
+    number: page,
+    numberOfElements: content.length,
+    first: page === 0,
+    last: page >= totalPages - 1,
+    empty: content.length === 0,
+  }, "Own audit logs retrieved"), 200);
+}
+
+// ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 
@@ -1115,6 +1198,7 @@ const routes = [
   { method: "POST", path: "/employee/notifications/:id/read", guard: { kind: "roles", roles: ["EMPLOYEE"] }, handler: handleMarkRead },
   { method: "POST", path: "/employee/notifications/read-all", guard: { kind: "roles", roles: ["EMPLOYEE"] }, handler: handleMarkAllRead },
   { method: "POST", path: "/employee/notifications/:id/dismiss", guard: { kind: "roles", roles: ["EMPLOYEE"] }, handler: handleDismissNotification },
+  { method: "GET", path: "/employee/audit-logs", guard: { kind: "auth" }, handler: handleSelfAuditLogs },
   { method: "GET", path: "/employee/profile", guard: { kind: "roles", roles: ["EMPLOYEE"] }, handler: handleGetProfile },
   { method: "PUT", path: "/employee/profile", guard: { kind: "roles", roles: ["EMPLOYEE"] }, handler: handleUpdateProfile },
 

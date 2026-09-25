@@ -1,8 +1,11 @@
 package com.photonicomega.facilities.module.security;
 
+import com.photonicomega.facilities.module.auth.domain.AuditLog;
+import com.photonicomega.facilities.module.auth.domain.AuditSeverity;
 import com.photonicomega.facilities.module.auth.domain.Role;
 import com.photonicomega.facilities.module.auth.domain.User;
 import com.photonicomega.facilities.module.auth.domain.UserStatus;
+import com.photonicomega.facilities.module.auth.repository.AuditLogRepository;
 import com.photonicomega.facilities.module.auth.repository.RoleRepository;
 import com.photonicomega.facilities.module.auth.repository.UserRepository;
 import com.photonicomega.facilities.security.JwtTokenProvider;
@@ -23,7 +26,10 @@ import java.util.Set;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.hamcrest.Matchers.everyItem;
+import static org.hamcrest.Matchers.is;
 
 /**
  * Verifies the Phase 1.5 authorization model across the previously-unprotected
@@ -53,6 +59,9 @@ class EndpointAuthorizationTest {
 
     @Autowired
     private RoleRepository roleRepository;
+
+    @Autowired
+    private AuditLogRepository auditLogRepository;
 
     private String superAdminToken;
     private String fmToken;
@@ -227,6 +236,63 @@ class EndpointAuthorizationTest {
                 .andExpect(status().isNotFound());
     }
 
+    @Test
+    @DisplayName("global audit endpoint is Super Admin-only")
+    void globalAuditIsSuperAdminOnly() throws Exception {
+        expectAllow("/v1/security/admin/audit-logs", superAdminToken);
+        expect403("/v1/security/admin/audit-logs", complianceToken);
+        expect403("/v1/security/admin/audit-logs", employeeToken);
+        expectUnauthorized("/v1/security/admin/audit-logs");
+    }
+
+    @Test
+    @DisplayName("employee audit endpoint is owner-scoped and ignores a tampered userId")
+    void employeeAuditIsOwnerScoped() throws Exception {
+        User employee = userRepository.findByEmailAndDeletedFalse("authz.employee@test.local").orElseThrow();
+        User superAdmin = userRepository.findByEmailAndDeletedFalse("authz.superadmin@test.local").orElseThrow();
+        auditLogRepository.save(audit("EMPLOYEE", "SELF_TEST", employee.getId()));
+        auditLogRepository.save(audit("ADMIN", "OTHER_USER_TEST", superAdmin.getId()));
+
+        mockMvc.perform(get("/v1/employee/audit-logs")
+                        .param("userId", superAdmin.getId().toString())
+                        .header("Authorization", "Bearer " + employeeToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content[*].userId", everyItem(is(employee.getId().toString()))));
+        expectAllow("/v1/employee/audit-logs", superAdminToken);
+        expectAllow("/v1/employee/audit-logs", fmToken);
+        expectAllow("/v1/employee/audit-logs", foToken);
+        expectAllow("/v1/employee/audit-logs", complianceToken);
+        expectAllow("/v1/employee/audit-logs", legalToken);
+        expectAllow("/v1/employee/audit-logs", contractToken);
+        expectUnauthorized("/v1/employee/audit-logs");
+    }
+
+    @Test
+    @DisplayName("specialized audit endpoints return only their module")
+    void specializedAuditEndpointsAreModuleScoped() throws Exception {
+        auditLogRepository.save(audit("COMPLIANCE", "COMPLIANCE_TEST"));
+        auditLogRepository.save(audit("LEGAL", "LEGAL_TEST"));
+        auditLogRepository.save(audit("PROCUREMENT", "PROCUREMENT_TEST"));
+        auditLogRepository.save(audit("AUTH", "OUT_OF_SCOPE_TEST"));
+
+        mockMvc.perform(get("/v1/compliance/audit-logs")
+                        .header("Authorization", "Bearer " + complianceToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[*].module", everyItem(is("COMPLIANCE"))));
+        mockMvc.perform(get("/v1/legal/audit-logs")
+                        .header("Authorization", "Bearer " + legalToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[*].module", everyItem(is("LEGAL"))));
+        mockMvc.perform(get("/v1/procurement/audit-logs")
+                        .header("Authorization", "Bearer " + contractToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[*].module", everyItem(is("PROCUREMENT"))));
+
+        expect403("/v1/compliance/audit-logs", employeeToken);
+        expect403("/v1/legal/audit-logs", employeeToken);
+        expect403("/v1/procurement/audit-logs", employeeToken);
+    }
+
     // ------------------------------------------------------------------
     // 404 / 405 sanity on gated families
     // ------------------------------------------------------------------
@@ -272,6 +338,21 @@ class EndpointAuthorizationTest {
                 .passwordHash("$2a$10$invalid-hash")
                 .status(UserStatus.ACTIVE)
                 .roles(Set.of(role))
+                .build();
+    }
+
+    private AuditLog audit(String module, String action) {
+        return audit(module, action, null);
+    }
+
+    private AuditLog audit(String module, String action, java.util.UUID userId) {
+        return AuditLog.builder()
+                .userId(userId)
+                .module(module)
+                .action(action)
+                .description("Authorization scope fixture")
+                .severity(AuditSeverity.INFO)
+                .status("SUCCESS")
                 .build();
     }
 

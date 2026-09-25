@@ -19,6 +19,12 @@ export const securityService = {
     }
   },
 
+  async getAuditLogs(params?: Record<string, string>): Promise<SecurityLog[]> {
+    const { data } = await apiClient.get('/security/admin/audit-logs', { params });
+    const page = data?.data ?? data;
+    return Array.isArray(page) ? page : page?.content ?? [];
+  },
+
   async getActiveSessions(): Promise<ActiveSession[]> {
     try {
       const { data } = await apiClient.get('/security/admin/sessions');

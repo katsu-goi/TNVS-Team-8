@@ -1,19 +1,25 @@
 package com.photonicomega.facilities.module.employee.controller;
 
 import com.photonicomega.facilities.common.dto.ApiResponse;
+import com.photonicomega.facilities.module.auth.domain.AuditLog;
 import com.photonicomega.facilities.module.auth.domain.User;
+import com.photonicomega.facilities.module.auth.repository.AuditLogRepository;
 import com.photonicomega.facilities.module.auth.repository.UserRepository;
 import com.photonicomega.facilities.module.employee.service.EmployeeService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -32,6 +38,7 @@ public class EmployeeController {
 
     private final EmployeeService employeeService;
     private final UserRepository userRepository;
+    private final AuditLogRepository auditLogRepository;
 
     // --- Dashboard ---
 
@@ -245,6 +252,23 @@ public class EmployeeController {
         return ResponseEntity.ok(ApiResponse.success(profile, "Profile retrieved"));
     }
 
+    @GetMapping("/audit-logs")
+    @Operation(summary = "List the authenticated user's own audit events")
+    @Transactional(readOnly = true)
+    public ResponseEntity<ApiResponse<Page<Map<String, Object>>>> getAuditLogs(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User user = resolveUser(userDetails);
+        int safePage = Math.max(0, page);
+        int safeSize = Math.max(1, Math.min(size, 100));
+        Page<Map<String, Object>> logs = auditLogRepository.filterAuditLogs(
+                user.getId(), null, null, null, null, null,
+                PageRequest.of(safePage, safeSize, Sort.by("createdAt").descending())
+        ).map(this::selfAuditDto);
+        return ResponseEntity.ok(ApiResponse.success(logs, "Own audit logs retrieved"));
+    }
+
     @PutMapping("/profile")
     @Operation(summary = "Update own profile")
     public ResponseEntity<ApiResponse<Map<String, Object>>> updateProfile(
@@ -259,5 +283,21 @@ public class EmployeeController {
     private User resolveUser(UserDetails userDetails) {
         if (userDetails == null) return null;
         return userRepository.findByEmailAndDeletedFalse(userDetails.getUsername()).orElse(null);
+    }
+
+    private Map<String, Object> selfAuditDto(AuditLog log) {
+        Map<String, Object> dto = new HashMap<>();
+        dto.put("id", log.getId());
+        dto.put("userId", log.getUserId());
+        dto.put("action", log.getAction());
+        dto.put("module", log.getModule());
+        dto.put("entityType", log.getEntityType());
+        dto.put("entityId", log.getEntityId());
+        dto.put("description", log.getDescription());
+        dto.put("ipAddress", log.getIpAddress());
+        dto.put("severity", log.getSeverity());
+        dto.put("status", log.getStatus());
+        dto.put("createdAt", log.getCreatedAt());
+        return dto;
     }
 }

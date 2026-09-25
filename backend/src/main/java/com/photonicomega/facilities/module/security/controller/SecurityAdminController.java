@@ -1,5 +1,8 @@
 package com.photonicomega.facilities.module.security.controller;
 
+import com.photonicomega.facilities.module.auth.domain.AuditLog;
+import com.photonicomega.facilities.module.auth.domain.AuditSeverity;
+import com.photonicomega.facilities.module.auth.repository.AuditLogRepository;
 import com.photonicomega.facilities.module.security.domain.*;
 import com.photonicomega.facilities.module.security.repository.*;
 import com.photonicomega.facilities.module.security.service.SecurityAuditService;
@@ -13,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +29,7 @@ import java.util.UUID;
 public class SecurityAdminController {
 
     private final SecurityLogRepository securityLogRepository;
+    private final AuditLogRepository auditLogRepository;
     private final BlockedIpRepository blockedIpRepository;
     private final ActiveSessionRepository activeSessionRepository;
     private final SecurityAlertRepository securityAlertRepository;
@@ -70,6 +75,49 @@ public class SecurityAdminController {
                 userId, role, module, riskLevel, ipAddress, startDate, endDate, pageRequest
         );
         return ResponseEntity.ok(logs);
+    }
+
+    @GetMapping("/audit-logs")
+    @Operation(summary = "Get global application audit logs with pagination (Super Admin only)")
+    public ResponseEntity<Page<Map<String, Object>>> getAuditLogs(
+            @RequestParam(required = false) UUID userId,
+            @RequestParam(required = false) String action,
+            @RequestParam(required = false) String module,
+            @RequestParam(required = false, name = "riskLevel") AuditSeverity severity,
+            @RequestParam(required = false) LocalDateTime startDate,
+            @RequestParam(required = false) LocalDateTime endDate,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        int safePage = Math.max(0, page);
+        int safeSize = Math.max(1, Math.min(size, 100));
+        PageRequest pageRequest = PageRequest.of(safePage, safeSize, Sort.by("createdAt").descending());
+        Page<Map<String, Object>> logs = auditLogRepository.filterAuditLogs(
+                userId,
+                action == null ? null : action.trim().toUpperCase(),
+                module == null ? null : module.trim().toUpperCase(),
+                severity,
+                startDate,
+                endDate,
+                pageRequest
+        ).map(this::auditLogDto);
+        return ResponseEntity.ok(logs);
+    }
+
+    private Map<String, Object> auditLogDto(AuditLog log) {
+        Map<String, Object> dto = new HashMap<>();
+        dto.put("id", log.getId());
+        dto.put("timestamp", log.getCreatedAt());
+        dto.put("userId", log.getUserId());
+        dto.put("username", log.getUserEmail());
+        dto.put("fullName", log.getUserFullName());
+        dto.put("module", log.getModule());
+        dto.put("action", log.getAction());
+        dto.put("ipAddress", log.getIpAddress());
+        dto.put("riskLevel", log.getSeverity());
+        dto.put("status", log.getStatus());
+        dto.put("source", "APPLICATION_AUDIT");
+        return dto;
     }
 
     @GetMapping("/sessions")
