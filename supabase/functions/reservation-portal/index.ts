@@ -4,6 +4,7 @@ import { ok, fail } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
 
 const db = adminDb();
+const floorPlanBucket = "facility-floorplans";
 const DEFAULT_ALLOWED_DOMAINS = ["photonicomega.com", "team8.tnvs"];
 
 function allowedDomains(): string[] {
@@ -37,6 +38,16 @@ function maskEmail(email: string): string {
   const [local = "", domain = ""] = email.split("@");
   if (!domain) return "hidden";
   return `${local.slice(0, 1)}***@${domain}`;
+}
+
+async function signedFloorPlan(path: string | null | undefined): Promise<string | null> {
+  if (!path) return null;
+  const { data, error } = await db.storage.from(floorPlanBucket).createSignedUrl(path, 900);
+  if (error) {
+    console.error("reservation floor plan signing failed:", error.message);
+    return null;
+  }
+  return data.signedUrl;
 }
 
 function badRequest(message: string, code = "INVALID_REQUEST") {
@@ -156,20 +167,20 @@ async function handleFacilities(ctx: AuthContext | null) {
   if (domainError) return domainError;
   const { data, error } = await db
     .from("facilities")
-    .select("id, name, facility_name, code, capacity, total_capacity, amenities_json, status, active, floor_plan_url")
+    .select("id, name, facility_name, code, capacity, total_capacity, amenities_json, status, active, floor_plan_path")
     .eq("active", true)
     .neq("status", "INACTIVE")
     .order("name");
   if (error) throw new Error(`reservation portal facilities load failed: ${error.message}`);
-  const facilities = (data ?? []).map((facility) => ({
+  const facilities = await Promise.all((data ?? []).map(async (facility) => ({
     id: facility.id,
     facilityName: facility.facility_name ?? facility.name,
     code: facility.code,
     capacity: facility.capacity ?? facility.total_capacity ?? 0,
     amenities: Array.isArray(facility.amenities_json) ? facility.amenities_json : [],
     status: facility.status ?? "AVAILABLE",
-    floorPlanUrl: facility.floor_plan_url ?? null,
-  }));
+    floorPlanUrl: await signedFloorPlan(facility.floor_plan_path),
+  })));
   return jsonResponse(ok(facilities, "Reservation facilities loaded"), 200);
 }
 
@@ -382,7 +393,7 @@ async function handleGuestPass(_ctx: AuthContext | null, _req: Request, _body: u
   if (!reservation) return notFound("The reservation connected to this guest link no longer exists.");
 
   const [{ data: facility, error: facilityError }, { data: host, error: hostError }] = await Promise.all([
-    db.from("facilities").select("name, facility_name, floor_plan_url").eq("id", reservation.facility_id).maybeSingle(),
+    db.from("facilities").select("name, facility_name, floor_plan_path").eq("id", reservation.facility_id).maybeSingle(),
     db.from("users").select("first_name, last_name, email").eq("id", reservation.host_user_id).maybeSingle(),
   ]);
   if (facilityError) throw new Error(`guest pass facility lookup failed: ${facilityError.message}`);
@@ -400,7 +411,7 @@ async function handleGuestPass(_ctx: AuthContext | null, _req: Request, _body: u
     notes: reservation.notes,
     status: reservation.status,
     facilityName: facility?.facility_name ?? facility?.name ?? "Meeting space",
-    floorPlanUrl: facility?.floor_plan_url ?? null,
+    floorPlanUrl: await signedFloorPlan(facility?.floor_plan_path),
     hostName: `${host?.first_name ?? ""} ${host?.last_name ?? ""}`.trim() || host?.email || "Team 8 member",
     magicLinkExpiresAt: invitee.magic_link_expires_at,
   }, "Guest pass loaded"), 200);

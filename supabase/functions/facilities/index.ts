@@ -76,7 +76,7 @@ type RoomRow = {
   has_whiteboard: boolean | null;
   active: boolean | null;
   facility_id: string | null;
-  facilities?: { id: string; name: string | null; code: string | null; type: string | null } | { id: string; name: string | null; code: string | null; type: string | null }[] | null;
+  facilities?: { id: string; name: string | null; code: string | null; type: string | null; active: boolean | null } | { id: string; name: string | null; code: string | null; type: string | null; active: boolean | null }[] | null;
 };
 
 function facOf(r: RoomRow) {
@@ -86,16 +86,16 @@ function facOf(r: RoomRow) {
 async function loadActiveRooms(): Promise<RoomRow[]> {
   const { data, error } = await db
     .from("rooms")
-    .select("*, facilities(id, name, code, type)")
+    .select("*, facilities(id, name, code, type, active)")
     .eq("active", true);
   if (error) throw new Error(`rooms load failed: ${error.message}`);
-  return (data as unknown as RoomRow[]) ?? [];
+  return ((data as unknown as RoomRow[]) ?? []).filter((room) => facOf(room)?.active !== false);
 }
 
 async function loadAllRooms(): Promise<RoomRow[]> {
   const { data, error } = await db
     .from("rooms")
-    .select("*, facilities(id, name, code, type)");
+    .select("*, facilities(id, name, code, type, active)");
   if (error) throw new Error(`rooms load failed: ${error.message}`);
   return (data as unknown as RoomRow[]) ?? [];
 }

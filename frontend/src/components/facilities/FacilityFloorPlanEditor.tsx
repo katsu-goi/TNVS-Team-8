@@ -62,7 +62,7 @@ export const FacilityFloorPlanEditor: React.FC<Props> = ({ facility, onClose }) 
     setSaving(true);
     try {
       const saved = selectedPinId
-        ? await facilityManagementService.updatePin(selectedPinId, form)
+        ? await facilityManagementService.updatePin(facility.id, selectedPinId, form)
         : await facilityManagementService.createPin({ facilityId: facility.id, ...form });
       setPins((current) => selectedPinId ? current.map((pin) => pin.id === saved.id ? saved : pin) : [...current, saved]);
       setSelectedPinId(saved.id);
@@ -79,7 +79,7 @@ export const FacilityFloorPlanEditor: React.FC<Props> = ({ facility, onClose }) 
     setDeleting(true);
     setError('');
     try {
-      await facilityManagementService.deletePin(selectedPinId);
+      await facilityManagementService.deletePin(facility.id, selectedPinId);
       setPins((current) => current.filter((pin) => pin.id !== selectedPinId));
       setSelectedPinId(null);
       setForm(emptyPinForm);

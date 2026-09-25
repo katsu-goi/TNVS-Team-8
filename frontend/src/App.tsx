@@ -37,6 +37,7 @@ const FacilitiesDashboard = lazyNamed(() => import('./components/facilities/Faci
 const ReservationsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'ReservationsPage');
 const ApprovalPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'ApprovalPage');
 const FacilityManagementPage = lazyNamed(() => import('./components/facilities/FacilityManagement'), 'FacilityManagement');
+const FacilityWorkspacePage = lazyNamed(() => import('./components/facilities/FacilityWorkspace'), 'FacilityWorkspace');
 const CalendarPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'CalendarPage');
 const AssetsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'AssetsPage');
 const FacilitiesReportsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'ReportsPage');
@@ -189,7 +190,7 @@ export const SessionBootstrap: React.FC<{ children: React.ReactNode }> = ({ chil
   return <>{children}</>;
 };
 
-const FacilitiesRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const FacilitiesRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
@@ -312,6 +313,7 @@ export const App: React.FC = () => {
           <Route path="facilities/reservations" element={<ReservationsPage />} />
           <Route path="facilities/approval" element={<ApprovalPage />} />
           <Route path="facilities/rooms" element={<FacilityManagementPage />} />
+          <Route path="facilities/management/:facilityId" element={<FacilityWorkspacePage />} />
           <Route path="facilities/calendar" element={<CalendarPage />} />
           <Route path="facilities/assets" element={<AssetsPage />} />
           <Route path="facilities/reports" element={<FacilitiesReportsPage />} />
