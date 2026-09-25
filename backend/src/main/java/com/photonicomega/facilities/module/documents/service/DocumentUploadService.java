@@ -162,16 +162,16 @@ public class DocumentUploadService {
         Document saved = documentRepository.save(document);
 
         auditService.log(user, "UPLOAD_DOCUMENT", MODULE, "Document", saved.getId().toString(),
-                "Uploaded document: " + saved.getTitle()
-                        + " (" + saved.getFileName() + ", " + saved.getFileSize() + " bytes)"
-                        + " - AI category: " + predictedCategory
-                        + ", confidence: " + saved.getConfidenceScore()
-                        + (stored.usedFallback() ? " [stored in fallback location]" : ""),
-                ipAddress);
+        "Uploaded document: " + saved.getTitle()
+        + " (" + saved.getFileName() + ", " + saved.getFileSize() + " bytes)"
+        + " - AI category: " + saved.getAiPredictedCategory()
+        + ", confidence: " + saved.getConfidenceScore()
+        + (stored.usedFallback() ? " [stored in fallback location]" : ""),
+        ipAddress);
 
         log.info("Document {} uploaded by {} - AI category {} (confidence {})",
-                saved.getId(), user != null ? user.getEmail() : "anonymous",
-                predictedCategory, saved.getConfidenceScore());
+        saved.getId(), user != null ? user.getEmail() : "anonymous",
+        saved.getAiPredictedCategory(), saved.getConfidenceScore());
 
         return toResponseSafe(saved);
     }
