@@ -48,6 +48,7 @@ type VisitorRow = {
   actual_arrival: string | null;
   actual_departure: string | null;
   status: string | null;
+  denial_reason: string | null;
   qr_code_token: string | null;
   badge_number: string | null;
   host_id: string | null;
@@ -124,6 +125,7 @@ function toVisitorDto(v: VisitorRow) {
     actualArrival: v.actual_arrival,
     actualDeparture: v.actual_departure,
     status: v.status,
+    denialReason: v.denial_reason,
     qrCodeToken: v.qr_code_token,
     badgeNumber: v.badge_number,
   };
@@ -272,6 +274,7 @@ async function handleRegister(_ctx: AuthContext | null, _req: Request, body: unk
 async function handleCheckIn(_ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
   const v = await loadVisitor(p.id);
   if (!v) return emptyNotFound();
+  if (v.status === "DENIED") return badRequest("A denied visitor cannot be checked in.", "VISITOR_DENIED");
 
   const { data: saved, error } = await db.from("visitors")
     .update({
@@ -310,6 +313,67 @@ async function handleCheckOut(_ctx: AuthContext | null, _req: Request, _body: un
   if (error) throw new Error(`visitor check-out failed: ${error.message}`);
 
   return jsonResponse(ok(toVisitorDto(saved as unknown as VisitorRow), "Visitor checked out"), 200);
+}
+
+async function handleVerifyAndAllow(ctx: AuthContext | null, req: Request, body: unknown, p: RouteParams) {
+  const result = await verify(p.id, parseIdType((body as Record<string, unknown> | null)?.idType),
+    (body as Record<string, unknown> | null)?.idNumber == null ? null : String((body as Record<string, unknown>).idNumber), ctx);
+  if (!result) return emptyNotFound();
+  if (result.watchlist_status === "FLAGGED") {
+    return jsonResponse(fail("The visitor matched the security watchlist. Use Deny / Flag instead.", "WATCHLIST_MATCH"), 409);
+  }
+  const { data: saved, error } = await db.from("visitors").update({
+    status: "CHECKED_IN",
+    actual_arrival: new Date().toISOString(),
+    denial_reason: null,
+    updated_by: ctx?.email ?? "system",
+    updated_at: naiveIso(),
+  }).eq("id", p.id).select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)").single();
+  if (error) throw new Error(`visitor allow failed: ${error.message}`);
+  await notifyHostOfArrival(saved as unknown as VisitorRow);
+  return jsonResponse(ok({ visitor: toVisitorDto(saved as unknown as VisitorRow), verification: toVerificationDto(result) }, "Visitor verified and allowed"), 200);
+}
+
+async function handleDeny(ctx: AuthContext | null, _req: Request, body: unknown, p: RouteParams) {
+  const reason = String((body as Record<string, unknown> | null)?.reason ?? "").trim();
+  if (!reason) return badRequest("A denial reason is required.", "DENIAL_REASON_REQUIRED");
+  const visitor = await loadVisitor(p.id);
+  if (!visitor) return emptyNotFound();
+  const { data: saved, error } = await db.from("visitors").update({
+    status: "DENIED",
+    denial_reason: reason,
+    updated_by: ctx?.email ?? "system",
+    updated_at: naiveIso(),
+  }).eq("id", p.id).select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)").single();
+  if (error) throw new Error(`visitor denial failed: ${error.message}`);
+  await writeAudit(ctx?.user ?? null, "DENY_VISITOR", MODULE, "Visitor", p.id,
+    `Visitor '${visitor.full_name}' denied. Reason: ${reason}`, ctx?.ip ?? null, "HIGH");
+  const { error: securityLogError } = await db.from("security_logs").insert({
+    action: "DENY_VISITOR",
+    module: MODULE,
+    full_name: visitor.full_name,
+    role: ctx?.roles.join(",") ?? "FACILITIES_OFFICER",
+    ip_address: ctx?.ip ?? null,
+    risk_level: "HIGH",
+    status: "SUCCESS",
+    reason,
+  });
+  if (securityLogError) console.error(`visitor denial security log failed: ${securityLogError.message}`);
+  return jsonResponse(ok(toVisitorDto(saved as unknown as VisitorRow), "Visitor denied and flagged"), 200);
+}
+
+async function handleOccupancy() {
+  const [{ count: visitorCount, error: visitorError }, { count: inviteeCount, error: inviteeError }, { data: facilities, error: facilityError }] = await Promise.all([
+    db.from("visitors").select("id", { count: "exact", head: true }).eq("status", "CHECKED_IN").eq("is_deleted", false),
+    db.from("reservation_invitees").select("id", { count: "exact", head: true }).eq("check_in_status", true),
+    db.from("facilities").select("total_capacity").eq("active", true),
+  ]);
+  if (visitorError) throw new Error(`visitor occupancy load failed: ${visitorError.message}`);
+  if (inviteeError) throw new Error(`reservation occupancy load failed: ${inviteeError.message}`);
+  if (facilityError) throw new Error(`facility capacity load failed: ${facilityError.message}`);
+  const maxCapacity = Math.max(1, ((facilities ?? []) as Array<{ total_capacity: number | null }>).reduce((sum, row) => sum + Number(row.total_capacity ?? 0), 0));
+  const current = Number(visitorCount ?? 0) + Number(inviteeCount ?? 0);
+  return jsonResponse(ok({ current, maxCapacity, rate: Math.round((current / maxCapacity) * 1000) / 10 }, "Live hub occupancy calculated"), 200);
 }
 
 async function handleVerify(ctx: AuthContext | null, _req: Request, body: unknown, p: RouteParams) {
@@ -609,6 +673,9 @@ const routes = [
   { method: "POST", path: "/visitors/:id/check-in", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleCheckIn },
   { method: "POST", path: "/visitors/:id/check-out", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleCheckOut },
   { method: "POST", path: "/visitors/:id/verify", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleVerify },
+  { method: "POST", path: "/visitors/:id/verify-allow", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleVerifyAndAllow },
+  { method: "POST", path: "/visitors/:id/deny", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleDeny },
+  { method: "GET", path: "/visitors/occupancy", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleOccupancy },
   { method: "GET", path: "/visitors/:id/verifications", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleVerifications },
   { method: "GET", path: "/visitors/watchlist", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleListWatchlist },
   { method: "POST", path: "/visitors/watchlist", guard: { kind: "roles", roles: VISITOR_ROLES }, handler: handleAddWatchlist },

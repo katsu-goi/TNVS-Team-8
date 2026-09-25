@@ -22,6 +22,12 @@ verify_jwt = false
 [functions.facilities]
 verify_jwt = false
 
+[functions.reservation-portal]
+verify_jwt = false
+
+[functions.document-title-suggest]
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.

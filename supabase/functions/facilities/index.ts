@@ -221,8 +221,8 @@ async function handleManagerKpi(_ctx: AuthContext | null, _req: Request) {
   const utilizationRate = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
 
   return jsonResponse(ok({
-    activeReservations: statusCounts["APPROVED"] ?? 0,
-    pendingApprovals: statusCounts["PENDING"] ?? 0,
+    activeReservations: (statusCounts["APPROVED"] ?? 0) + (statusCounts["CONFIRMED"] ?? 0),
+    pendingApprovals: (statusCounts["PENDING"] ?? 0) + (statusCounts["PENDING_MANAGER_APPROVAL"] ?? 0),
     availableRooms,
     occupiedRooms,
     maintenanceRooms: 0,
@@ -283,7 +283,7 @@ async function handleManagerReservations(_ctx: AuthContext | null, req: Request)
   const upcomingEnd = new Date(Date.now() + 30 * 86400_000).toISOString().slice(0, 10);
 
   const overview = {
-    pending: statusCounts["PENDING"] ?? 0,
+    pending: (statusCounts["PENDING"] ?? 0) + (statusCounts["PENDING_MANAGER_APPROVAL"] ?? 0),
     approved: statusCounts["APPROVED"] ?? 0,
     rejected: statusCounts["REJECTED"] ?? 0,
     cancelled: statusCounts["CANCELLED"] ?? 0,
@@ -1101,7 +1101,7 @@ async function handleOfficerDashboard(_ctx: AuthContext | null, _req: Request) {
   return jsonResponse(ok({
     kpi: {
       todaysReservations: todays.length,
-      pendingRequests: statusCounts["PENDING"] ?? 0,
+      pendingRequests: (statusCounts["PENDING"] ?? 0) + (statusCounts["PENDING_MANAGER_APPROVAL"] ?? 0),
       facilitiesUnderMaintenance,
       tasksDueToday,
     },
@@ -1157,7 +1157,7 @@ async function handleOfficerCreateReservation(ctx: AuthContext | null, _req: Req
   const { data: room, error: re } = await db.from("rooms").select("*").eq("id", roomId).maybeSingle();
   if (re) throw new Error(`room lookup failed: ${re.message}`);
   if (!room) return badRequest("Room not found", "ROOM_NOT_FOUND");
-  const roomRow = room as unknown as { active: boolean | null; status: string | null; open_time: string | null; close_time: string | null };
+  const roomRow = room as unknown as { active: boolean | null; status: string | null; open_time: string | null; close_time: string | null; type: string | null; name: string | null };
   if (roomRow.active !== true) return badRequest("This room is not active and cannot be reserved.", "ROOM_INACTIVE");
 
   const start = toUtcIso(String(req.startTime ?? ""));
@@ -1193,6 +1193,10 @@ async function handleOfficerCreateReservation(ctx: AuthContext | null, _req: Req
   }
 
   const expectedAttendees = req.expectedAttendees != null ? Number.parseInt(String(req.expectedAttendees), 10) : null;
+  const roomText = `${roomRow.name ?? ""} ${roomRow.type ?? ""} ${String(req.category ?? "")}`.toLowerCase();
+  const highRisk = ["vehicle", "bay", "executive", "exec", "restricted", "secure"].some((term) => roomText.includes(term));
+  const approvalTier = highRisk ? "TIER_2" : "TIER_1";
+  const reservationStatus = highRisk ? "PENDING_MANAGER_APPROVAL" : "CONFIRMED";
   const { data: saved, error: insErr } = await db.from("reservations").insert({
     room_id: roomId,
     user_id: ctx!.userId,
@@ -1201,7 +1205,7 @@ async function handleOfficerCreateReservation(ctx: AuthContext | null, _req: Req
     start_time: start,
     end_time: end,
     expected_attendees: expectedAttendees,
-    status: "PENDING",
+    status: reservationStatus,
     created_by: ctx!.email,
   }).select("id, title, start_time, end_time, status, room_id").single();
   if (insErr) throw new Error(`reservation insert failed: ${insErr.message}`);
@@ -1213,9 +1217,11 @@ async function handleOfficerCreateReservation(ctx: AuthContext | null, _req: Req
     endTime: (saved as { end_time: string }).end_time,
     status: (saved as { status: string }).status,
     roomId,
-    roomName: (room as { name: string }).name,
+     roomName: (room as { name: string }).name,
+     approvalTier,
+     approvalRoute: highRisk ? "MANAGER_ESCALATION" : "AUTO_APPROVED",
   };
-  return jsonResponse(ok(result, "Reservation request submitted for approval"), 200);
+   return jsonResponse(ok(result, highRisk ? "Reservation submitted for Facilities Manager approval" : "Reservation auto-approved"), 200);
 }
 
 async function handleOfficerCancelReservation(ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
@@ -1775,7 +1781,7 @@ async function handleAiApprovalSuggest(_ctx: AuthContext | null, _req: Request, 
   const reasons: { kind: string; code: string; message: string; details: Record<string, unknown> }[] = [];
   let score = 50;
 
-  if (row.status !== "PENDING") {
+  if (row.status !== "PENDING" && row.status !== "PENDING_MANAGER_APPROVAL") {
     reasons.push({ kind: "INFO", code: "STATUS", message: `Reservation is ${String(row.status).toLowerCase()}, not pending review.`, details: { status: row.status } });
   }
 

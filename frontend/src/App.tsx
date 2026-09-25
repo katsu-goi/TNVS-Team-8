@@ -5,6 +5,7 @@ import { OversightBanner } from './components/oversight';
 import { workspaceConfigs } from './components/workspaces/workspaceConfig';
 import type { WorkspaceConfig } from './components/workspaces/workspaceConfig';
 import { useParams } from 'react-router-dom';
+import { isTeam8Email } from './utils/team8Access';
 
 const lazyNamed = (loader: () => Promise<any>, exportName: string) =>
   lazy(() => loader().then((module) => ({ default: module[exportName] }))) as React.LazyExoticComponent<React.ComponentType<any>>;
@@ -28,7 +29,7 @@ const FacilitiesManagerLayout = lazyNamed(() => import('./components/facilities/
 const FacilitiesDashboard = lazyNamed(() => import('./components/facilities/FacilitiesDashboard'), 'FacilitiesDashboard');
 const ReservationsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'ReservationsPage');
 const ApprovalPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'ApprovalPage');
-const RoomsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'RoomsPage');
+const FacilityManagementPage = lazyNamed(() => import('./components/facilities/FacilityManagement'), 'FacilityManagement');
 const CalendarPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'CalendarPage');
 const AssetsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'AssetsPage');
 const FacilitiesReportsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'ReportsPage');
@@ -40,6 +41,7 @@ const FacilitiesOfficerLayout = lazyNamed(() => import('./components/facilities-
 const FacilitiesOfficerDashboard = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerDashboard'), 'FacilitiesOfficerDashboard');
 const FoReservationsPage = lazyNamed(() => import('./components/facilities-officer/FoReservationsPage'), 'FoReservationsPage');
 const FoVisitorManagementPage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'FoVisitorManagementPage');
+const FoQrCheckInPage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'QrCheckInPage');
 const FoDocumentsPage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'FoDocumentsPage');
 const FoNotificationsPage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'FoNotificationsPage');
 const FoProfilePage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'FoProfilePage');
@@ -75,6 +77,9 @@ const EmpSettingsPage = lazyNamed(() => import('./components/employee/EmployeePa
 const RoleWorkspaceLayout = lazyNamed(() => import('./components/workspaces/RoleWorkspaceLayout'), 'RoleWorkspaceLayout');
 const RoleWorkspacePage = lazyNamed(() => import('./components/workspaces/RoleWorkspacePage'), 'RoleWorkspacePage');
 const AccountLockoutsPage = lazyNamed(() => import('./components/sysadmin/AccountLockoutsPage'), 'AccountLockoutsPage');
+const Team8LoginPage = lazyNamed(() => import('./components/reservation-portal/Team8LoginPage'), 'Team8LoginPage');
+const ReservationPortalPage = lazyNamed(() => import('./components/reservation-portal/ReservationPortalPage'), 'ReservationPortalPage');
+const ReservationPassPage = lazyNamed(() => import('./components/reservation-portal/ReservationPassPage'), 'ReservationPassPage');
 
 class ErrorBoundary extends React.Component<
   { fallback: React.ReactNode; children: React.ReactNode },
@@ -201,6 +206,14 @@ const EmployeeRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   return <>{children}</>;
 };
 
+const Team8PortalRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const accessToken = useAuthStore((state) => state.accessToken);
+  const user = useAuthStore((state) => state.user);
+  if (!accessToken || !user) return <Navigate to="/reservation-portal/login" replace />;
+  if (!isTeam8Email(user.email)) return <Navigate to="/reservation-portal/login?error=domain" replace />;
+  return <>{children}</>;
+};
+
 export const App: React.FC = () => {
   return (
     <BrowserRouter>
@@ -209,6 +222,10 @@ export const App: React.FC = () => {
         <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/hr-assistance" element={<HRAssistancePage />} />
+        <Route path="/reservation-portal/login" element={<Team8LoginPage />} />
+        <Route path="/reservation-portal/pass" element={<ReservationPassPage />} />
+        <Route path="/guest-pass/:token" element={<ReservationPassPage />} />
+        <Route path="/reservation-portal" element={<Team8PortalRoute><ReservationPortalPage /></Team8PortalRoute>} />
         <Route element={
           <ProtectedRoute>
             <AdminPortalRoute>
@@ -270,7 +287,7 @@ export const App: React.FC = () => {
           <Route path="facilities" element={<FacilitiesDashboard />} />
           <Route path="facilities/reservations" element={<ReservationsPage />} />
           <Route path="facilities/approval" element={<ApprovalPage />} />
-          <Route path="facilities/rooms" element={<RoomsPage />} />
+          <Route path="facilities/rooms" element={<FacilityManagementPage />} />
           <Route path="facilities/calendar" element={<CalendarPage />} />
           <Route path="facilities/assets" element={<AssetsPage />} />
           <Route path="facilities/reports" element={<FacilitiesReportsPage />} />
@@ -289,6 +306,7 @@ export const App: React.FC = () => {
           <Route path="facilities-officer" element={<FacilitiesOfficerDashboard />} />
           <Route path="facilities-officer/reservations" element={<FoReservationsPage />} />
           <Route path="facilities-officer/visitors" element={<FoVisitorManagementPage />} />
+          <Route path="facilities-officer/qr-check-in" element={<FoQrCheckInPage />} />
           <Route path="facilities-officer/documents" element={<FoDocumentsPage />} />
           <Route path="facilities-officer/notifications" element={<FoNotificationsPage />} />
           <Route path="facilities-officer/profile" element={<FoProfilePage />} />
