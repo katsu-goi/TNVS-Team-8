@@ -1,16 +1,29 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import { clearOversightSession, getOversightSessionId } from '../utils/oversightSession';
 
-const DEFAULT_SUPABASE_PROJECT_URL = 'https://dunijfrvfozwlykpkfhy.supabase.co';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim();
 
 export const getApiBaseUrl = (): string => {
   const envUrl = import.meta.env.VITE_API_BASE_URL?.trim();
   if (envUrl) {
-    return envUrl.replace(/\/+$/, '');
+    const normalized = envUrl.replace(/\/+$/, '');
+    if (import.meta.env.PROD && typeof window !== 'undefined') {
+      const configured = new URL(normalized, window.location.origin);
+      const allowedByProductionCsp = configured.origin === window.location.origin
+        || configured.hostname.endsWith('.supabase.co');
+      if (allowedByProductionCsp) return normalized;
+      // Vercel's production CSP deliberately permits same-origin and Supabase
+      // API traffic only. Ignore an incompatible cross-origin override.
+    } else {
+      return normalized;
+    }
   }
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_PROJECT_URL;
-  return `${supabaseUrl.replace(/\/+$/, '')}/functions/v1`;
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
+  if (supabaseUrl) return `${supabaseUrl.replace(/\/+$/, '')}/functions/v1`;
+  if (import.meta.env.PROD) {
+    throw new Error('VITE_API_BASE_URL or VITE_SUPABASE_URL is required for a production build.');
+  }
+  return '/api';
 };
 
 const API_BASE_URL = getApiBaseUrl();
@@ -113,7 +126,9 @@ function persistRefreshedSession(session: RefreshedSession) {
   localStorage.setItem('accessToken', session.accessToken);
   localStorage.setItem('refreshToken', session.refreshToken);
   if (session.user) {
-    localStorage.setItem('user', JSON.stringify(session.user));
+    // The in-memory store may use this response, but authorization state is
+    // never restored from localStorage. A reload always verifies /auth/me.
+    localStorage.removeItem('user');
   }
   window.dispatchEvent(new CustomEvent('auth:session-refreshed', { detail: session }));
 }
@@ -197,7 +212,7 @@ export function extractErrorMessage(error: unknown): string {
   return 'An unexpected error occurred.';
 }
 
-export async function safeFetchJson<T = any>(url: string, options?: RequestInit): Promise<T | null> {
+export async function safeFetchJson<T = any>(url: string, options?: RequestInit): Promise<T> {
   try {
     const response = await apiClient.request<T>({
       url: normalizeApiPath(url),
@@ -205,9 +220,11 @@ export async function safeFetchJson<T = any>(url: string, options?: RequestInit)
       headers: options?.headers as Record<string, string> | undefined,
       data: options?.body,
     });
-    return response.data ?? null;
+    if (response.data == null) {
+      throw new Error('The application API returned an empty response.');
+    }
+    return response.data;
   } catch (err) {
-    console.warn(`Safe fetch JSON failed for ${url}:`, err);
-    return null;
+    throw new Error(extractErrorMessage(err), { cause: err });
   }
 }

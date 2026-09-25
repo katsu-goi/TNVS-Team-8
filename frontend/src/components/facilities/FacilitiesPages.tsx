@@ -1,8 +1,12 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { AlertCircle, RefreshCw, Calendar, CheckSquare, XSquare, Building2, ClipboardList, BarChart3, Bell, User, Settings, Plus, X, Wrench, Loader2, Save, Sparkles, Mail, CalendarClock, DoorOpen, FileText, ChevronLeft, ChevronRight, Clock, MapPin, AlertTriangle } from 'lucide-react';
+import { AlertCircle, RefreshCw, Calendar, CheckSquare, XSquare, Building2, ClipboardList, BarChart3, Bell, Plus, X, Wrench, Loader2, Save, Sparkles, Mail, CalendarClock, DoorOpen, FileText, ChevronLeft, ChevronRight, Clock, MapPin, AlertTriangle } from 'lucide-react';
 import { facilitiesService } from '../../api/facilitiesService';
+import { exportAnalyticsCsv, fetchAnalytics } from '../../api/analyticsService';
+import { notificationService, type AppNotification } from '../../api/notificationService';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
+import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
 import { TimePicker } from '../ui/TimePicker';
+import { ReasonDialog } from '../ui/SharedUI';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -23,7 +27,7 @@ const ErrorState: React.FC<{ message: string; onRetry: () => void }> = ({ messag
   <div className="card-stat p-8 flex flex-col items-center justify-center text-center space-y-3">
     <AlertCircle className="w-10 h-10 text-rose-400" />
     <p className="text-sm text-slate-600">{message}</p>
-    <button onClick={onRetry} className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold inline-flex items-center space-x-2">
+    <button type="button" onClick={onRetry} className="inline-flex items-center space-x-2 rounded-xl bg-brand-500 px-4 py-2 text-xs font-semibold text-white hover:bg-brand-700">
       <RefreshCw className="w-4 h-4" /><span>Retry</span>
     </button>
   </div>
@@ -107,6 +111,7 @@ export const ReservationsPage: React.FC = () => {
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-600">
             <option value="">All Status</option>
             <option value="PENDING">Pending</option>
+            <option value="PENDING_MANAGER_APPROVAL">Waiting for Manager</option>
             <option value="APPROVED">Approved</option>
             <option value="REJECTED">Rejected</option>
             <option value="CANCELLED">Cancelled</option>
@@ -187,12 +192,15 @@ export const ApprovalPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [rejectReservationId, setRejectReservationId] = useState<string | null>(null);
+  const [rejecting, setRejecting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const d = await facilitiesService.getReservations({ status: 'PENDING' });
+      const d = await facilitiesService.getReservations({ status: 'PENDING_MANAGER_APPROVAL' });
       setReservations(d.reservations || []);
     } catch (err: any) {
       setError(err?.message || 'Failed to load');
@@ -207,13 +215,25 @@ export const ApprovalPage: React.FC = () => {
   useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
 
   const handleApprove = async (id: string) => {
-    await facilitiesService.approveReservation(id);
-    setReservations(prev => prev.filter(r => r.id !== id));
+    setActionError(null);
+    try {
+      await facilitiesService.approveReservation(id, 'Final availability and operational review confirmed.');
+      setReservations(prev => prev.filter(r => r.id !== id));
+    } catch (err: any) {
+      setActionError(err?.response?.data?.message || 'Approval was rejected by the current availability check.');
+    }
   };
 
-  const handleReject = async (id: string) => {
-    await facilitiesService.rejectReservation(id);
-    setReservations(prev => prev.filter(r => r.id !== id));
+  const handleReject = async (id: string, reason: string) => {
+    setRejecting(true);
+    setActionError(null);
+    try {
+      await facilitiesService.rejectReservation(id, reason);
+      setReservations(prev => prev.filter(r => r.id !== id));
+      setRejectReservationId(null);
+    } catch (err: any) {
+      setActionError(err?.response?.data?.message || 'Reservation could not be rejected.');
+    } finally { setRejecting(false); }
   };
 
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, any>>({});
@@ -248,7 +268,7 @@ export const ApprovalPage: React.FC = () => {
       <div className="glass-panel flex items-center justify-between gap-3 p-5">
         <div>
           <h2 className="text-lg font-bold text-slate-900">Reservation Approval Queue</h2>
-          <p className="text-xs text-slate-500">Review each request and approve or reject it</p>
+          <p className="text-xs text-slate-500">Final decisions for requests already validated by a Facilities Officer</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600">
@@ -257,6 +277,8 @@ export const ApprovalPage: React.FC = () => {
           <button onClick={() => setRetry(r => r + 1)} className="rounded-lg border border-slate-200 bg-slate-100 p-2 transition hover:bg-slate-200" title="Refresh"><RefreshCw className="h-4 w-4 text-slate-400" /></button>
         </div>
       </div>
+
+      {actionError && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{actionError}</div>}
 
       {reservations.length === 0 ? (
         <div className="card-stat flex min-h-40 flex-col items-center justify-center border-dashed px-4 text-center">
@@ -339,7 +361,7 @@ export const ApprovalPage: React.FC = () => {
 
                 {/* Footer actions */}
                 <div className="mt-4 flex items-center gap-2 border-t border-slate-100 pt-3">
-                  <button onClick={() => handleReject(r.id)} className="rounded-lg border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-600 transition-colors hover:bg-rose-50" title="Reject request">
+                  <button onClick={() => setRejectReservationId(r.id)} className="rounded-lg border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-600 transition-colors hover:bg-rose-50" title="Reject request">
                     <XSquare className="mr-1.5 inline-block h-3.5 w-3.5" />Reject
                   </button>
                   <button onClick={() => handleApprove(r.id)} className="ml-auto inline-flex items-center rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700" title="Approve request">
@@ -351,6 +373,16 @@ export const ApprovalPage: React.FC = () => {
           })}
         </div>
       )}
+      <ReasonDialog
+        open={Boolean(rejectReservationId)}
+        title="Reject reservation"
+        description="Provide the operational reason for rejecting this reservation request."
+        label="Rejection reason"
+        confirmLabel="Reject reservation"
+        busy={rejecting}
+        onClose={() => setRejectReservationId(null)}
+        onConfirm={(reason) => rejectReservationId ? handleReject(rejectReservationId, reason) : undefined}
+      />
     </div>
   );
 };
@@ -376,6 +408,7 @@ export const RoomsPage: React.FC = () => {
   const [maintRoom, setMaintRoom] = useState<any>(null);
   const [maintForm, setMaintForm] = useState({ title: 'Scheduled Maintenance', description: '', startTime: '', endTime: '', assignedTo: '', markUnavailable: true });
   const [maintSaving, setMaintSaving] = useState(false);
+  const [maintError, setMaintError] = useState('');
 
   const [showFacilityModal, setShowFacilityModal] = useState(false);
   const [facilityForm, setFacilityForm] = useState({ name: '', code: '', type: 'HEADQUARTERS', city: '', country: '' });
@@ -441,16 +474,18 @@ export const RoomsPage: React.FC = () => {
   };
 
   const handleUpdateStatus = async (room: any, status: string) => {
+    setError(null);
     try {
       await facilitiesService.updateRoom(room.id, { status });
       load();
     } catch (err: any) {
-      alert(err?.response?.data?.message ?? 'Unable to update room status.');
+      setError(err?.response?.data?.message ?? 'Unable to update room status.');
     }
   };
 
   const handleScheduleMaintenance = async (e: React.FormEvent) => {
     e.preventDefault();
+    setMaintError('');
     setMaintSaving(true);
     try {
       await facilitiesService.scheduleMaintenance(maintRoom.id, {
@@ -464,7 +499,7 @@ export const RoomsPage: React.FC = () => {
       setMaintRoom(null);
       load();
     } catch (err: any) {
-      alert(err?.response?.data?.message ?? 'Unable to schedule maintenance.');
+      setMaintError(err?.response?.data?.message ?? 'Unable to schedule maintenance.');
     } finally {
       setMaintSaving(false);
     }
@@ -525,7 +560,7 @@ export const RoomsPage: React.FC = () => {
             <Building2 className="w-4 h-4 text-emerald-600" />
             <span>Add Facility</span>
           </button>
-          <button onClick={() => { setFormError(''); setShowAddModal(true); }} className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs transition flex items-center space-x-1.5 shadow-sm">
+          <button type="button" onClick={() => { setFormError(''); setShowAddModal(true); }} className="flex items-center space-x-1.5 rounded-xl bg-brand-500 px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-brand-700">
             <Plus className="w-4 h-4" />
             <span>Add Room</span>
           </button>
@@ -596,7 +631,7 @@ export const RoomsPage: React.FC = () => {
                           <option value="OUT_OF_SERVICE">Out of Service</option>
                         </select>
                         <button
-                          onClick={() => setMaintRoom(r)}
+                          onClick={() => { setMaintError(''); setMaintRoom(r); }}
                           className="px-2 py-1 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 font-semibold text-[10px] inline-flex items-center space-x-1"
                           title="Schedule Maintenance"
                         >
@@ -614,7 +649,7 @@ export const RoomsPage: React.FC = () => {
       )}
 
       {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-200 max-h-[90vh] flex flex-col">
             <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
               <h3 className="text-base font-bold flex items-center gap-2"><Building2 className="w-5 h-5 text-emerald-400" /> Add New Room</h3>
@@ -623,7 +658,7 @@ export const RoomsPage: React.FC = () => {
             <form onSubmit={handleAddRoom} className="p-5 overflow-y-auto space-y-3.5 text-xs">
               {formError && <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 font-medium">{formError}</div>}
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="font-bold text-slate-700">Facility *</label>
                   <div className="flex items-center gap-2">
@@ -687,7 +722,7 @@ export const RoomsPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="font-bold text-slate-700">Open Time</label>
                   <TimePicker value={addForm.openTime} onChange={t => setAddForm({ ...addForm, openTime: t })} placeholder="Select open time" />
@@ -723,7 +758,7 @@ export const RoomsPage: React.FC = () => {
 
               <div className="pt-3 border-t flex justify-end space-x-2">
                 <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-semibold hover:bg-slate-200">Cancel</button>
-                <button type="submit" disabled={saving} className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 inline-flex items-center space-x-1.5 disabled:opacity-60">
+                <button type="submit" disabled={saving} className="inline-flex items-center space-x-1.5 rounded-xl bg-brand-500 px-4 py-2 font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
                   {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                   <span>{saving ? 'Saving…' : 'Create Room'}</span>
                 </button>
@@ -734,7 +769,7 @@ export const RoomsPage: React.FC = () => {
       )}
 
       {showFacilityModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
             <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
               <h3 className="text-base font-bold flex items-center gap-2"><Building2 className="w-5 h-5 text-emerald-400" /> Add New Facility</h3>
@@ -742,7 +777,7 @@ export const RoomsPage: React.FC = () => {
             </div>
             <form onSubmit={handleCreateFacility} className="p-5 space-y-3.5 text-xs">
               {facilityError && <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 font-medium">{facilityError}</div>}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="font-bold text-slate-700">Facility Name *</label>
                   <input type="text" required value={facilityForm.name} onChange={e => setFacilityForm({ ...facilityForm, name: e.target.value })} placeholder="e.g. HQ Tower" className="w-full mt-1 bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none" />
@@ -760,7 +795,7 @@ export const RoomsPage: React.FC = () => {
                   ))}
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="font-bold text-slate-700">City</label>
                   <input type="text" value={facilityForm.city} onChange={e => setFacilityForm({ ...facilityForm, city: e.target.value })} placeholder="e.g. Manila" className="w-full mt-1 bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none" />
@@ -772,7 +807,7 @@ export const RoomsPage: React.FC = () => {
               </div>
               <div className="pt-3 flex justify-end space-x-2">
                 <button type="button" onClick={() => setShowFacilityModal(false)} className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-semibold hover:bg-slate-200">Cancel</button>
-                <button type="submit" disabled={facilitySaving} className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 inline-flex items-center space-x-1.5 disabled:opacity-60">
+                <button type="submit" disabled={facilitySaving} className="inline-flex items-center space-x-1.5 rounded-xl bg-brand-500 px-4 py-2 font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
                   {facilitySaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                   <span>{facilitySaving ? 'Saving…' : 'Create Facility'}</span>
                 </button>
@@ -783,13 +818,14 @@ export const RoomsPage: React.FC = () => {
       )}
 
       {maintRoom && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
             <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
               <h3 className="text-base font-bold flex items-center gap-2"><Wrench className="w-5 h-5 text-rose-400" /> Schedule Maintenance</h3>
               <button onClick={() => setMaintRoom(null)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
             </div>
             <form onSubmit={handleScheduleMaintenance} className="p-5 space-y-3.5 text-xs">
+              {maintError && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 font-medium text-rose-700">{maintError}</div>}
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-700">
                 Room: <strong className="text-slate-900">{maintRoom.name}</strong> ({maintRoom.facilityName})
               </div>
@@ -797,7 +833,7 @@ export const RoomsPage: React.FC = () => {
                 <label className="font-bold text-slate-700">Maintenance Title *</label>
                 <input type="text" required value={maintForm.title} onChange={e => setMaintForm({ ...maintForm, title: e.target.value })} className="w-full mt-1 bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="font-bold text-slate-700">Start Date/Time *</label>
                   <input type="datetime-local" required value={maintForm.startTime} onChange={e => setMaintForm({ ...maintForm, startTime: e.target.value })} className="w-full mt-1 bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none" />
@@ -1253,7 +1289,7 @@ const EventDetail: React.FC<{ event: CalEvent; onClose: () => void }> = ({ event
   const s = eventStyle(event);
   const statusText = event.type === 'maintenance' ? 'MAINTENANCE' : (event.status || '').toUpperCase();
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm" onClick={onClose}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm" onClick={onClose}>
       <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className={`flex items-start justify-between gap-3 border-l-4 p-4 ${s.bar} ${s.bg}`}>
           <div className="min-w-0">
@@ -1405,14 +1441,17 @@ export const AssetsPage: React.FC = () => {
 export const ReportsPage: React.FC = () => {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [retry, setRetry] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
-      const d = await facilitiesService.getReports();
-      setData(d);
-    } catch {} finally { setLoading(false); }
+      setData(await fetchAnalytics({ preset: 'last_30_days' }));
+    } catch (e: any) { setError(e?.response?.data?.message || e?.message || 'Failed to load facility report.'); }
+    finally { setLoading(false); }
   }, [retry]);
 
   useEffect(() => { load(); }, [load]);
@@ -1429,43 +1468,18 @@ export const ReportsPage: React.FC = () => {
           <h2 className="text-lg font-bold text-slate-900">Facility Reports</h2>
           <p className="text-xs text-slate-500">Live backend data only</p>
         </div>
-        <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setRetry(r => r + 1)} aria-label="Refresh report" className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
+          <button disabled={exporting} onClick={async () => { setExporting(true); setError(null); try { await exportAnalyticsCsv({ preset: 'last_30_days' }); } catch (e: any) { setError(e?.response?.data?.message || e?.message || 'CSV export failed.'); } finally { setExporting(false); } }} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{exporting ? 'Exporting…' : 'Export CSV'}</button>
+        </div>
       </div>
 
-      {data ? (
+      {error ? <ErrorState message={error} onRetry={() => setRetry(r => r + 1)} /> : data?.facilities ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {data.reservationReports && (
-            <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center"><Calendar className="w-4 h-4 mr-2 text-emerald-600" />Reservation Reports</h3>
-              {Object.entries(data.reservationReports).map(([k, v]) => (
-                <div key={k} className="flex justify-between py-1.5 text-xs"><span className="text-slate-600 capitalize">{k.replace(/([A-Z])/g, ' $1')}</span><span className="font-bold text-slate-900">{v as any}</span></div>
-              ))}
-            </div>
-          )}
-          {data.facilityUtilization && (
-            <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center"><Building2 className="w-4 h-4 mr-2 text-emerald-600" />Facility Utilization</h3>
-              {Object.entries(data.facilityUtilization).map(([k, v]) => (
-                <div key={k} className="flex justify-between py-1.5 text-xs"><span className="text-slate-600 capitalize">{k.replace(/([A-Z])/g, ' $1')}</span><span className="font-bold text-slate-900">{v as any}{k.includes('Rate') ? '%' : ''}</span></div>
-              ))}
-            </div>
-          )}
-          {data.assetReports && (
-            <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center"><ClipboardList className="w-4 h-4 mr-2 text-emerald-600" />Asset Reports</h3>
-              {Object.entries(data.assetReports).map(([k, v]) => (
-                <div key={k} className="flex justify-between py-1.5 text-xs"><span className="text-slate-600 capitalize">{k.replace(/([A-Z])/g, ' $1')}</span><span className="font-bold text-slate-900">{v as any}{k.includes('Rate') ? '%' : ''}</span></div>
-              ))}
-            </div>
-          )}
-          {data.occupancyReports && (
-            <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center"><BarChart3 className="w-4 h-4 mr-2 text-emerald-600" />Occupancy Reports</h3>
-              {Object.entries(data.occupancyReports).map(([k, v]) => (
-                <div key={k} className="flex justify-between py-1.5 text-xs"><span className="text-slate-600 capitalize">{k.replace(/([A-Z])/g, ' $1')}</span><span className="font-bold text-slate-900">{v as any}{k.includes('Rate') ? '%' : ''}</span></div>
-              ))}
-            </div>
-          )}
+          <div className="card-stat p-4"><h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center"><Calendar className="w-4 h-4 mr-2 text-emerald-600" />Reservation outcomes</h3>{['submitted','officerReviewed','managerApproved','rejected','cancelled','completed'].map(k => <div key={k} className="flex justify-between py-1.5 text-xs"><span className="text-slate-600 capitalize">{k.replace(/([A-Z])/g, ' $1')}</span><span className="font-bold text-slate-900">{data.facilities[k] ?? 0}</span></div>)}</div>
+          <div className="card-stat p-4"><h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center"><Building2 className="w-4 h-4 mr-2 text-emerald-600" />Time utilization</h3><div className="flex justify-between py-1.5 text-xs"><span>Occupied minutes</span><b>{data.facilities.occupiedMinutes ?? 0}</b></div><div className="flex justify-between py-1.5 text-xs"><span>Available operating minutes</span><b>{data.facilities.availableOperatingMinutes ?? 0}</b></div><div className="flex justify-between py-1.5 text-xs"><span>Utilization</span><b>{data.facilities.utilizationPercent == null ? 'N/A' : `${data.facilities.utilizationPercent}%`}</b></div><p className="mt-3 text-[11px] text-slate-500">Approved/confirmed/checked-in/completed occupied duration ÷ configured active-room operating duration.</p></div>
+          <div className="card-stat p-4"><h3 className="text-sm font-bold text-slate-900 mb-3">Scheduling quality</h3>{['conflicts','maintenanceRelatedRejections','maintenanceRestrictions'].map(k => <div key={k} className="flex justify-between py-1.5 text-xs"><span className="text-slate-600 capitalize">{k.replace(/([A-Z])/g, ' $1')}</span><b>{data.facilities[k] ?? 0}</b></div>)}</div>
+          <div className="card-stat p-4"><h3 className="text-sm font-bold text-slate-900 mb-3">Report provenance</h3><p className="text-xs text-slate-600">Range: {new Date(data.period.from).toLocaleString('en-PH')} to {new Date(data.period.toExclusive).toLocaleString('en-PH')} (exclusive)</p><p className="mt-2 text-xs text-slate-600">Generated: {new Date(data.generatedAt).toLocaleString('en-PH')}</p><p className="mt-2 text-xs text-slate-600">Scope: {data.scope}</p></div>
         </div>
       ) : (
         <EmptyState icon={BarChart3} title="No Report Data" desc="No data available for report generation." />
@@ -1484,7 +1498,7 @@ export const AnalyticsPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const d = await facilitiesService.getAnalytics();
+      const d = await facilitiesService.getAnalytics({ preset: 'last_30_days' });
       setData(d);
     } catch (e: any) {
       setError(e?.response?.data?.message || e?.message || 'Failed to load analytics.');
@@ -1498,14 +1512,16 @@ export const AnalyticsPage: React.FC = () => {
 
   if (loading && !data) return <LoadingSkeleton />;
 
-  const hasData = data && Object.keys(data).length > 0;
+  const facilities = data?.facilities;
+  const visitors = data?.visitors;
+  const hasData = Boolean(facilities || visitors);
 
   return (
     <div className="space-y-6">
       <div className="glass-panel p-5 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-slate-900">Analytics</h2>
-          <p className="text-xs text-slate-500">Live utilization and trends</p>
+          <p className="text-xs text-slate-500">Database-aggregated · last 30 Manila calendar days</p>
         </div>
         <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
       </div>
@@ -1514,47 +1530,43 @@ export const AnalyticsPage: React.FC = () => {
         <ErrorState message={error} onRetry={() => setRetry(r => r + 1)} />
       ) : hasData ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {data.monthlyReservationTrends && (
+          {facilities && (
             <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-2">Monthly Reservation Trends</h3>
-              <p className="text-2xl font-bold text-emerald-600">{data.monthlyReservationTrends.total}</p>
-              <p className="text-xs text-slate-500">This month</p>
+              <h3 className="text-sm font-bold text-slate-900 mb-2">Submitted reservations</h3>
+              <p className="text-2xl font-bold text-emerald-600">{facilities.submitted ?? 0}</p>
+              <p className="text-xs text-slate-500">{facilities.submittedTrend?.kind === 'NEW' ? 'New vs an empty prior period' : facilities.submittedTrend?.percent == null ? 'N/A comparison' : `${facilities.submittedTrend.percent}% vs previous equal period`}</p>
             </div>
           )}
-          {data.peakReservationHours && Object.keys(data.peakReservationHours).length > 0 && (
+          {facilities && (
             <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-2">Peak Reservation Hours</h3>
-              <div className="space-y-1">
-                {Object.entries(data.peakReservationHours).sort(([,a]: any, [,b]: any) => b - a).slice(0, 5).map(([hour, count]: [string, any]) => (
-                  <div key={hour} className="flex justify-between text-xs"><span className="text-slate-600">{hour}:00</span><span className="font-bold text-slate-900">{count}</span></div>
-                ))}
-              </div>
+              <h3 className="text-sm font-bold text-slate-900 mb-2">Facility utilization</h3>
+              <p className="text-2xl font-bold text-blue-600">{facilities.utilizationPercent == null ? 'N/A' : `${facilities.utilizationPercent}%`}</p>
+              <p className="text-xs text-slate-500">{facilities.occupiedMinutes ?? 0} of {facilities.availableOperatingMinutes ?? 0} operating minutes</p>
             </div>
           )}
-          {data.departmentDistribution && Object.keys(data.departmentDistribution).length > 0 && (
+          {visitors && (
             <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-2">Department Distribution</h3>
-              <div className="space-y-1">
-                {Object.entries(data.departmentDistribution).map(([dept, count]: [string, any]) => (
-                  <div key={dept} className="flex justify-between text-xs"><span className="text-slate-600">{dept}</span><span className="font-bold text-slate-900">{count}</span></div>
-                ))}
-              </div>
+              <h3 className="text-sm font-bold text-slate-900 mb-2">Average visitor duration</h3>
+              <p className="text-2xl font-bold text-violet-600">{visitors.averageVisitMinutes == null ? 'N/A' : `${visitors.averageVisitMinutes} min`}</p>
+              <p className="text-xs text-slate-500">Completed visits only · based on actual check-in and check-out timestamps</p>
             </div>
           )}
-          {data.mostFrequentlyUsedRooms && data.mostFrequentlyUsedRooms.length > 0 && (
+          {Array.isArray(facilities?.dailySubmitted) && (
             <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-2">Most Used Rooms</h3>
-              <div className="space-y-1">
-                {data.mostFrequentlyUsedRooms.slice(0, 5).map((r: any, i: number) => (
-                  <div key={i} className="flex justify-between text-xs"><span className="text-slate-600">{r.roomName} ({r.roomNumber})</span><span className="font-bold text-slate-900">{r.count} bookings</span></div>
-                ))}
-              </div>
+              <h3 className="text-sm font-bold text-slate-900 mb-2">Daily submitted reservations</h3>
+              <div className="max-h-48 space-y-1 overflow-y-auto">{facilities.dailySubmitted.map((row: any) => <div key={row.date} className="flex justify-between text-xs"><span className="text-slate-600">{row.date}</span><b>{row.value}</b></div>)}</div>
             </div>
           )}
-          {data.dailyRoomUtilization && (
+          {Array.isArray(facilities?.frequentlyUsedFacilities) && facilities.frequentlyUsedFacilities.length > 0 && (
             <div className="card-stat p-4">
-              <h3 className="text-sm font-bold text-slate-900 mb-2">Daily Room Utilization</h3>
-              <p className="text-xs text-slate-500">{Object.keys(data.dailyRoomUtilization).length} days with reservations</p>
+              <h3 className="text-sm font-bold text-slate-900 mb-2">Frequently used facilities</h3>
+              <div className="space-y-1">{facilities.frequentlyUsedFacilities.map((row: any) => <div key={row.facility} className="flex justify-between text-xs"><span className="text-slate-600">{row.facility}</span><b>{row.reservations} bookings · {row.occupiedMinutes} min</b></div>)}</div>
+            </div>
+          )}
+          {facilities && (
+            <div className="card-stat p-4">
+              <h3 className="text-sm font-bold text-slate-900 mb-2">Workflow outcomes</h3>
+              <p className="text-xs text-slate-500">{facilities.managerApproved ?? 0} approved · {facilities.rejected ?? 0} rejected · {facilities.cancelled ?? 0} cancelled · {facilities.completed ?? 0} completed</p>
             </div>
           )}
         </div>
@@ -1566,29 +1578,23 @@ export const AnalyticsPage: React.FC = () => {
 };
 
 export const FacilitiesNotificationsPage: React.FC = () => {
-  const [notifications, setNotifications] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const notificationRevision = useNotificationRealtimeStore(s => s.revision);
 
   const load = useCallback(async () => {
     setLoading(true);
-    try {
-      const d = await facilitiesService.getReservations();
-      const items = (d.reservations || []).slice(0, 15).map((r: any) => ({
-        id: r.id,
-        message: `${r.employeeName} ${r.status === 'PENDING' ? 'requested' : r.status === 'APPROVED' ? 'got approved for' : r.status === 'REJECTED' ? 'was rejected for' : 'cancelled'} "${r.title}"`,
-        type: r.status === 'PENDING' ? 'NEW' : r.status === 'APPROVED' ? 'APPROVED' : r.status === 'REJECTED' ? 'REJECTED' : 'CANCELLED',
-        timestamp: r.createdAt,
-        room: r.roomName,
-      }));
-      setNotifications(items);
-    } catch {} finally { setLoading(false); }
+    setError(null);
+    try { setNotifications(await notificationService.getNotifications()); }
+    catch (e: any) { setError(e?.response?.data?.message || e?.message || 'Failed to load notifications.'); }
+    finally { setLoading(false); }
   }, [retry]);
 
   useEffect(() => { load(); }, [load]);
 
-  const revisionN = useRealtimeSyncStore(s => s.revision);
-  useEffect(() => { if (revisionN > 0) setRetry(r => r + 1); }, [revisionN]);
+  useEffect(() => { if (notificationRevision > 0) setRetry(r => r + 1); }, [notificationRevision]);
 
   if (loading && notifications.length === 0) return <LoadingSkeleton />;
 
@@ -1602,53 +1608,26 @@ export const FacilitiesNotificationsPage: React.FC = () => {
         <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
       </div>
 
-      {notifications.length === 0 ? (
+      {error ? <ErrorState message={error} onRetry={() => setRetry(r => r + 1)} /> : notifications.length === 0 ? (
         <EmptyState icon={Bell} title="No Notifications" desc="No facility notifications yet." />
       ) : (
         <div className="space-y-2">
-          {notifications.map((n: any) => (
+          {notifications.map((n) => (
             <div key={n.id} className={`card-stat p-3 flex items-start space-x-3 ${
-              n.type === 'PENDING' || n.type === 'NEW' ? 'border-l-4 border-l-amber-400' :
+              !n.read ? 'border-l-4 border-l-amber-400' :
               n.type === 'APPROVED' ? 'border-l-4 border-l-emerald-400' :
               n.type === 'REJECTED' ? 'border-l-4 border-l-rose-400' : ''
             }`}>
               <div className="flex-1">
-                <p className="text-sm text-slate-900">{n.message}</p>
-                <p className="text-xs text-slate-500 mt-0.5">{n.room}</p>
-                <p className="text-[10px] text-slate-400 mt-1 font-mono">{n.timestamp ? new Date(n.timestamp).toLocaleString() : ''}</p>
+                <p className="text-sm font-semibold text-slate-900">{n.title}</p>
+                <p className="text-xs text-slate-500 mt-0.5">{n.message}</p>
+                <p className="text-[10px] text-slate-400 mt-1 font-mono">{new Date(n.createdAt).toLocaleString('en-PH')}</p>
               </div>
+              {!n.read && <button onClick={async () => { await notificationService.markNotificationRead(n.id); setNotifications(rows => rows.map(row => row.id === n.id ? { ...row, read: true } : row)); }} className="rounded-lg border border-emerald-200 px-2 py-1 text-[11px] font-bold text-emerald-700">Mark read</button>}
             </div>
           ))}
         </div>
       )}
-    </div>
-  );
-};
-
-export const ProfilePage: React.FC = () => {
-  return (
-    <div className="space-y-6">
-      <div className="glass-panel p-5">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Profile</h2>
-          <p className="text-xs text-slate-500">Facilities Manager account</p>
-        </div>
-      </div>
-      <EmptyState icon={User} title="Profile Settings" desc="Profile management will be available via TEAM 1 - Human Resource Management integration." />
-    </div>
-  );
-};
-
-export const FacilitiesSettingsPage: React.FC = () => {
-  return (
-    <div className="space-y-6">
-      <div className="glass-panel p-5">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Settings</h2>
-          <p className="text-xs text-slate-500">Facilities Manager account and module preferences</p>
-        </div>
-      </div>
-      <EmptyState icon={Settings} title="Settings" desc="Account and module settings will be available via TEAM 1 - Human Resource Management integration." />
     </div>
   );
 };

@@ -18,11 +18,26 @@ const TIERS: Tiers = {
   guest: { windowSeconds: 60, capacity: 60 },
 };
 
-const SENSITIVE_PATHS = ["/auth/login", "/security/admin", "/auth/reset-password"];
+const SENSITIVE_LIMITS: Array<{ path: string; spec: LimitSpec }> = [
+  { path: "/admin/backups", spec: { windowSeconds: 3600, capacity: 10 } },
+  { path: "/auth/login", spec: { windowSeconds: 60, capacity: 20 } },
+  { path: "/auth/refresh", spec: { windowSeconds: 60, capacity: 30 } },
+  { path: "/auth/forgot-password", spec: { windowSeconds: 3600, capacity: 10 } },
+  { path: "/auth/reset-password", spec: { windowSeconds: 3600, capacity: 10 } },
+  { path: "/security/admin", spec: { windowSeconds: 60, capacity: 30 } },
+  { path: "/visitors/", spec: { windowSeconds: 60, capacity: 60 } },
+  { path: "/documents/upload", spec: { windowSeconds: 60, capacity: 10 } },
+  { path: "/document-title-suggest/", spec: { windowSeconds: 60, capacity: 10 } },
+  { path: "/contracts/", spec: { windowSeconds: 60, capacity: 30 } },
+  { path: "/ai/chat", spec: { windowSeconds: 60, capacity: 5 } },
+  { path: "/ai/", spec: { windowSeconds: 60, capacity: 20 } },
+  { path: "/analytics/export", spec: { windowSeconds: 60, capacity: 20 } },
+];
 
 export function tierFor(role: string, path: string): { name: string; spec: LimitSpec } {
-  if (SENSITIVE_PATHS.some((p) => path.includes(p))) {
-    return { name: "sensitive", spec: { windowSeconds: 60, capacity: 20 } };
+  const sensitive = SENSITIVE_LIMITS.find((entry) => path.includes(entry.path));
+  if (sensitive) {
+    return { name: `sensitive:${sensitive.path}`, spec: sensitive.spec };
   }
   const normalized = role.toLowerCase();
   if (normalized === "admin") return { name: TAGS.admin, spec: TIERS.admin };
@@ -44,7 +59,7 @@ export async function consumeRateLimit(
   // Align windows to spec.windowSeconds boundaries for predictable expiry.
   const windowStart = Math.floor(nowSec / spec.windowSeconds) * spec.windowSeconds;
 
-  const { error } = await db.rpc("consume_rate_limit_token", {
+  const { data, error } = await db.rpc("consume_rate_limit_token", {
     p_key: limitKey,
     p_window_start: windowStart,
     p_window_seconds: spec.windowSeconds,
@@ -52,11 +67,11 @@ export async function consumeRateLimit(
   });
 
   if (error) {
-    // Fallback: if the RPC is missing (migration not applied), fail open but
-    // conservatively (block) so a mis-deployment never silently removes limits.
+    // If the RPC is missing or unavailable, fail closed so a mis-deployment
+    // never silently removes abuse protection.
     // This must never happen post-deploy; the migration ships in the same PR.
     console.error("consume_rate_limit_token failed:", error.message);
     return false;
   }
-  return true;
+  return data === true;
 }

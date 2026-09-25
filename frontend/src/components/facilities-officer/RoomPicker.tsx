@@ -112,7 +112,7 @@ export const RoomPicker: React.FC<RoomPickerProps> = ({ open, date, startTime, e
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full overflow-hidden border border-slate-200 max-h-[90vh] flex flex-col">
         <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
           <h3 className="text-base font-bold flex items-center gap-2">

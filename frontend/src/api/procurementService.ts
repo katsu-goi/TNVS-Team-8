@@ -11,7 +11,6 @@ export const procurementService = {
   createContract: (data: any) => apiClient.post('/procurement/contracts', data),
   updateContract: (id: string, data: any) => apiClient.put(`/procurement/contracts/${id}`, data),
   submitContractReview: (id: string) => apiClient.post(`/procurement/contracts/${id}/submit-review`),
-  approveContract: (id: string) => apiClient.post(`/procurement/contracts/${id}/approve`),
   activateContract: (id: string) => apiClient.post(`/procurement/contracts/${id}/activate`),
   renewContract: (id: string, data?: any) => apiClient.post(`/procurement/contracts/${id}/renew`, data),
   terminateContract: (id: string) => apiClient.post(`/procurement/contracts/${id}/terminate`),

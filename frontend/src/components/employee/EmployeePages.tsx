@@ -2,11 +2,14 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   AlertCircle, RefreshCw, Plus, X, Pencil, Ban, CheckCircle2,
-  CalendarClock, Users, FileText, FileSignature, Bell, Settings,
+  CalendarClock, Users, FileText, FileSignature, Bell,
   Building2, MapPin, Users as UsersIcon, Upload, Download, Trash2, Check,
 } from 'lucide-react';
 import { employeeService } from '../../api/employeeService';
 import { DocumentUploadPanel } from '../documents/DocumentUploadPanel';
+import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
+import { ConfirmDialog, Modal as SharedModal } from '../ui/SharedUI';
+import { DashboardHero } from '../ui/DashboardPrimitives';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -72,13 +75,14 @@ const useToast = () => {
   const node = toast ? <Toast message={toast.message} kind={toast.kind} onClose={() => setToast(null)} /> : null;
   return { show, node };
 };
-
 const inputCls = 'mt-1 w-full text-sm bg-white text-slate-900 placeholder-slate-400 border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-200';
 const labelCls = 'text-[11px] font-semibold text-slate-500 uppercase';
 
 const reservationStatusBadge = (status?: string) => {
   switch ((status || '').toUpperCase()) {
     case 'APPROVED': return 'bg-emerald-50 text-emerald-600';
+    case 'CONFIRMED': return 'bg-emerald-50 text-emerald-700';
+    case 'PENDING_MANAGER_APPROVAL': return 'bg-purple-50 text-purple-700';
     case 'PENDING': return 'bg-amber-50 text-amber-600';
     case 'REJECTED': return 'bg-rose-50 text-rose-600';
     case 'CANCELLED': return 'bg-slate-100 text-slate-500';
@@ -87,7 +91,6 @@ const reservationStatusBadge = (status?: string) => {
     default: return 'bg-slate-100 text-slate-500';
   }
 };
-
 const requestStatusBadge = (status?: string) => {
   switch ((status || '').toUpperCase()) {
     case 'APPROVED': return 'bg-emerald-50 text-emerald-600';
@@ -125,25 +128,11 @@ const fmtDateTime = (v?: string) => {
 };
 
 const PageHeader: React.FC<{ title: string; subtitle: string; action?: React.ReactNode }> = ({ title, subtitle, action }) => (
-  <div className="glass-panel p-5 flex items-center justify-between">
-    <div>
-      <h1 className="text-2xl font-extrabold font-heading text-slate-900 leading-tight">{title}</h1>
-      <p className="text-slate-500 text-sm mt-1">{subtitle}</p>
-    </div>
-    {action}
-  </div>
+  <DashboardHero title={title} subtitle={subtitle} actions={action} />
 );
 
 const Modal: React.FC<{ title: string; onClose: () => void; children: React.ReactNode }> = ({ title, onClose, children }) => (
-  <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-    <div className="bg-white border border-slate-200 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
-      <div className="p-4 border-b border-slate-100 flex items-center justify-between shrink-0">
-        <h3 className="font-heading font-bold text-base text-slate-900">{title}</h3>
-        <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="w-4 h-4" /></button>
-      </div>
-      <div className="p-5 overflow-y-auto">{children}</div>
-    </div>
-  </div>
+  <SharedModal open title={title} onClose={onClose}>{children}</SharedModal>
 );
 
 // ---------------------------------------------------------------------------
@@ -171,6 +160,8 @@ export const EmpReservationsPage: React.FC = () => {
   const [rooms, setRooms] = useState<AvailableRoom[]>([]);
   const [roomsLoading, setRoomsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [cancelTarget, setCancelTarget] = useState<any | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -241,9 +232,10 @@ export const EmpReservationsPage: React.FC = () => {
   };
 
   const cancel = async (r: any) => {
-    if (!window.confirm(`Cancel reservation "${r.title}"?`)) return;
-    try { await employeeService.cancelReservation(r.id); show('Reservation cancelled.'); setRetry(x => x + 1); }
+    setCancelling(true);
+    try { await employeeService.cancelReservation(r.id); show('Reservation cancelled.'); setCancelTarget(null); setRetry(x => x + 1); }
     catch (e: any) { show(e?.response?.data?.message || 'Failed to cancel', 'err'); }
+    finally { setCancelling(false); }
   };
 
   if (loading && !rows.length) return <LoadingSkeleton />;
@@ -261,7 +253,7 @@ export const EmpReservationsPage: React.FC = () => {
           <div className="divide-y divide-slate-50">
             {rows.map((r) => {
               const editable = (r.status || '').toUpperCase() === 'PENDING';
-              const cancellable = !['APPROVED', 'CHECKED_IN', 'COMPLETED', 'CANCELLED', 'REJECTED'].includes((r.status || '').toUpperCase());
+              const cancellable = !['CHECKED_IN', 'COMPLETED', 'CANCELLED', 'REJECTED'].includes((r.status || '').toUpperCase());
               return (
                 <div key={r.id} className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
                   <div className="min-w-0">
@@ -274,7 +266,7 @@ export const EmpReservationsPage: React.FC = () => {
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     {editable && <ActionButton onClick={() => openEdit(r)} icon={Pencil}>Edit</ActionButton>}
-                    {cancellable && <ActionButton onClick={() => cancel(r)} icon={Ban} variant="danger">Cancel</ActionButton>}
+                    {cancellable && <ActionButton onClick={() => setCancelTarget(r)} icon={Ban} variant="danger">Cancel</ActionButton>}
                   </div>
                 </div>
               );
@@ -288,7 +280,7 @@ export const EmpReservationsPage: React.FC = () => {
           <div className="space-y-4">
             {!editing && (
               <>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div><label className={labelCls}>Date</label><input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} className={inputCls} /></div>
                   <div><label className={labelCls}>Start</label><input type="time" value={form.startTime} onChange={e => setForm({ ...form, startTime: e.target.value })} className={inputCls} /></div>
                   <div><label className={labelCls}>End</label><input type="time" value={form.endTime} onChange={e => setForm({ ...form, endTime: e.target.value })} className={inputCls} /></div>
@@ -325,11 +317,20 @@ export const EmpReservationsPage: React.FC = () => {
           </div>
         </Modal>
       )}
+      <ConfirmDialog
+        open={Boolean(cancelTarget)}
+        title="Cancel reservation"
+        description={cancelTarget ? `Cancel reservation “${cancelTarget.title}”? This action cannot be undone.` : ''}
+        confirmLabel="Cancel reservation"
+        tone="danger"
+        busy={cancelling}
+        onClose={() => setCancelTarget(null)}
+        onConfirm={() => cancelTarget ? cancel(cancelTarget) : undefined}
+      />
       {node}
     </div>
   );
 };
-
 // ---------------------------------------------------------------------------
 // Visitors
 // ---------------------------------------------------------------------------
@@ -425,7 +426,7 @@ export const EmpVisitorsPage: React.FC = () => {
         <Modal title={editing ? 'Edit Visitor' : 'Register Visitor'} onClose={() => setShowModal(false)}>
           <div className="space-y-4">
             <div><label className={labelCls}>Full Name</label><input value={form.fullName} onChange={e => setForm({ ...form, fullName: e.target.value })} className={inputCls} /></div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div><label className={labelCls}>Email</label><input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className={inputCls} /></div>
               <div><label className={labelCls}>Phone</label><input value={form.phoneNumber} onChange={e => setForm({ ...form, phoneNumber: e.target.value })} className={inputCls} /></div>
             </div>
@@ -524,7 +525,7 @@ export const EmpDocumentsPage: React.FC = () => {
           <div className="space-y-4">
             <div><label className={labelCls}>Title</label><input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} className={inputCls} /></div>
             <div><label className={labelCls}>File Name</label><input value={form.fileName} onChange={e => setForm({ ...form, fileName: e.target.value })} className={inputCls} placeholder="e.g. report.pdf" /></div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div><label className={labelCls}>File Type</label><input value={form.fileType} onChange={e => setForm({ ...form, fileType: e.target.value })} className={inputCls} /></div>
               <div>
                 <label className={labelCls}>Classification</label>
@@ -558,6 +559,8 @@ export const EmpRequestsPage: React.FC = () => {
   const { show, node } = useToast();
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [cancelTarget, setCancelTarget] = useState<any | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const [form, setForm] = useState({ type: 'CONTRACT', title: '', description: '' });
 
   const load = useCallback(async () => {
@@ -583,9 +586,10 @@ export const EmpRequestsPage: React.FC = () => {
   };
 
   const cancel = async (r: any) => {
-    if (!window.confirm(`Cancel request "${r.title}"?`)) return;
-    try { await employeeService.cancelRequest(r.id); show('Request cancelled.'); setRetry(x => x + 1); }
+    setCancelling(true);
+    try { await employeeService.cancelRequest(r.id); show('Request cancelled.'); setCancelTarget(null); setRetry(x => x + 1); }
     catch (e: any) { show(e?.response?.data?.message || 'Failed to cancel', 'err'); }
+    finally { setCancelling(false); }
   };
 
   if (loading && !rows.length) return <LoadingSkeleton />;
@@ -614,7 +618,7 @@ export const EmpRequestsPage: React.FC = () => {
                     {r.description && <p className="text-xs text-slate-500 mt-0.5">{r.description}</p>}
                     {r.decisionNotes && <p className="text-[11px] text-slate-400 mt-0.5">Notes: {r.decisionNotes}</p>}
                   </div>
-                  {cancellable && <ActionButton onClick={() => cancel(r)} icon={Ban} variant="danger">Cancel</ActionButton>}
+                  {cancellable && <ActionButton onClick={() => setCancelTarget(r)} icon={Ban} variant="danger">Cancel</ActionButton>}
                 </div>
               );
             })}
@@ -641,6 +645,16 @@ export const EmpRequestsPage: React.FC = () => {
           </div>
         </Modal>
       )}
+      <ConfirmDialog
+        open={Boolean(cancelTarget)}
+        title="Cancel request"
+        description={cancelTarget ? `Cancel request “${cancelTarget.title}”? This action cannot be undone.` : ''}
+        confirmLabel="Cancel request"
+        tone="danger"
+        busy={cancelling}
+        onClose={() => setCancelTarget(null)}
+        onConfirm={() => cancelTarget ? cancel(cancelTarget) : undefined}
+      />
       {node}
     </div>
   );
@@ -665,6 +679,7 @@ export const EmpNotificationsPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const { show, node } = useToast();
+  const notificationRevision = useNotificationRealtimeStore(state => state.revision);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -673,6 +688,7 @@ export const EmpNotificationsPage: React.FC = () => {
     finally { setLoading(false); }
   }, [retry]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (notificationRevision > 0) setRetry(value => value + 1); }, [notificationRevision]);
 
   const markRead = async (n: any) => {
     try { await employeeService.markNotificationRead(n.id); setRetry(r => r + 1); }
@@ -775,7 +791,7 @@ export const EmpProfilePage: React.FC = () => {
             <p className="text-xs text-slate-500 font-mono">{profile?.email} · {profile?.employeeId}</p>
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div><label className={labelCls}>First Name</label><input value={form.firstName} onChange={e => setForm({ ...form, firstName: e.target.value })} className={inputCls} /></div>
           <div><label className={labelCls}>Last Name</label><input value={form.lastName} onChange={e => setForm({ ...form, lastName: e.target.value })} className={inputCls} /></div>
           <div><label className={labelCls}>Phone</label><input value={form.phoneNumber} onChange={e => setForm({ ...form, phoneNumber: e.target.value })} className={inputCls} /></div>
@@ -790,30 +806,4 @@ export const EmpProfilePage: React.FC = () => {
     </div>
   );
 };
-
-// ---------------------------------------------------------------------------
-// Settings
-// ---------------------------------------------------------------------------
-
-export const EmpSettingsPage: React.FC = () => (
-  <div className="space-y-5">
-    <PageHeader title="Settings" subtitle="Preferences for your self-service portal" />
-    <div className="card-stat p-6 max-w-2xl space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-semibold text-slate-900">Email notifications</p>
-          <p className="text-xs text-slate-500">Receive approval and rejection alerts by email.</p>
-        </div>
-        <span className="text-[11px] font-mono px-2 py-1 rounded-full bg-emerald-50 text-emerald-600">Enabled</span>
-      </div>
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-semibold text-slate-900">Reservation reminders</p>
-          <p className="text-xs text-slate-500">Get reminders before your upcoming reservations.</p>
-        </div>
-        <span className="text-[11px] font-mono px-2 py-1 rounded-full bg-emerald-50 text-emerald-600">Enabled</span>
-      </div>
-      <p className="text-[11px] text-slate-400 pt-2 flex items-center gap-1.5"><Settings className="w-3.5 h-3.5" />Preference management is read-only in this build.</p>
-    </div>
-  </div>
-);
+// End of employee pages.

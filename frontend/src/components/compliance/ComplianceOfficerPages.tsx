@@ -1,12 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   AlertCircle, RefreshCw, FileText, FileSignature, Archive,
-  ScrollText, User, Settings, Filter, CheckCircle2, Trash2, Plus,
+  ScrollText, Settings, Filter, CheckCircle2, Trash2, Plus,
   X, BellRing, Bell, ShieldAlert, Ban,
 } from 'lucide-react';
 import { safeFetchJson } from '../../api/client';
+import { ReasonDialog } from '../ui/SharedUI';
 
-// POST/PUT helper that surfaces failure (safeFetchJson returns null on error).
+// POST/PUT helper that preserves the API envelope and propagates failures.
 const mutate = async (url: string, method: 'POST' | 'PUT', body?: unknown) => {
   const json = await safeFetchJson(url, {
     method,
@@ -15,7 +16,6 @@ const mutate = async (url: string, method: 'POST' | 'PUT', body?: unknown) => {
   if (json === null) throw new Error('Request failed. Please try again.');
   return (json as any)?.data;
 };
-
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
     <div className="glass-panel p-5 animate-pulse"><div className="h-5 w-56 bg-slate-200 rounded" /></div>
@@ -35,7 +35,7 @@ const ErrorState: React.FC<{ message: string; onRetry: () => void }> = ({ messag
   <div className="card-stat p-8 flex flex-col items-center justify-center text-center space-y-3">
     <AlertCircle className="w-10 h-10 text-rose-400" />
     <p className="text-sm text-slate-600">{message}</p>
-    <button onClick={onRetry} className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold inline-flex items-center space-x-2">
+    <button type="button" onClick={onRetry} className="inline-flex items-center space-x-2 rounded-xl bg-brand-500 px-4 py-2 text-xs font-semibold text-white hover:bg-brand-700">
       <RefreshCw className="w-4 h-4" /><span>Retry</span>
     </button>
   </div>
@@ -47,7 +47,7 @@ const Badge: React.FC<{ text?: string; className: string }> = ({ text, className
 
 type ActionVariant = 'primary' | 'neutral' | 'danger';
 const actionClasses: Record<ActionVariant, string> = {
-  primary: 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700',
+  primary: 'bg-brand-500 text-white border-brand-500 hover:bg-brand-700',
   neutral: 'bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:bg-slate-50',
   danger: 'bg-white text-rose-600 border-rose-200 hover:bg-rose-50',
 };
@@ -81,7 +81,6 @@ const useToast = () => {
   const node = toast ? <Toast message={toast.message} kind={toast.kind} onClose={() => setToast(null)} /> : null;
   return { show, node };
 };
-
 const docStatusBadge = (status?: string) => {
   switch ((status || '').toUpperCase()) {
     case 'APPROVED': return 'bg-emerald-50 text-emerald-600';
@@ -139,6 +138,7 @@ export const CoDocumentsPage: React.FC = () => {
   const [reviewDoc, setReviewDoc] = useState<any | null>(null);
   const [reviewCategoryId, setReviewCategoryId] = useState('');
   const [reviewNotes, setReviewNotes] = useState('');
+  const [legalHoldDoc, setLegalHoldDoc] = useState<any | null>(null);
   const { show, node: toastNode } = useToast();
 
   const load = useCallback(async () => {
@@ -161,14 +161,16 @@ export const CoDocumentsPage: React.FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
-  const runAction = async (id: string, path: string, label: string, body?: unknown) => {
+  const runAction = async (id: string, path: string, label: string, body?: unknown): Promise<boolean> => {
     setBusyId(id);
     try {
       await mutate(`/api/v1/compliance/documents/${id}/${path}`, 'POST', body);
       show(label);
       await load();
+      return true;
     } catch (err: any) {
       show(err?.message || 'Action failed', 'err');
+      return false;
     } finally {
       setBusyId(null);
     }
@@ -179,9 +181,10 @@ export const CoDocumentsPage: React.FC = () => {
     const reason = disposalReason.trim();
     if (!reason) { show('A disposal reason is required', 'err'); return; }
     const doc = disposalDoc;
+    const succeeded = await runAction(doc.id, 'disposal', 'Disposal requested', { reason });
+    if (!succeeded) return;
     setDisposalDoc(null);
     setDisposalReason('');
-    await runAction(doc.id, 'disposal', 'Disposal requested', { reason });
   };
 
   const reviewClassification = async (doc: any, decision: 'APPROVE' | 'CORRECT' | 'REJECT', categoryId?: string, notes?: string) => {
@@ -245,6 +248,7 @@ export const CoDocumentsPage: React.FC = () => {
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Version</th>
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Size</th>
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Retention</th>
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase text-right">Actions</th>
                 </tr>
               </thead>
@@ -270,6 +274,11 @@ export const CoDocumentsPage: React.FC = () => {
                       <td className="p-3 text-xs text-slate-400">{formatSize(d.fileSize)}</td>
                       <td className="p-3"><Badge text={d.status} className={docStatusBadge(d.status)} /></td>
                       <td className="p-3">
+                        <p className="text-[10px] font-mono font-semibold text-slate-600">{(d.retentionStatus || 'UNASSIGNED').replace(/_/g, ' ')}</p>
+                        <p className="text-[10px] text-slate-400">{d.retentionExpiresAt ? `Due ${d.retentionExpiresAt}` : 'No deadline'}</p>
+                        {d.retentionPolicyVersion && <p className="text-[10px] text-slate-400">Policy v{d.retentionPolicyVersion}</p>}
+                      </td>
+                      <td className="p-3">
                         <div className="flex items-center justify-end space-x-1.5">
                           {status === 'PENDING_REVIEW' && (
                             <>
@@ -285,8 +294,14 @@ export const CoDocumentsPage: React.FC = () => {
                           {status !== 'ARCHIVED' && status !== 'DELETED' && (
                             <ActionButton onClick={() => runAction(d.id, 'archive', 'Document archived')} icon={Archive} disabled={busy}>Archive</ActionButton>
                           )}
-                          {status !== 'DELETED' && (
+                          {d.retentionStatus === 'ELIGIBLE_FOR_DISPOSAL' && status !== 'DELETED' && (
                             <ActionButton onClick={() => { setDisposalDoc(d); setDisposalReason(''); }} icon={Trash2} variant="danger" disabled={busy}>Dispose</ActionButton>
+                          )}
+                          {d.retentionStatus !== 'LEGAL_HOLD' && status !== 'DELETED' && (
+                            <ActionButton onClick={() => setLegalHoldDoc(d)} icon={ShieldAlert} disabled={busy}>Hold</ActionButton>
+                          )}
+                          {d.retentionStatus === 'LEGAL_HOLD' && (
+                            <ActionButton onClick={() => void runAction(d.id, 'legal-hold/release', 'Legal hold released', { reason: 'Released after authorized review' })} icon={CheckCircle2} disabled={busy}>Release Hold</ActionButton>
                           )}
                         </div>
                       </td>
@@ -300,7 +315,7 @@ export const CoDocumentsPage: React.FC = () => {
       )}
 
       {disposalDoc && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4" onClick={() => setDisposalDoc(null)}>
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4" onClick={() => setDisposalDoc(null)}>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-start justify-between">
               <div className="flex items-center space-x-2">
@@ -328,7 +343,7 @@ export const CoDocumentsPage: React.FC = () => {
       )}
 
       {reviewDoc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4" onClick={() => setReviewDoc(null)}>
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4" onClick={() => setReviewDoc(null)}>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4" onClick={event => event.stopPropagation()}>
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -360,6 +375,23 @@ export const CoDocumentsPage: React.FC = () => {
           </div>
         </div>
       )}
+      <ReasonDialog
+        open={Boolean(legalHoldDoc)}
+        title="Place legal hold"
+        description={legalHoldDoc ? `Explain why “${legalHoldDoc.title}” must be protected from disposal.` : undefined}
+        label="Legal hold reason"
+        confirmLabel="Place hold"
+        tone="primary"
+        busy={Boolean(legalHoldDoc && busyId === legalHoldDoc.id)}
+        onClose={() => setLegalHoldDoc(null)}
+        onConfirm={async (reason) => {
+          if (!legalHoldDoc) return;
+          const doc = legalHoldDoc;
+          const succeeded = await runAction(doc.id, 'legal-hold', 'Legal hold placed', { reason });
+          if (succeeded) setLegalHoldDoc(null);
+          else throw new Error('The legal hold failed. Your reason has been preserved.');
+        }}
+      />
     </div>
   );
 };
@@ -452,7 +484,6 @@ export const CoContractsPage: React.FC = () => {
     </div>
   );
 };
-
 export const CoRetentionPoliciesPage: React.FC = () => {
   const [policies, setPolicies] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -460,7 +491,7 @@ export const CoRetentionPoliciesPage: React.FC = () => {
   const [retry, setRetry] = useState(0);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editing, setEditing] = useState<any | null>(null); // null=closed, {}=new, {...}=edit
-  const [form, setForm] = useState({ name: '', description: '', retentionPeriodDays: 365, actionOnExpiry: 'REVIEW', active: true });
+  const [form, setForm] = useState({ name: '', description: '', retentionPeriodDays: 365, actionOnExpiry: 'REVIEW', classificationName: '', applicableDepartment: '', triggerBasis: 'FINAL_APPROVAL', alertWindows: '90,30,7', active: true });
   const [saving, setSaving] = useState(false);
   const { show, node: toastNode } = useToast();
 
@@ -486,14 +517,16 @@ export const CoRetentionPoliciesPage: React.FC = () => {
   };
 
   const openNew = () => {
-    setForm({ name: '', description: '', retentionPeriodDays: 365, actionOnExpiry: 'REVIEW', active: true });
+    setForm({ name: '', description: '', retentionPeriodDays: 365, actionOnExpiry: 'REVIEW', classificationName: '', applicableDepartment: '', triggerBasis: 'FINAL_APPROVAL', alertWindows: '90,30,7', active: true });
     setEditing({});
   };
   const openEdit = (p: any) => {
     setForm({
       name: p.name ?? '', description: p.description ?? '',
       retentionPeriodDays: p.retentionPeriodDays ?? 365,
-      actionOnExpiry: p.actionOnExpiry ?? 'REVIEW', active: !!p.active,
+      actionOnExpiry: p.actionOnExpiry ?? 'REVIEW',
+      classificationName: p.classificationName ?? '', applicableDepartment: p.applicableDepartment ?? '',
+      triggerBasis: p.triggerBasis ?? 'FINAL_APPROVAL', alertWindows: (p.alertWindowsDays ?? [90, 30, 7]).join(','), active: !!p.active,
     });
     setEditing(p);
   };
@@ -507,7 +540,9 @@ export const CoRetentionPoliciesPage: React.FC = () => {
       await mutate(url, isEdit ? 'PUT' : 'POST', {
         name: form.name.trim(), description: form.description.trim(),
         retentionPeriodDays: Number(form.retentionPeriodDays) || 0,
-        actionOnExpiry: form.actionOnExpiry, active: form.active,
+        actionOnExpiry: form.actionOnExpiry, classificationName: form.classificationName.trim() || null,
+        applicableDepartment: form.applicableDepartment.trim() || null, triggerBasis: form.triggerBasis,
+        alertWindowsDays: form.alertWindows.split(',').map(value => Number(value.trim())).filter(Number.isFinite), active: form.active,
       });
       show(isEdit ? 'Policy updated' : 'Policy created');
       setEditing(null);
@@ -565,6 +600,7 @@ export const CoRetentionPoliciesPage: React.FC = () => {
                 <Badge text={p.active ? 'ACTIVE' : 'INACTIVE'} className={p.active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'} />
               </div>
               <p className="text-xs text-slate-500 leading-relaxed">{p.description || 'No description'}</p>
+              <p className="text-[10px] font-mono text-slate-500">Match: {p.classificationName || 'UNMAPPED'}{p.applicableDepartment ? ` / ${p.applicableDepartment}` : ''} · v{p.policyVersion ?? 1}</p>
               <div className="flex items-center justify-between pt-2 border-t border-slate-100">
                 <div>
                   <p className="text-[10px] text-slate-400 uppercase font-semibold">Retention</p>
@@ -588,7 +624,7 @@ export const CoRetentionPoliciesPage: React.FC = () => {
       )}
 
       {editing && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4" onClick={() => !saving && setEditing(null)}>
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4" onClick={() => !saving && setEditing(null)}>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-start justify-between">
               <div className="flex items-center space-x-2">
@@ -608,7 +644,7 @@ export const CoRetentionPoliciesPage: React.FC = () => {
                 <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2}
                   className="mt-1 w-full text-sm border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-200" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="text-[11px] font-semibold text-slate-500 uppercase">Retention (days)</label>
                   <input type="number" min={0} value={form.retentionPeriodDays}
@@ -621,6 +657,32 @@ export const CoRetentionPoliciesPage: React.FC = () => {
                     className="mt-1 w-full text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-200">
                     {actions.map(a => <option key={a} value={a}>{a.replace('_', ' ')}</option>)}
                   </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-500 uppercase">Final classification</label>
+                  <input value={form.classificationName} onChange={e => setForm(f => ({ ...f, classificationName: e.target.value }))} placeholder="FINANCIAL_RECORD"
+                    className="mt-1 w-full text-sm border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-200" />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-500 uppercase">Department (optional)</label>
+                  <input value={form.applicableDepartment} onChange={e => setForm(f => ({ ...f, applicableDepartment: e.target.value }))}
+                    className="mt-1 w-full text-sm border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-200" />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-500 uppercase">Trigger basis</label>
+                  <select value={form.triggerBasis} onChange={e => setForm(f => ({ ...f, triggerBasis: e.target.value }))}
+                    className="mt-1 w-full text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white">
+                    {['FINAL_APPROVAL', 'CREATION', 'CONTRACT_EXPIRATION', 'FISCAL_YEAR_END'].map(value => <option key={value} value={value}>{value.replace(/_/g, ' ')}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-500 uppercase">Alert windows (days)</label>
+                  <input value={form.alertWindows} onChange={e => setForm(f => ({ ...f, alertWindows: e.target.value }))} placeholder="90,30,7"
+                    className="mt-1 w-full text-sm border border-slate-200 rounded-xl px-3 py-2" />
                 </div>
               </div>
               <label className="flex items-center space-x-2 text-sm text-slate-600">
@@ -861,7 +923,7 @@ export const CoDisposalApprovalsPage: React.FC = () => {
       )}
 
       {decision && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4" onClick={() => !saving && setDecision(null)}>
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4" onClick={() => !saving && setDecision(null)}>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-start justify-between">
               <div className="flex items-center space-x-2">
@@ -999,31 +1061,4 @@ export const CoComplianceAlertsPage: React.FC = () => {
     </div>
   );
 };
-
-export const CoProfilePage: React.FC = () => {
-  return (
-    <div className="space-y-6">
-      <div className="glass-panel p-5">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Profile</h2>
-          <p className="text-xs text-slate-500">Compliance Officer account</p>
-        </div>
-      </div>
-      <EmptyState icon={User} title="Profile Settings" desc="Profile management will be available via TEAM 1 - Human Resource Management integration." />
-    </div>
-  );
-};
-
-export const CoSettingsPage: React.FC = () => {
-  return (
-    <div className="space-y-6">
-      <div className="glass-panel p-5">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Settings</h2>
-          <p className="text-xs text-slate-500">Compliance Officer account and module preferences</p>
-        </div>
-      </div>
-      <EmptyState icon={Settings} title="Settings" desc="Account and module settings will be available via TEAM 1 - Human Resource Management integration." />
-    </div>
-  );
-};
+// End of compliance officer pages.

@@ -9,10 +9,11 @@ import { resolveClientIp } from "../_shared/ip.ts";
 const db = adminDb();
 
 const MODULE = "COMPLIANCE";
+const BUCKET = "documents";
 const EXPIRY_WINDOW_DAYS = 30;
-const REVIEW_OVERDUE_DAYS = 14;
 
 const COMPLIANCE_ROLES = ["COMPLIANCE_OFFICER"];
+const HOLD_ROLES = ["COMPLIANCE_OFFICER", "LEGAL_COUNSEL"];
 
 const DOCUMENT_STATUSES = ["DRAFT", "PENDING_REVIEW", "APPROVED", "ARCHIVED", "DELETED"];
 const CONTRACT_STATUSES = ["DRAFT", "UNDER_REVIEW", "APPROVED", "ACTIVE", "EXPIRED", "TERMINATED", "RENEWED"];
@@ -52,6 +53,21 @@ function isUuid(s: string | undefined): s is string {
   return s != null && UUID_RE.test(s);
 }
 
+function isValidStorageObjectPath(filePath: string): boolean {
+  const path = filePath.trim();
+  return path !== "" && !path.startsWith("/") && !path.startsWith("\\")
+    && !/^[A-Za-z]:[\\/]/.test(path) && !path.includes("\\")
+    && path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
+
+function isMissingStorageObjectError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const value = error as { status?: unknown; statusCode?: unknown; message?: unknown; error?: unknown };
+  const status = Number(value.statusCode ?? value.status);
+  const message = String(value.message ?? value.error ?? "").toLowerCase();
+  return status === 404 || message.includes("not found") || message.includes("object not found");
+}
+
 function resourceNotFound(resource: string, id: string) {
   return jsonResponse(fail(`${resource} not found with id: '${id}'`, "RESOURCE_NOT_FOUND"), 404);
 }
@@ -84,6 +100,22 @@ function parseAction(o: unknown): string {
   return up;
 }
 
+function parseTriggerBasis(o: unknown): string {
+  const value = String(o ?? "FINAL_APPROVAL").toUpperCase();
+  if (!["CREATION", "FINAL_APPROVAL", "CONTRACT_EXPIRATION", "FISCAL_YEAR_END"].includes(value)) {
+    throw new Error(`Invalid triggerBasis: ${o}`);
+  }
+  return value;
+}
+
+function parseAlertWindows(o: unknown): number[] {
+  if (o == null) return [90, 30, 7];
+  if (!Array.isArray(o)) throw new Error("alertWindowsDays must be an array.");
+  const values = [...new Set(o.map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n <= 3650))];
+  if (values.length === 0) throw new Error("alertWindowsDays must contain at least one valid day window.");
+  return values.sort((a, b) => b - a);
+}
+
 // ---------------------------------------------------------------------------
 // DTO mappers (lazy-safe: only scalar fields; mirror ComplianceController)
 // ---------------------------------------------------------------------------
@@ -113,6 +145,15 @@ function toDocumentDto(d: DocumentRow) {
     finalClassification: d.final_classification ?? null,
     classificationReviewedBy: d.classification_reviewed_by ?? null,
     classificationReviewedAt: d.classification_reviewed_at ?? null,
+    retentionPolicyId: d.retention_policy_id ?? null,
+    retentionPolicyVersion: num(d.retention_policy_version),
+    retentionAssignedAt: d.retention_assigned_at ?? null,
+    retentionAssignmentSource: d.retention_assignment_source ?? null,
+    retentionCalculationBasis: d.retention_calculation_basis ?? null,
+    retentionTriggerAt: dateStr(str(d.retention_trigger_at)),
+    retentionExpiresAt: dateStr(str(d.retention_expires_at)),
+    retentionStatus: d.retention_status ?? "UNASSIGNED",
+    physicalDispositionStatus: d.physical_disposition_status ?? "NOT_REQUESTED",
     versionNumber: num(d.version_number),
     createdAt: createdAtUtc(d.created_at),
   };
@@ -142,6 +183,13 @@ function toPolicyDto(p: Record<string, unknown> & { id: string }) {
     description: p.description ?? null,
     retentionPeriodDays: num(p.retention_period_days),
     actionOnExpiry: p.action_on_expiry ?? null,
+    policyVersion: num(p.policy_version),
+    classificationName: p.classification_name ?? null,
+    applicableDepartment: p.applicable_department ?? null,
+    triggerBasis: p.trigger_basis ?? null,
+    alertWindowsDays: p.alert_windows_days ?? [],
+    effectiveFrom: dateStr(str(p.effective_from)),
+    effectiveTo: dateStr(str(p.effective_to)),
     active: p.active ?? null,
   };
 }
@@ -170,6 +218,10 @@ function toDisposalDto(r: Record<string, unknown> & { id: string }) {
     decisionNotes: r.decision_notes ?? null,
     decidedBy: r.decided_by ?? null,
     decidedAt: r.decided_at ?? null,
+    policyAction: r.policy_action ?? null,
+    physicalDispositionStatus: r.physical_disposition_status ?? null,
+    physicalDisposedAt: r.physical_disposed_at ?? null,
+    completedAt: r.completed_at ?? null,
     createdAt: r.created_at ?? null,
   };
 }
@@ -187,6 +239,8 @@ function toAlertDto(a: Record<string, unknown> & { id: string }) {
     acknowledgedBy: a.acknowledged_by ?? null,
     acknowledgedAt: a.acknowledged_at ?? null,
     createdAt: a.created_at ?? null,
+    deadlineDate: dateStr(str(a.deadline_date)),
+    alertWindowDays: num(a.alert_window_days),
   };
 }
 
@@ -225,15 +279,19 @@ async function loadAlert(id: string) {
 // ---------------------------------------------------------------------------
 
 async function handleDashboard(ctx: AuthContext | null, _req: Request) {
-  const [docsRes, contractsRes, polsRes, auditRes, disposalsRes, alertsRes] = await Promise.all([
+  const [docsRes, contractsRes, polsRes, auditRes, disposalsRes, alertsRes, holdsRes, obligationsRes, runRes] = await Promise.all([
     db.from("documents").select("*"),
     db.from("contracts").select("*"),
     db.from("retention_policies").select("*").eq("active", true),
     db.from("audit_logs").select("id").gte("created_at", naiveIso(new Date(Date.now() - 7 * 86400000))),
     db.from("disposal_requests").select("id").eq("status", "PENDING"),
     db.from("compliance_alerts").select("id").eq("status", "OPEN"),
+    db.from("document_legal_holds").select("id").eq("status", "ACTIVE"),
+    db.from("contract_obligations").select("id, status, due_date").in("status", ["PENDING", "IN_PROGRESS", "OVERDUE"]),
+    db.from("lifecycle_automation_runs").select("*").eq("job_name", "phase4-lifecycle-daily")
+      .order("started_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
-  for (const r of [docsRes, contractsRes, polsRes, auditRes, disposalsRes, alertsRes]) {
+  for (const r of [docsRes, contractsRes, polsRes, auditRes, disposalsRes, alertsRes, holdsRes, obligationsRes, runRes]) {
     if (r.error) throw new Error(`dashboard query failed: ${r.error.message}`);
   }
 
@@ -247,6 +305,11 @@ async function handleDashboard(ctx: AuthContext | null, _req: Request) {
   const approvedDocuments = countByStatus(documents, "APPROVED");
   const archivedDocuments = countByStatus(documents, "ARCHIVED");
   const activeContracts = countByStatus(contracts, "ACTIVE");
+  const retentionPolicyRequired = documents.filter((d) => d.retention_status === "RETENTION_POLICY_REQUIRED").length;
+  const retentionExpiring = documents.filter((d) => d.retention_status === "EXPIRING").length;
+  const retentionExpired = documents.filter((d) => d.retention_status === "ELIGIBLE_FOR_DISPOSAL").length;
+  const obligations = (obligationsRes.data as Array<Record<string, unknown>>) ?? [];
+  const overdueObligations = obligations.filter((o) => o.status === "OVERDUE").length;
 
   const cutoff = new Date(Date.now() + EXPIRY_WINDOW_DAYS * 86400000).toISOString().slice(0, 10);
   const expiring = contracts
@@ -293,6 +356,21 @@ async function handleDashboard(ctx: AuthContext | null, _req: Request) {
     recentAuditEvents: (auditRes.data ?? []).length,
     pendingDisposals: (disposalsRes.data ?? []).length,
     openAlerts: (alertsRes.data ?? []).length,
+    retentionPolicyRequired,
+    retentionExpiring,
+    retentionExpired,
+    activeLegalHolds: (holdsRes.data ?? []).length,
+    overdueObligations,
+    automationHealth: runRes.data ? {
+      jobName: runRes.data.job_name,
+      status: runRes.data.status,
+      lastStartedAt: runRes.data.started_at,
+      lastCompletedAt: runRes.data.completed_at,
+      processedCount: runRes.data.processed_count,
+      generatedAlerts: runRes.data.generated_alerts,
+      generatedNotifications: runRes.data.generated_notifications,
+      errorSummary: runRes.data.error_summary,
+    } : null,
     documentsByStatus,
     contractsByStatus,
     expiringSoon,
@@ -357,9 +435,11 @@ async function handleRetentionPolicies(ctx: AuthContext | null) {
 async function handleAuditLogs(ctx: AuthContext | null) {
   const { data, error } = await db
     .from("audit_logs")
-    .select("*")
+    .select("id,action,entity_type,entity_name,module,user_email,severity,status,created_at")
+    .eq("module", MODULE)
     .gte("created_at", naiveIso(new Date(Date.now() - 30 * 86400000)))
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(500);
   if (error) throw new Error(`audit logs query failed: ${error.message}`);
   const result = ((data as unknown as Array<Record<string, unknown> & { id: string }>) ?? []).map(toAuditDto);
   return jsonResponse(ok(result, "Audit logs retrieved"), 200);
@@ -420,6 +500,19 @@ async function handleRequestDisposal(ctx: AuthContext | null, req: Request, body
 
   const doc = await loadDocument(p.id);
   if (!doc) return resourceNotFound("Document", p.id);
+  if (doc.retention_status !== "ELIGIBLE_FOR_DISPOSAL") {
+    return businessRule("The document is not eligible for disposition under its assigned retention policy.");
+  }
+  const hold = await db.from("document_legal_holds").select("id")
+    .eq("document_id", p.id).eq("status", "ACTIVE").maybeSingle();
+  if (hold.error) throw new Error(`legal hold check failed: ${hold.error.message}`);
+  if (hold.data) return businessRule("An active legal hold blocks disposal.");
+
+  const policy = doc.retention_policy_id
+    ? await db.from("retention_policies").select("name, action_on_expiry").eq("id", String(doc.retention_policy_id)).maybeSingle()
+    : { data: null, error: null };
+  if (policy.error) throw new Error(`retention policy lookup failed: ${policy.error.message}`);
+  if (!policy.data) return businessRule("A valid assigned retention policy is required before disposal.");
 
   const pendingRes = await db.from("disposal_requests")
     .select("id").eq("document_id", p.id).eq("status", "PENDING");
@@ -434,15 +527,28 @@ async function handleRequestDisposal(ctx: AuthContext | null, req: Request, body
     document_title: doc.title,
     reason,
     status: "PENDING",
+    retention_policy_name: policy.data.name,
+    policy_action: policy.data.action_on_expiry,
+    physical_disposition_status: policy.data.action_on_expiry === "PERMANENT_DELETE" ? "PENDING" : "RETAINED",
     created_at: now,
     updated_at: now,
     created_by: ctx ? ctx.email : "SYSTEM",
     updated_by: ctx ? ctx.email : "SYSTEM",
   }).select("*").single();
   if (error) throw new Error(`disposal request insert failed: ${error.message}`);
+  const disposalId = (saved as unknown as { id: string }).id;
+  const alert = await db.rpc("phase4_emit_alert", {
+    p_dedup_key: `DISPOSAL_PENDING:${disposalId}`,
+    p_type: "DISPOSAL_PENDING", p_severity: "WARNING",
+    p_title: "Disposal review required",
+    p_message: "An eligible retained record has an authorized disposal request awaiting decision.",
+    p_entity_type: "DisposalRequest", p_entity_id: disposalId,
+    p_deadline: null, p_window: null, p_roles: ["COMPLIANCE_OFFICER"],
+  });
+  if (alert.error) throw new Error(`disposal alert generation failed: ${alert.error.message}`);
 
   await writeAudit(ctx?.user ?? null, "REQUEST_DISPOSAL", MODULE, "DisposalRequest",
-    (saved as unknown as { id: string }).id, `Requested disposal of document: ${doc.title}`,
+    disposalId, `Requested disposal of document: ${doc.title}`,
     ctx ? resolveClientIp(req).ip : null, "INFO");
 
   return jsonResponse(ok(toDisposalDto(saved as unknown as Record<string, unknown> & { id: string }),
@@ -467,8 +573,12 @@ async function handleCreateRetentionPolicy(ctx: AuthContext | null, req: Request
   }
 
   let action: string;
+  let triggerBasis: string;
+  let alertWindowsDays: number[];
   try {
     action = parseAction(b.actionOnExpiry);
+    triggerBasis = parseTriggerBasis(b.triggerBasis);
+    alertWindowsDays = parseAlertWindows(b.alertWindowsDays);
   } catch (e) {
     return businessRule((e as Error).message);
   }
@@ -479,6 +589,12 @@ async function handleCreateRetentionPolicy(ctx: AuthContext | null, req: Request
     description: str(b.description),
     retention_period_days: intVal(b.retentionPeriodDays, 365),
     action_on_expiry: action,
+    classification_name: str(b.classificationName)?.trim() || null,
+    applicable_department: str(b.applicableDepartment)?.trim() || null,
+    trigger_basis: triggerBasis,
+    alert_windows_days: alertWindowsDays,
+    effective_from: dateStr(str(b.effectiveFrom)) ?? new Date().toISOString().slice(0, 10),
+    effective_to: dateStr(str(b.effectiveTo)),
     active: b.active == null ? true : Boolean(b.active),
     created_at: now,
     updated_at: now,
@@ -515,6 +631,18 @@ async function handleUpdateRetentionPolicy(ctx: AuthContext | null, req: Request
       return businessRule((e as Error).message);
     }
   }
+  if ("classificationName" in b) patch["classification_name"] = str(b.classificationName)?.trim() || null;
+  if ("applicableDepartment" in b) patch["applicable_department"] = str(b.applicableDepartment)?.trim() || null;
+  if ("triggerBasis" in b) {
+    try { patch["trigger_basis"] = parseTriggerBasis(b.triggerBasis); }
+    catch (e) { return businessRule((e as Error).message); }
+  }
+  if ("alertWindowsDays" in b) {
+    try { patch["alert_windows_days"] = parseAlertWindows(b.alertWindowsDays); }
+    catch (e) { return businessRule((e as Error).message); }
+  }
+  if ("effectiveFrom" in b) patch["effective_from"] = dateStr(str(b.effectiveFrom));
+  if ("effectiveTo" in b) patch["effective_to"] = dateStr(str(b.effectiveTo));
   if ("active" in b) patch["active"] = Boolean(b.active);
 
   const { data: saved, error } = await db.from("retention_policies").update(patch)
@@ -581,7 +709,45 @@ async function handleDecideDisposal(
     return businessRule("This disposal request has already been decided.");
   }
 
+  const doc = await loadDocument(String(reqRow.document_id));
+  if (approve && !doc) return resourceNotFound("Document", String(reqRow.document_id));
+  if (approve && doc) {
+    const hold = await db.from("document_legal_holds").select("id")
+      .eq("document_id", doc.id).eq("status", "ACTIVE").maybeSingle();
+    if (hold.error) throw new Error(`legal hold check failed: ${hold.error.message}`);
+    if (hold.data) return businessRule("An active legal hold blocks disposal approval.");
+    if (doc.retention_status !== "ELIGIBLE_FOR_DISPOSAL") {
+      return businessRule("The document is no longer eligible for disposal.");
+    }
+  }
+
   const now = naiveIso();
+  let physicalStatus = str(reqRow.physical_disposition_status) ?? "NOT_REQUESTED";
+  if (approve && doc && reqRow.policy_action === "PERMANENT_DELETE") {
+    const filePath = str(doc.file_path)?.trim() ?? "";
+    if (filePath && !isValidStorageObjectPath(filePath)) {
+      return businessRule("The document has an invalid private Storage object path.");
+    }
+    if (filePath) {
+      const removal = await db.storage.from(BUCKET).remove([filePath]);
+      if (removal.error && !isMissingStorageObjectError(removal.error)) {
+        await db.from("disposal_requests").update({
+          physical_disposition_status: "FAILED", updated_at: now, updated_by: ctx?.email ?? "SYSTEM",
+        }).eq("id", p.id);
+        return jsonResponse(fail("Private Storage deletion failed; disposal was not marked complete.", "STORAGE_DISPOSAL_FAILED"), 503);
+      }
+      const verification = await db.storage.from(BUCKET).download(filePath);
+      if (!verification.error || !isMissingStorageObjectError(verification.error)) {
+        await db.from("disposal_requests").update({
+          physical_disposition_status: "FAILED", updated_at: now, updated_by: ctx?.email ?? "SYSTEM",
+        }).eq("id", p.id);
+        return jsonResponse(fail("Private Storage deletion could not be verified; disposal was not marked complete.", "STORAGE_DISPOSAL_FAILED"), 503);
+      }
+    }
+    physicalStatus = "DELETED";
+  } else if (approve) {
+    physicalStatus = "RETAINED";
+  }
   const { data: saved, error } = await db.from("disposal_requests").update({
     status: approve ? "APPROVED" : "REJECTED",
     decision_notes: notes,
@@ -589,22 +755,29 @@ async function handleDecideDisposal(
     decided_at: now,
     updated_at: now,
     updated_by: ctx ? ctx.email : "SYSTEM",
+    physical_disposition_status: physicalStatus,
+    physical_disposed_at: approve && physicalStatus === "DELETED" ? new Date().toISOString() : null,
+    completed_at: approve ? new Date().toISOString() : null,
   }).eq("id", p.id).select("*").single();
   if (error) throw new Error(`disposal decision failed: ${error.message}`);
 
-  if (approve) {
-    const doc = await loadDocument(String(reqRow.document_id));
-    if (doc) {
+  if (approve && doc) {
       const delNow = naiveIso();
-      await db.from("documents").update({
-        status: "DELETED",
-        is_deleted: true,
-        deleted_at: delNow,
-        deleted_by: ctx ? ctx.email : "system",
+      const permanentDelete = reqRow.policy_action === "PERMANENT_DELETE";
+      const docUpdate = await db.from("documents").update({
+        status: permanentDelete ? "DELETED" : "ARCHIVED",
+        is_deleted: permanentDelete,
+        deleted_at: permanentDelete ? delNow : null,
+        deleted_by: permanentDelete ? (ctx ? ctx.email : "system") : null,
+        retention_status: "DISPOSED",
+        disposition_at: new Date().toISOString(),
+        disposition_by: ctx ? ctx.email : "SYSTEM",
+        physical_disposition_status: physicalStatus,
+        physical_disposed_at: physicalStatus === "DELETED" ? new Date().toISOString() : null,
         updated_at: delNow,
         updated_by: ctx ? ctx.email : "SYSTEM",
       }).eq("id", doc.id);
-    }
+      if (docUpdate.error) throw new Error(`document disposition failed: ${docUpdate.error.message}`);
   }
 
   // Close the linked "disposal pending" alert regardless of decision.
@@ -628,108 +801,93 @@ async function handleDecideDisposal(
 }
 
 // ---------------------------------------------------------------------------
+// Legal holds and automation health
+// ---------------------------------------------------------------------------
+
+async function handleListLegalHolds() {
+  const { data, error } = await db.from("document_legal_holds").select("*")
+    .order("started_at", { ascending: false });
+  if (error) throw new Error(`legal holds query failed: ${error.message}`);
+  return jsonResponse(ok(data ?? [], "Legal holds retrieved"), 200);
+}
+
+async function handlePlaceLegalHold(ctx: AuthContext | null, req: Request, body: unknown, p: RouteParams) {
+  if (!isUuid(p.id)) return generic500();
+  const doc = await loadDocument(p.id);
+  if (!doc) return resourceNotFound("Document", p.id);
+  const reason = str((body as Record<string, unknown> | null)?.reason)?.trim() ?? "";
+  if (!reason) return businessRule("A legal hold reason is required.");
+  const existing = await db.from("document_legal_holds").select("id")
+    .eq("document_id", p.id).eq("status", "ACTIVE").maybeSingle();
+  if (existing.error) throw new Error(`legal hold check failed: ${existing.error.message}`);
+  if (existing.data) return businessRule("The document already has an active legal hold.");
+
+  const { data: hold, error } = await db.from("document_legal_holds").insert({
+    document_id: p.id, reason, status: "ACTIVE", issued_by: ctx?.userId,
+    issued_by_email: ctx?.email, started_at: new Date().toISOString(),
+  }).select("*").single();
+  if (error) throw new Error(`legal hold creation failed: ${error.message}`);
+  const update = await db.from("documents").update({
+    retention_status: "LEGAL_HOLD", updated_at: naiveIso(), updated_by: ctx?.email,
+  }).eq("id", p.id);
+  if (update.error) throw new Error(`document legal hold update failed: ${update.error.message}`);
+  const alert = await db.rpc("phase4_emit_alert", {
+    p_dedup_key: `LEGAL_HOLD_PLACED:${hold.id}`, p_type: "LEGAL_HOLD_PLACED", p_severity: "WARNING",
+    p_title: "Legal hold placed", p_message: "A retained record is protected from disposal by an active legal hold.",
+    p_entity_type: "Document", p_entity_id: p.id, p_deadline: null, p_window: null,
+    p_roles: ["COMPLIANCE_OFFICER", "LEGAL_OFFICER", "LEGAL_COUNSEL"],
+  });
+  if (alert.error) throw new Error(`legal hold alert failed: ${alert.error.message}`);
+  await writeAudit(ctx?.user ?? null, "PLACE_LEGAL_HOLD", MODULE, "DocumentLegalHold", hold.id,
+    `Placed legal hold on document ${p.id}`, ctx ? resolveClientIp(req).ip : null, "WARNING");
+  return jsonResponse(ok(hold, "Legal hold placed"), 200);
+}
+
+async function handleReleaseLegalHold(ctx: AuthContext | null, req: Request, body: unknown, p: RouteParams) {
+  if (!isUuid(p.id)) return generic500();
+  const reason = str((body as Record<string, unknown> | null)?.reason)?.trim() || null;
+  const existing = await db.from("document_legal_holds").select("*")
+    .eq("document_id", p.id).eq("status", "ACTIVE").maybeSingle();
+  if (existing.error) throw new Error(`legal hold lookup failed: ${existing.error.message}`);
+  if (!existing.data) return businessRule("The document does not have an active legal hold.");
+  const now = new Date();
+  const { data: hold, error } = await db.from("document_legal_holds").update({
+    status: "RELEASED", released_at: now.toISOString(), released_by: ctx?.userId,
+    released_by_email: ctx?.email, release_reason: reason, updated_at: now.toISOString(),
+  }).eq("id", existing.data.id).eq("status", "ACTIVE").select("*").single();
+  if (error) throw new Error(`legal hold release failed: ${error.message}`);
+  const doc = await loadDocument(p.id);
+  const expiry = dateStr(str(doc?.retention_expires_at));
+  const philippinesToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+  const nextStatus = expiry && expiry <= philippinesToday ? "ELIGIBLE_FOR_DISPOSAL" : "SCHEDULED";
+  const update = await db.from("documents").update({
+    retention_status: nextStatus, updated_at: naiveIso(), updated_by: ctx?.email,
+  }).eq("id", p.id);
+  if (update.error) throw new Error(`document hold release update failed: ${update.error.message}`);
+  const alert = await db.rpc("phase4_emit_alert", {
+    p_dedup_key: `LEGAL_HOLD_RELEASED:${hold.id}`, p_type: "LEGAL_HOLD_RELEASED", p_severity: "INFO",
+    p_title: "Legal hold released", p_message: "An authorized reviewer released a legal hold; normal retention rules apply again.",
+    p_entity_type: "Document", p_entity_id: p.id, p_deadline: expiry, p_window: null,
+    p_roles: ["COMPLIANCE_OFFICER", "LEGAL_OFFICER", "LEGAL_COUNSEL"],
+  });
+  if (alert.error) throw new Error(`legal hold release alert failed: ${alert.error.message}`);
+  await writeAudit(ctx?.user ?? null, "RELEASE_LEGAL_HOLD", MODULE, "DocumentLegalHold", hold.id,
+    `Released legal hold on document ${p.id}`, ctx ? resolveClientIp(req).ip : null, "WARNING");
+  return jsonResponse(ok(hold, "Legal hold released"), 200);
+}
+
+async function handleAutomationHealth() {
+  const { data, error } = await db.from("lifecycle_automation_runs").select("*")
+    .order("started_at", { ascending: false }).limit(20);
+  if (error) throw new Error(`automation health query failed: ${error.message}`);
+  return jsonResponse(ok(data ?? [], "Automation health retrieved"), 200);
+}
+
+// ---------------------------------------------------------------------------
 // Compliance alerts
 // ---------------------------------------------------------------------------
 
-async function upsertAlert(
-  dedupKey: string, type: string, severity: string, title: string,
-  message: string, entityType: string, entityId: string,
-) {
-  const existing = await db.from("compliance_alerts").select("id").eq("dedup_key", dedupKey).maybeSingle();
-  if (existing.error) throw new Error(`alert dedup check failed: ${existing.error.message}`);
-  if (existing.data) return; // Preserve existing state (acknowledged/dismissed).
-
-  const now = naiveIso();
-  const { error } = await db.from("compliance_alerts").insert({
-    type,
-    severity,
-    title,
-    message,
-    entity_type: entityType,
-    entity_id: entityId,
-    status: "OPEN",
-    dedup_key: dedupKey,
-    created_at: now,
-    updated_at: now,
-    created_by: "SYSTEM",
-    updated_by: "SYSTEM",
-  });
-  if (error) throw new Error(`alert insert failed: ${error.message}`);
-}
-
-async function generateAlerts() {
-  const cutoff = new Date(Date.now() + EXPIRY_WINDOW_DAYS * 86400000).toISOString().slice(0, 10);
-  const nowMs = Date.now();
-  const overdueBeforeMs = nowMs - REVIEW_OVERDUE_DAYS * 86400000;
-  const retentionWindowEndMs = nowMs + EXPIRY_WINDOW_DAYS * 86400000;
-
-  const expiringRes = await db.from("contracts").select("*")
-    .eq("status", "ACTIVE").lte("end_date", cutoff);
-  if (expiringRes.error) throw new Error(`expiring contracts query failed: ${expiringRes.error.message}`);
-  for (const c of (expiringRes.data as unknown as Array<Record<string, unknown>>) ?? []) {
-    const end = dateStr(str(c.end_date));
-    await upsertAlert(`CONTRACT_EXPIRING:${c.id}`, "CONTRACT_EXPIRING", "WARNING",
-      `Contract expiring soon: ${c.title}`,
-      `${c.contract_number} with ${c.counter_party} ends ${end}.`,
-      "Contract", String(c.id));
-  }
-
-  const expiredRes = await db.from("contracts").select("*").eq("status", "EXPIRED");
-  if (expiredRes.error) throw new Error(`expired contracts query failed: ${expiredRes.error.message}`);
-  for (const c of (expiredRes.data as unknown as Array<Record<string, unknown>>) ?? []) {
-    const end = dateStr(str(c.end_date));
-    await upsertAlert(`CONTRACT_EXPIRED:${c.id}`, "CONTRACT_EXPIRED", "CRITICAL",
-      `Contract expired: ${c.title}`,
-      `${c.contract_number} with ${c.counter_party} expired on ${end}.`,
-      "Contract", String(c.id));
-  }
-
-  const pendingDocsRes = await db.from("documents").select("*").eq("status", "PENDING_REVIEW");
-  if (pendingDocsRes.error) throw new Error(`pending review docs query failed: ${pendingDocsRes.error.message}`);
-  for (const d of (pendingDocsRes.data as unknown as Array<Record<string, unknown>>) ?? []) {
-    const createdMs = dbMs(str(d.created_at));
-    if (createdMs != null && createdMs < overdueBeforeMs) {
-      await upsertAlert(`DOCUMENT_REVIEW_OVERDUE:${d.id}`, "DOCUMENT_REVIEW_OVERDUE", "WARNING",
-        `Document review overdue: ${d.title}`,
-        `Pending review for more than ${REVIEW_OVERDUE_DAYS} days.`,
-        "Document", String(d.id));
-    }
-  }
-
-  const pendingDisposalsRes = await db.from("disposal_requests").select("*")
-    .eq("status", "PENDING").order("created_at", { ascending: false });
-  if (pendingDisposalsRes.error) throw new Error(`pending disposals query failed: ${pendingDisposalsRes.error.message}`);
-  for (const r of (pendingDisposalsRes.data as unknown as Array<Record<string, unknown>>) ?? []) {
-    await upsertAlert(`DISPOSAL_PENDING:${r.id}`, "DISPOSAL_PENDING", "INFO",
-      `Disposal awaiting approval: ${r.document_title}`,
-      "A document disposal request requires your decision.",
-      "DisposalRequest", String(r.id));
-  }
-
-  const retentionRes = await db.from("documents").select("*")
-    .not("retention_expires_at", "is", null).eq("is_deleted", false);
-  if (retentionRes.error) throw new Error(`retention docs query failed: ${retentionRes.error.message}`);
-  for (const d of (retentionRes.data as unknown as Array<Record<string, unknown>>) ?? []) {
-    if (d.status === "DELETED") continue;
-    const expiresMs = dbMs(str(d.retention_expires_at));
-    if (expiresMs == null) continue;
-    const endDate = dateStr(str(d.retention_expires_at));
-    if (expiresMs < nowMs) {
-      await upsertAlert(`RETENTION_EXPIRED:${d.id}`, "RETENTION_EXPIRED", "CRITICAL",
-        `Retention period expired: ${d.title}`,
-        `Retention ended on ${endDate}. Review this document for disposal or re-classification.`,
-        "Document", String(d.id));
-    } else if (expiresMs < retentionWindowEndMs) {
-      await upsertAlert(`RETENTION_EXPIRING:${d.id}`, "RETENTION_EXPIRING", "WARNING",
-        `Retention period ending soon: ${d.title}`,
-        `Retention ends on ${endDate}, within the next ${EXPIRY_WINDOW_DAYS} days.`,
-        "Document", String(d.id));
-    }
-  }
-}
-
 async function handleAlerts(ctx: AuthContext | null) {
-  await generateAlerts();
   const { data, error } = await db.from("compliance_alerts").select("*")
     .in("status", ["OPEN", "ACKNOWLEDGED"])
     .order("created_at", { ascending: false });
@@ -801,6 +959,10 @@ const routes = [
   { method: "GET", path: "/compliance/disposals", guard: { kind: "roles", roles: COMPLIANCE_ROLES }, handler: handleDisposals },
   { method: "POST", path: "/compliance/disposals/:id/approve", guard: { kind: "roles", roles: COMPLIANCE_ROLES }, handler: (ctx: AuthContext | null, req: Request, body: unknown, p: RouteParams) => handleDecideDisposal(ctx, req, body, p, true) },
   { method: "POST", path: "/compliance/disposals/:id/reject", guard: { kind: "roles", roles: COMPLIANCE_ROLES }, handler: (ctx: AuthContext | null, req: Request, body: unknown, p: RouteParams) => handleDecideDisposal(ctx, req, body, p, false) },
+  { method: "GET", path: "/compliance/legal-holds", guard: { kind: "roles", roles: HOLD_ROLES }, handler: handleListLegalHolds },
+  { method: "POST", path: "/compliance/documents/:id/legal-hold", guard: { kind: "roles", roles: HOLD_ROLES }, handler: handlePlaceLegalHold },
+  { method: "POST", path: "/compliance/documents/:id/legal-hold/release", guard: { kind: "roles", roles: HOLD_ROLES }, handler: handleReleaseLegalHold },
+  { method: "GET", path: "/compliance/automation-health", guard: { kind: "roles", roles: COMPLIANCE_ROLES }, handler: handleAutomationHealth },
   { method: "GET", path: "/compliance/alerts", guard: { kind: "roles", roles: COMPLIANCE_ROLES }, handler: handleAlerts },
   { method: "POST", path: "/compliance/alerts/:id/acknowledge", guard: { kind: "roles", roles: COMPLIANCE_ROLES }, handler: handleAcknowledgeAlert },
   { method: "POST", path: "/compliance/alerts/:id/dismiss", guard: { kind: "roles", roles: COMPLIANCE_ROLES }, handler: handleDismissAlert },

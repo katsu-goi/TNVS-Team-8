@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FileText, FileSignature, Archive, CheckCircle2,
-  RefreshCw, AlertCircle, Loader2, Activity,
+  RefreshCw, AlertCircle, Activity,
   Clock, ScrollText, ShieldAlert, BarChart3,
   BellRing, Trash2,
 } from 'lucide-react';
@@ -12,17 +12,9 @@ import {
 } from 'recharts';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { safeFetchJson } from '../../api/client';
-
-const KpiCard: React.FC<{ label: string; value: string | number; icon: React.ElementType; color?: string; sub?: string; onClick?: () => void }> = ({ label, value, icon: Icon, color, sub, onClick }) => (
-  <button onClick={onClick} className="card-stat p-4 text-left w-full cursor-pointer hover:border-emerald-300 hover:shadow-md transition-all group">
-    <div className="flex items-center justify-between mb-2">
-      <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.08em] group-hover:text-emerald-700 transition-colors">{label}</p>
-      <Icon className={`w-4 h-4 ${color || 'text-slate-400'} group-hover:scale-110 transition-transform`} />
-    </div>
-    <p className="text-2xl font-bold text-slate-900">{value}</p>
-    {sub && <p className="text-[10px] text-slate-400 mt-0.5 font-mono">{sub}</p>}
-  </button>
-);
+import { DashboardHero, DashboardMetricCard } from '../ui/DashboardPrimitives';
+import { ErrorState, PageContainer } from '../ui/SharedUI';
+import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 
 const PIE_COLORS = ['#10B981', '#F59E0B', '#EF4444', '#6B7280', '#3B82F6', '#8B5CF6'];
 
@@ -75,30 +67,11 @@ export const ComplianceOfficerDashboard: React.FC = () => {
   useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
 
   if (loading && !data) {
-    return (
-      <div className="space-y-6">
-        <div className="glass-panel p-5 flex items-center space-x-3">
-          <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
-          <p className="text-sm text-slate-500">Loading compliance dashboard...</p>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {Array.from({ length: 4 }).map((_, i) => <div key={i} className="card-stat p-5 animate-pulse"><div className="h-3 w-20 bg-slate-200 rounded mb-3" /><div className="h-7 w-12 bg-slate-200 rounded" /></div>)}
-        </div>
-      </div>
-    );
+    return <PortalLoadingOverlay message="Loading compliance dashboard..." />;
   }
 
   if (error && !data) {
-    return (
-      <div className="card-stat p-6 text-center space-y-4">
-        <AlertCircle className="w-12 h-12 text-rose-400 mx-auto" />
-        <h3 className="text-lg font-bold text-slate-900">Connection Error</h3>
-        <p className="text-sm text-slate-500">{error}</p>
-        <button onClick={() => setRetry(r => r + 1)} className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold inline-flex items-center space-x-2">
-          <RefreshCw className="w-4 h-4" /><span>Retry</span>
-        </button>
-      </div>
-    );
+    return <ErrorState title="Connection error" message={error} onRetry={() => setRetry(r => r + 1)} />;
   }
 
   if (!data) return null;
@@ -109,13 +82,9 @@ export const ComplianceOfficerDashboard: React.FC = () => {
   const recentDocuments: any[] = data.recentDocuments ?? [];
 
   return (
-    <div className="space-y-6">
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h1 className="text-[34px] font-extrabold font-heading text-slate-900 leading-tight">Compliance Officer</h1>
-          <p className="text-slate-500 text-sm mt-1">Records &amp; Compliance Oversight</p>
-        </div>
-        <div className="flex items-center space-x-3">
+    <PageContainer>
+      <DashboardHero title="Compliance Officer" subtitle="Records &amp; Compliance Oversight" actions={
+        <>
           <div className="flex items-center px-3 py-1.5 rounded-lg border bg-emerald-50 border-emerald-200">
             <Activity className="w-4 h-4 mr-2 text-emerald-600" />
             <span className="text-xs font-mono font-semibold text-emerald-600">ONLINE</span>
@@ -123,26 +92,49 @@ export const ComplianceOfficerDashboard: React.FC = () => {
           <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition text-slate-400 hover:text-slate-700" title="Refresh">
             <RefreshCw className="w-4 h-4" />
           </button>
-        </div>
-      </div>
+        </>
+      } />
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <KpiCard label="Total Documents" value={data.totalDocuments ?? 0} icon={FileText} color="text-emerald-600" sub="In records" onClick={() => navigate('/compliance/documents')} />
-        <KpiCard label="Pending Review" value={data.pendingReview ?? 0} icon={Clock} color={(data.pendingReview ?? 0) > 0 ? 'text-amber-500' : 'text-slate-400'} sub="Awaiting approval" onClick={() => navigate('/compliance/documents')} />
-        <KpiCard label="Active Contracts" value={data.activeContracts ?? 0} icon={FileSignature} color="text-blue-500" sub={`${data.totalContracts ?? 0} total`} onClick={() => navigate('/compliance/contracts')} />
-        <KpiCard label="Expiring Soon" value={data.expiringContracts ?? 0} icon={ShieldAlert} color={(data.expiringContracts ?? 0) > 0 ? 'text-rose-500' : 'text-slate-400'} sub="Within 30 days" onClick={() => navigate('/compliance/contracts')} />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <DashboardMetricCard label="Total Documents" value={data.totalDocuments ?? 0} icon={FileText} color="text-emerald-600" sub="In records" onClick={() => navigate('/compliance/documents')} />
+        <DashboardMetricCard label="Pending Review" value={data.pendingReview ?? 0} icon={Clock} color={(data.pendingReview ?? 0) > 0 ? 'text-amber-500' : 'text-slate-400'} sub="Awaiting approval" onClick={() => navigate('/compliance/documents')} />
+        <DashboardMetricCard label="Active Contracts" value={data.activeContracts ?? 0} icon={FileSignature} color="text-blue-500" sub={`${data.totalContracts ?? 0} total`} onClick={() => navigate('/compliance/contracts')} />
+        <DashboardMetricCard label="Expiring Soon" value={data.expiringContracts ?? 0} icon={ShieldAlert} color={(data.expiringContracts ?? 0) > 0 ? 'text-rose-500' : 'text-slate-400'} sub="Within 30 days" onClick={() => navigate('/compliance/contracts')} />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <KpiCard label="Open Alerts" value={data.openAlerts ?? 0} icon={BellRing} color={(data.openAlerts ?? 0) > 0 ? 'text-amber-500' : 'text-slate-400'} sub="Require attention" onClick={() => navigate('/compliance/alerts')} />
-        <KpiCard label="Pending Disposals" value={data.pendingDisposals ?? 0} icon={Trash2} color={(data.pendingDisposals ?? 0) > 0 ? 'text-rose-500' : 'text-slate-400'} sub="Awaiting decision" onClick={() => navigate('/compliance/disposals')} />
+        <DashboardMetricCard label="Open Alerts" value={data.openAlerts ?? 0} icon={BellRing} color={(data.openAlerts ?? 0) > 0 ? 'text-amber-500' : 'text-slate-400'} sub="Require attention" onClick={() => navigate('/compliance/alerts')} />
+        <DashboardMetricCard label="Pending Disposals" value={data.pendingDisposals ?? 0} icon={Trash2} color={(data.pendingDisposals ?? 0) > 0 ? 'text-rose-500' : 'text-slate-400'} sub="Awaiting decision" onClick={() => navigate('/compliance/disposal')} />
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <KpiCard label="Approved Documents" value={data.approvedDocuments ?? 0} icon={CheckCircle2} color="text-emerald-600" sub="Finalized" onClick={() => navigate('/compliance/documents')} />
-        <KpiCard label="Archived Documents" value={data.archivedDocuments ?? 0} icon={Archive} color="text-slate-400" sub="Retained" onClick={() => navigate('/compliance/documents')} />
-        <KpiCard label="Retention Policies" value={data.retentionPolicies ?? 0} icon={Archive} color="text-purple-500" sub="Active policies" onClick={() => navigate('/compliance/retention-policies')} />
-        <KpiCard label="Audit Events (7d)" value={data.recentAuditEvents ?? 0} icon={ScrollText} color="text-blue-500" sub="Last 7 days" onClick={() => navigate('/compliance/audit-logs')} />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <DashboardMetricCard label="Policy Required" value={data.retentionPolicyRequired ?? 0} icon={AlertCircle} color={(data.retentionPolicyRequired ?? 0) > 0 ? 'text-rose-500' : 'text-slate-400'} sub="Needs classification match" onClick={() => navigate('/compliance/documents')} />
+        <DashboardMetricCard label="Retention Upcoming" value={data.retentionExpiring ?? 0} icon={Clock} color="text-amber-500" sub="Automated windows" onClick={() => navigate('/compliance/alerts')} />
+        <DashboardMetricCard label="Disposal Eligible" value={data.retentionExpired ?? 0} icon={Trash2} color="text-rose-500" sub="Human review required" onClick={() => navigate('/compliance/disposal')} />
+        <DashboardMetricCard label="Legal Holds" value={data.activeLegalHolds ?? 0} icon={ShieldAlert} color="text-purple-500" sub="Disposal blocked" onClick={() => navigate('/compliance/documents')} />
+        <DashboardMetricCard label="Overdue Obligations" value={data.overdueObligations ?? 0} icon={FileSignature} color="text-rose-500" sub="Reviewed obligations" onClick={() => navigate('/compliance/contracts')} />
+      </div>
+
+      <div className="glass-panel p-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Lifecycle automation health</p>
+          <p className="mt-1 text-sm font-bold text-slate-900">
+            {data.automationHealth?.status ?? 'AWAITING FIRST RUN'}
+            {data.automationHealth?.lastCompletedAt ? ` · ${new Date(data.automationHealth.lastCompletedAt).toLocaleString()}` : ''}
+          </p>
+        </div>
+        <div className="flex gap-4 text-[11px] font-mono text-slate-500">
+          <span>Processed {data.automationHealth?.processedCount ?? 0}</span>
+          <span>Alerts {data.automationHealth?.generatedAlerts ?? 0}</span>
+          <span>Notifications {data.automationHealth?.generatedNotifications ?? 0}</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <DashboardMetricCard label="Approved Documents" value={data.approvedDocuments ?? 0} icon={CheckCircle2} color="text-emerald-600" sub="Finalized" onClick={() => navigate('/compliance/documents')} />
+        <DashboardMetricCard label="Archived Documents" value={data.archivedDocuments ?? 0} icon={Archive} color="text-slate-400" sub="Retained" onClick={() => navigate('/compliance/documents')} />
+        <DashboardMetricCard label="Retention Policies" value={data.retentionPolicies ?? 0} icon={Archive} color="text-purple-500" sub="Active policies" onClick={() => navigate('/compliance/retention')} />
+        <DashboardMetricCard label="Audit Events (7d)" value={data.recentAuditEvents ?? 0} icon={ScrollText} color="text-blue-500" sub="Last 7 days" onClick={() => navigate('/compliance/audit')} />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -244,6 +236,6 @@ export const ComplianceOfficerDashboard: React.FC = () => {
           <RefreshCw className="w-3 h-3" /><span>Refresh</span>
         </button>
       </div>
-    </div>
+    </PageContainer>
   );
 };

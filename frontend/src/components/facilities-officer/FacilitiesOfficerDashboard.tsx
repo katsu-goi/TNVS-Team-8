@@ -2,14 +2,15 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Calendar, ClipboardList, Building2, CheckSquare,
-  RefreshCw, AlertCircle, Loader2, Activity,
+  RefreshCw, AlertCircle, Activity,
   Wrench, FileText, Eye, PlusCircle, BarChart3,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
 } from 'recharts';
-import { DashboardMetricCard as KpiCard } from '../ui/DashboardPrimitives';
+import { DashboardHero, DashboardMetricCard as KpiCard } from '../ui/DashboardPrimitives';
+import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 
 const QuickActionCard: React.FC<{ label: string; desc: string; icon: React.ElementType; onClick?: () => void }> = ({ label, desc, icon: Icon, onClick }) => (
   <button onClick={onClick} className="card-stat p-4 text-left w-full cursor-pointer hover:border-emerald-300 hover:shadow-md transition-all group flex items-start space-x-3">
@@ -59,17 +60,7 @@ export const FacilitiesOfficerDashboard: React.FC = () => {
   const tables = data?.tables ?? {};
 
   if (loading && !data) {
-    return (
-      <div className="space-y-6">
-        <div className="glass-panel p-5 flex items-center space-x-3">
-          <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
-          <p className="text-sm text-slate-500">Loading facilities officer dashboard...</p>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          {Array.from({ length: 4 }).map((_, i) => <div key={i} className="card-stat p-5 animate-pulse"><div className="h-3 w-20 bg-slate-200 rounded mb-3" /><div className="h-7 w-12 bg-slate-200 rounded" /></div>)}
-        </div>
-      </div>
-    );
+    return <PortalLoadingOverlay message="Loading facilities officer dashboard..." />;
   }
 
   if (error && !data) {
@@ -93,12 +84,8 @@ export const FacilitiesOfficerDashboard: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="dashboard-hero">
-        <div>
-          <h1 className="text-[34px] font-extrabold font-heading text-slate-900 leading-tight">Facilities Officer</h1>
-          <p className="text-slate-500 text-sm mt-1">Daily Facilities Operations &amp; Scheduling</p>
-        </div>
-        <div className="flex items-center space-x-3">
+      <DashboardHero title="Facilities Officer" subtitle="Daily Facilities Operations & Scheduling" actions={
+        <>
           <div className="flex items-center px-3 py-1.5 rounded-lg border bg-emerald-50 border-emerald-200">
             <Activity className="w-4 h-4 mr-2 text-emerald-600" />
             <span className="text-xs font-mono font-semibold text-emerald-600">ONLINE</span>
@@ -106,8 +93,8 @@ export const FacilitiesOfficerDashboard: React.FC = () => {
           <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition text-slate-400 hover:text-slate-700" title="Refresh">
             <RefreshCw className="w-4 h-4" />
           </button>
-        </div>
-      </div>
+        </>
+      } />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <KpiCard label="Today's Reservations" value={kpi.todaysReservations ?? 0} icon={Calendar} color={(kpi.todaysReservations ?? 0) > 0 ? 'text-emerald-600' : 'text-slate-400'} sub="Scheduled today" onClick={() => navigate('/facilities-officer/reservations')} />

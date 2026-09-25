@@ -15,13 +15,18 @@ export type RefreshTokenRow = {
 
 const REFRESH_TTL_MS = 7 * 24 * 3600_000;
 
+async function tokenHash(token: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 /** Finds an active refresh token by its opaque value. */
 export async function findActiveRefreshToken(token: string): Promise<RefreshTokenRow | null> {
   const db = adminDb();
   const { data, error } = await db
     .from("refresh_tokens")
     .select("*")
-    .eq("token", token)
+    .eq("token", await tokenHash(token))
     .eq("is_revoked", false)
     .maybeSingle();
   if (error) throw new Error(`refresh_tokens lookup failed: ${error.message}`);
@@ -38,7 +43,7 @@ export async function saveRefreshToken(
   const expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
   const { error } = await db.from("refresh_tokens").insert({
     user_id: userId,
-    token,
+    token: await tokenHash(token),
     expires_at: naiveIso(expiresAt),
     ip_address: ipAddress,
     user_agent: userAgent,

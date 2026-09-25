@@ -9,6 +9,7 @@ export type JwtPayload = {
   jti: string;
   iat: number;
   exp: number;
+  sessionVersion?: number;
 };
 
 function secretKey(): Uint8Array {
@@ -20,9 +21,10 @@ export async function signAccessToken(
   roles: string[],
   issuer: string = config.jwtIssuer,
   ttlSeconds: number = config.accessTokenTtlSeconds,
+  sessionVersion = 1,
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  return new jose.SignJWT({ roles: roles.join(","), type: "ACCESS" })
+  return new jose.SignJWT({ roles: roles.join(","), type: "ACCESS", sessionVersion })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(email)
     .setIssuer(issuer)
@@ -36,9 +38,10 @@ export async function signRefreshToken(
   email: string,
   issuer: string = config.jwtIssuer,
   ttlSeconds: number = config.refreshTokenTtlSeconds,
+  sessionVersion = 1,
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  return new jose.SignJWT({ type: "REFRESH" })
+  return new jose.SignJWT({ type: "REFRESH", sessionVersion })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(email)
     .setIssuer(issuer)

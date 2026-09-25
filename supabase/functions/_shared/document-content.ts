@@ -15,11 +15,82 @@ export type ExtractionResult = {
   contentSha256: string;
 };
 
+const MIME_BY_EXTENSION: Record<string, string> = {
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  txt: "text/plain",
+};
+
+const DECLARED_MIME_ALLOWLIST: Record<string, Set<string>> = {
+  pdf: new Set(["application/pdf", "application/octet-stream", ""]),
+  docx: new Set([
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/zip",
+    "application/octet-stream",
+    "",
+  ]),
+  txt: new Set(["text/plain", "application/octet-stream", ""]),
+};
+
 export class DocumentExtractionError extends Error {
   constructor(public readonly code: string, message: string) {
     super(message);
     this.name = "DocumentExtractionError";
   }
+}
+
+function beginsWith(bytes: Uint8Array, signature: number[]): boolean {
+  return signature.every((value, index) => bytes[index] === value);
+}
+
+/** Validates declared type and content signature, returning server MIME. */
+export function validateDocumentUpload(
+  extension: string,
+  declaredMime: string,
+  bytes: Uint8Array,
+): string {
+  const ext = extension.toLowerCase();
+  const normalizedMime = declaredMime.toLowerCase().split(";", 1)[0].trim();
+  if (!(ext in MIME_BY_EXTENSION)) {
+    throw new DocumentExtractionError("UNSUPPORTED_CONTENT_FORMAT", "The uploaded file type is not supported.");
+  }
+  if (!DECLARED_MIME_ALLOWLIST[ext].has(normalizedMime)) {
+    throw new DocumentExtractionError(
+      "MIME_EXTENSION_MISMATCH",
+      "The declared file type does not match the filename extension.",
+    );
+  }
+
+  const executable = beginsWith(bytes, [0x4d, 0x5a]) // Windows PE
+    || beginsWith(bytes, [0x7f, 0x45, 0x4c, 0x46]) // ELF
+    || beginsWith(bytes, [0xca, 0xfe, 0xba, 0xbe])
+    || beginsWith(bytes, [0xfe, 0xed, 0xfa, 0xce])
+    || beginsWith(bytes, [0xcf, 0xfa, 0xed, 0xfe]);
+  if (executable) {
+    throw new DocumentExtractionError("EXECUTABLE_CONTENT_REJECTED", "Executable content is not accepted.");
+  }
+
+  if (ext === "pdf" && !beginsWith(bytes, [0x25, 0x50, 0x44, 0x46, 0x2d])) {
+    throw new DocumentExtractionError("INVALID_PDF", "The file does not have a valid PDF signature.");
+  }
+  if (ext === "docx" && !beginsWith(bytes, [0x50, 0x4b, 0x03, 0x04])) {
+    throw new DocumentExtractionError("INVALID_DOCX", "The file does not have a valid DOCX container signature.");
+  }
+  if (ext === "txt") {
+    let text: string;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      throw new DocumentExtractionError("INVALID_TEXT_ENCODING", "TXT files must contain valid UTF-8 text.");
+    }
+    const prefix = text.slice(0, 512).trimStart().toLowerCase();
+    if (prefix.startsWith("#!") || prefix.startsWith("<script") || prefix.startsWith("<!doctype html")
+      || prefix.startsWith("<html")) {
+      throw new DocumentExtractionError("SCRIPT_CONTENT_REJECTED", "Executable script or HTML content is not accepted.");
+    }
+  }
+
+  return MIME_BY_EXTENSION[ext];
 }
 
 function normalizeText(value: string): { text: string; truncated: boolean } {
@@ -76,11 +147,12 @@ async function extractPdfText(bytes: Uint8Array): Promise<{ text: string; pageCo
   }
   let pdf: Awaited<ReturnType<typeof getDocumentProxy>>;
   try {
-    pdf = await getDocumentProxy(bytes.slice(), {
+    const safePdfOptions = {
       isEvalSupported: false,
       disableFontFace: true,
       useSystemFonts: false,
-    });
+    };
+    pdf = await getDocumentProxy(bytes.slice(), safePdfOptions);
   } catch {
     throw new DocumentExtractionError("INVALID_PDF", "The PDF could not be parsed.");
   }

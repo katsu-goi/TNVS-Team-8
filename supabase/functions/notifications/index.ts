@@ -51,7 +51,8 @@ async function handleList(ctx: AuthContext | null, _req: Request, _body: unknown
     .select("*")
     .eq("recipient_id", ctx!.userId)
     .eq("is_deleted", false)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(100);
   if (error) throw new Error(`notifications load failed: ${error.message}`);
   return jsonResponse(ok((data as unknown as NotifRow[]).map(notifDto), "Notifications retrieved"), 200);
 }
@@ -74,6 +75,8 @@ async function handleMarkRead(ctx: AuthContext | null, _req: Request, _body: unk
     .from("employee_notifications")
     .update({ is_read: true })
     .eq("id", p.id)
+    .eq("recipient_id", ctx!.userId)
+    .eq("is_deleted", false)
     .select("*")
     .single();
   if (error) throw new Error(`notification update failed: ${error.message}`);
@@ -97,7 +100,9 @@ async function handleDismiss(ctx: AuthContext | null, _req: Request, _body: unkn
   const { error } = await db
     .from("employee_notifications")
     .update({ is_deleted: true, deleted_at: new Date().toISOString(), deleted_by: ctx!.email })
-    .eq("id", p.id);
+    .eq("id", p.id)
+    .eq("recipient_id", ctx!.userId)
+    .eq("is_deleted", false);
   if (error) throw new Error(`notification dismiss failed: ${error.message}`);
   return jsonResponse(ok("Notification dismissed"), 200);
 }

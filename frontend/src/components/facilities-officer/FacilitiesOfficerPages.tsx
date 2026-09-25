@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  AlertCircle, RefreshCw, Calendar, FileText, Bell, User, Eye,
-  Building2, Settings, ShieldCheck, ShieldAlert, Plus, Loader2,
+  AlertCircle, RefreshCw, FileText, Bell, User, Eye,
+  Settings, ShieldCheck, ShieldAlert, Plus, Loader2,
   ScanLine, XCircle, Camera, UserCheck, CheckCircle2, MapPin, Clock3,
 } from 'lucide-react';
 import { safeFetchJson, extractErrorMessage } from '../../api/client';
 import { facilitiesService } from '../../api/facilitiesService';
+import { notificationService, type AppNotification } from '../../api/notificationService';
 import { DocumentUploadPanel } from '../documents/DocumentUploadPanel';
 import { visitorService } from '../../api/visitorService';
 import { ID_TYPES } from '../../types/visitors';
@@ -14,6 +15,8 @@ import type {
 } from '../../types/visitors';
 import { BrowserMultiFormatReader, type IScannerControls } from '@zxing/browser';
 import { reservationPortalService } from '../../api/reservationPortalService';
+import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
+import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -34,94 +37,11 @@ const ErrorState: React.FC<{ message: string; onRetry: () => void }> = ({ messag
   <div className="card-stat p-8 flex flex-col items-center justify-center text-center space-y-3">
     <AlertCircle className="w-10 h-10 text-rose-400" />
     <p className="text-sm text-slate-600">{message}</p>
-    <button onClick={onRetry} className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold inline-flex items-center space-x-2">
+    <button type="button" onClick={onRetry} className="inline-flex items-center space-x-2 rounded-xl bg-brand-500 px-4 py-2 text-xs font-semibold text-white hover:bg-brand-700">
       <RefreshCw className="w-4 h-4" /><span>Retry</span>
     </button>
   </div>
 );
-
-export const FoReservationsPage: React.FC = () => {
-  const [reservations, setReservations] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [retry, setRetry] = useState(0);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const json = await safeFetchJson('/api/v1/facilities-officer/reservations');
-      setReservations(json?.data ?? []);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to load');
-    } finally {
-      setLoading(false);
-    }
-  }, [retry]);
-
-  useEffect(() => { load(); }, [load]);
-
-  if (loading && reservations.length === 0) return <LoadingSkeleton />;
-  if (error && reservations.length === 0) return <ErrorState message={error} onRetry={() => setRetry(r => r + 1)} />;
-
-  return (
-    <div className="space-y-6">
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Facilities Reservation</h2>
-          <p className="text-xs text-slate-500">Manage room and vehicle bay bookings</p>
-        </div>
-        <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
-      </div>
-
-      <div className="flex items-center space-x-2 text-xs text-slate-500 bg-white border border-slate-200 rounded-xl px-4 py-3">
-        <Building2 className="w-4 h-4 text-emerald-600" />
-        <span>Full transactional access: Create, Read, Update reservations (approvals escalated to Facilities Manager)</span>
-      </div>
-
-      {reservations.length === 0 ? (
-        <EmptyState icon={Calendar} title="No Reservations" desc="No reservations have been created yet." />
-      ) : (
-        <div className="card-stat overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 text-left">
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Title</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Requester</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Room/Bay</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Date/Time</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {reservations.map((r: any) => (
-                  <tr key={r.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                    <td className="p-3 font-medium text-slate-900">{r.title}</td>
-                    <td className="p-3 text-slate-600">{r.requesterName || r.employeeName || '-'}</td>
-                    <td className="p-3 text-slate-600">{r.roomName || r.bay || '-'}</td>
-                    <td className="p-3 text-slate-600">
-                      <p className="text-xs">{new Date(r.startTime).toLocaleDateString()}</p>
-                      <p className="text-[10px] text-slate-400">{new Date(r.startTime).toLocaleTimeString()} - {new Date(r.endTime).toLocaleTimeString()}</p>
-                    </td>
-                    <td className="p-3">
-                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
-                        r.status === 'APPROVED' ? 'bg-emerald-50 text-emerald-600' :
-                        r.status === 'PENDING' ? 'bg-amber-50 text-amber-600' :
-                        r.status === 'REJECTED' ? 'bg-rose-50 text-rose-600' :
-                        'bg-slate-100 text-slate-500'
-                      }`}>{r.status}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
 
 const scoreTone = (score: number | null) => {
   if (score === null || score === undefined) return 'bg-slate-100 text-slate-500';
@@ -147,6 +67,7 @@ const VisitorVerificationSection: React.FC = () => {
   const [denyTarget, setDenyTarget] = useState<any | null>(null);
   const [denialReason, setDenialReason] = useState('');
   const [denySaving, setDenySaving] = useState(false);
+  const [reviewNotes, setReviewNotes] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -191,6 +112,24 @@ const VisitorVerificationSection: React.FC = () => {
       setError(err?.response?.data?.message || err?.message || 'Visitor could not be denied');
     } finally {
       setDenySaving(false);
+    }
+  };
+
+  const review = async (decision: 'CLEAR' | 'BLOCK') => {
+    if (!result || !reviewNotes.trim()) return;
+    setBusyId(result.visitorId);
+    setError(null);
+    try {
+      const reviewed = await visitorService.reviewVisitor(result.visitorId, result.id, decision, reviewNotes.trim());
+      setResult(reviewed);
+      setHistory(await visitorService.listVerifications(result.visitorId));
+      if (decision === 'CLEAR') await visitorService.checkIn(result.visitorId);
+      setReviewNotes('');
+      await load();
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Review failed');
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -275,22 +214,27 @@ const VisitorVerificationSection: React.FC = () => {
 
       {result && (
         <div className={`rounded-xl border p-4 space-y-3 ${
-          result.watchlistStatus === 'FLAGGED'
+          result.clearanceState === 'BLOCKED'
             ? 'border-rose-200 bg-rose-50/50'
-            : 'border-emerald-200 bg-emerald-50/50'
+            : result.clearanceState === 'REVIEW_REQUIRED'
+              ? 'border-amber-200 bg-amber-50/50'
+              : 'border-emerald-200 bg-emerald-50/50'
         }`}>
           <div className="flex items-center space-x-2">
             {result.watchlistStatus === 'FLAGGED'
               ? <ShieldAlert className="w-4 h-4 text-rose-600" />
               : <ShieldCheck className="w-4 h-4 text-emerald-600" />}
-            <p className="text-sm font-bold text-slate-900">
+            <p className="hidden">
               {result.watchlistStatus === 'FLAGGED' ? 'Watchlist match — escalate' : 'Cleared'}
             </p>
+            <p className="text-sm font-bold text-slate-900">{result.clearanceState.replace(/_/g, ' ')}</p>
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
             <div><p className="text-slate-400 text-[10px] uppercase">Verification</p><p className="font-mono">{result.verificationStatus}</p></div>
             <div><p className="text-slate-400 text-[10px] uppercase">Watchlist</p><p className="font-mono">{result.watchlistStatus}</p></div>
+            <div><p className="text-slate-400 text-[10px] uppercase">Automated</p><p className="font-mono">{result.automatedClearance}</p></div>
+            <div><p className="text-slate-400 text-[10px] uppercase">Effective</p><p className="font-mono">{result.clearanceState}</p></div>
             <div>
               <p className="text-slate-400 text-[10px] uppercase">Match Score</p>
               <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${scoreTone(result.matchScore)}`}>
@@ -301,6 +245,20 @@ const VisitorVerificationSection: React.FC = () => {
           </div>
 
           {result.notes && <p className="text-xs text-slate-600">{result.notes}</p>}
+
+          {result.clearanceState === 'REVIEW_REQUIRED' && (
+            <div className="space-y-2 rounded-xl border border-amber-200 bg-white p-3">
+              <p className="text-[10px] font-bold uppercase text-amber-700">Authorized manual review</p>
+              <textarea value={reviewNotes} onChange={e => setReviewNotes(e.target.value)} rows={2}
+                placeholder="Required review notes" className="w-full rounded-lg border border-slate-200 p-2 text-xs" />
+              <div className="flex gap-2">
+                <button disabled={!reviewNotes.trim() || busyId === result.visitorId} onClick={() => review('CLEAR')}
+                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-40">Clear</button>
+                <button disabled={!reviewNotes.trim() || busyId === result.visitorId} onClick={() => review('BLOCK')}
+                  className="rounded-lg bg-rose-600 px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-40">Block</button>
+              </div>
+            </div>
+          )}
 
           <div>
             <p className="text-[10px] uppercase text-slate-400 mb-1">Extracted Fields</p>
@@ -321,7 +279,7 @@ const VisitorVerificationSection: React.FC = () => {
                   <li key={h.id} className="text-[11px] text-slate-600 flex items-center space-x-2">
                     <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
                       h.watchlistStatus === 'FLAGGED' ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'
-                    }`}>{h.watchlistStatus}</span>
+                    }`}>{h.clearanceState}</span>
                     <span className="font-mono">{h.matchScore ?? '—'}</span>
                     <span className="text-slate-400">{h.verifiedAt ? new Date(h.verifiedAt).toLocaleString() : '—'}</span>
                   </li>
@@ -354,7 +312,7 @@ const VisitorWatchlistSection: React.FC = () => {
   const [entries, setEntries] = useState<VisitorWatchlistEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState({ fullName: '', idNumber: '', reason: '' });
+  const [form, setForm] = useState({ fullName: '', idNumber: '', reason: '', severity: 'HIGH' as 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' });
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -378,8 +336,9 @@ const VisitorWatchlistSection: React.FC = () => {
     try {
       await visitorService.addWatchlistEntry(
         form.fullName.trim(), form.idNumber.trim() || undefined, form.reason.trim() || undefined,
+        form.severity,
       );
-      setForm({ fullName: '', idNumber: '', reason: '' });
+      setForm({ fullName: '', idNumber: '', reason: '', severity: 'HIGH' });
       await load();
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Failed to add entry');
@@ -433,6 +392,10 @@ const VisitorWatchlistSection: React.FC = () => {
           placeholder="Reason"
           className="text-xs border border-slate-200 rounded-lg px-3 py-2 flex-1 min-w-[160px]"
         />
+        <select value={form.severity} onChange={e => setForm(f => ({ ...f, severity: e.target.value as typeof f.severity }))}
+          className="text-xs border border-slate-200 rounded-lg px-3 py-2 bg-white">
+          {['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].map(value => <option key={value} value={value}>{value}</option>)}
+        </select>
         <button
           onClick={add}
           disabled={saving || !form.fullName.trim()}
@@ -455,6 +418,7 @@ const VisitorWatchlistSection: React.FC = () => {
                 <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Name</th>
                 <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">ID Number</th>
                 <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Reason</th>
+                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Severity</th>
                 <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
                 <th className="p-2" />
               </tr>
@@ -465,6 +429,7 @@ const VisitorWatchlistSection: React.FC = () => {
                   <td className="p-2 font-medium text-slate-900">{e.fullName}</td>
                   <td className="p-2 text-slate-600 font-mono text-xs">{e.idNumber || '—'}</td>
                   <td className="p-2 text-slate-600 text-xs">{e.reason || '—'}</td>
+                  <td className="p-2 text-slate-600 text-xs font-mono">{e.severity}</td>
                   <td className="p-2">
                     <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
                       e.status === 'ACTIVE' ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-500'
@@ -495,6 +460,7 @@ export const FoVisitorManagementPage: React.FC = () => {
   const [retry, setRetry] = useState(0);
   const [occupancy, setOccupancy] = useState({ current: 0, maxCapacity: 1, rate: 0 });
   const [checkOutId, setCheckOutId] = useState<string | null>(null);
+  const revision = useRealtimeSyncStore(s => s.revision);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -511,6 +477,7 @@ export const FoVisitorManagementPage: React.FC = () => {
   }, [retry]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
 
   const checkOut = async (visitorId: string) => {
     setCheckOutId(visitorId);
@@ -540,7 +507,7 @@ export const FoVisitorManagementPage: React.FC = () => {
 
       <div className="flex items-center space-x-2 text-xs text-slate-500 bg-white border border-slate-200 rounded-xl px-4 py-3">
         <Eye className="w-4 h-4 text-amber-500" />
-        <span>Read-only view of visitors associated with facility visits</span>
+        <span>Server-validated clearance, entry, departure, and visitor audit workflow</span>
       </div>
 
       {visitors.length === 0 ? (
@@ -556,6 +523,7 @@ export const FoVisitorManagementPage: React.FC = () => {
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Facility</th>
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Check-In</th>
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
+                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Clearance</th>
                   <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Action</th>
                 </tr>
               </thead>
@@ -575,6 +543,13 @@ export const FoVisitorManagementPage: React.FC = () => {
                         'bg-amber-50 text-amber-600'
                       }`}>{v.status}</span>
                       {v.denialReason && <p className="mt-1 max-w-[220px] text-[10px] text-rose-600">{v.denialReason}</p>}
+                    </td>
+                    <td className="p-3">
+                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
+                        v.clearanceState === 'CLEAR' ? 'bg-emerald-50 text-emerald-700' :
+                        v.clearanceState === 'BLOCKED' ? 'bg-rose-50 text-rose-700' :
+                        'bg-amber-50 text-amber-700'
+                      }`}>{v.clearanceState?.replace(/_/g, ' ') || 'VERIFICATION REQUIRED'}</span>
                     </td>
                     <td className="p-3"><button type="button" onClick={() => void checkOut(v.id)} disabled={checkOutId === v.id || v.status !== 'CHECKED_IN'} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[10px] font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">{checkOutId === v.id && <Loader2 className="h-3 w-3 animate-spin" />}Log Check-Out</button></td>
                   </tr>
@@ -686,19 +661,23 @@ export const FoDocumentsPage: React.FC = () => {
 };
 
 export const FoNotificationsPage: React.FC = () => {
-  const [notifications, setNotifications] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const revision = useNotificationRealtimeStore(state => state.revision);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
-      const json = await safeFetchJson('/api/v1/notifications');
-      setNotifications(json?.data ?? []);
-    } catch {} finally { setLoading(false); }
+      setNotifications(await notificationService.getNotifications());
+    } catch (e: any) { setError(e?.response?.data?.message || e?.message || 'Failed to load notifications.'); }
+    finally { setLoading(false); }
   }, [retry]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (revision > 0) setRetry(value => value + 1); }, [revision]);
 
   if (loading && notifications.length === 0) return <LoadingSkeleton />;
 
@@ -720,17 +699,18 @@ export const FoNotificationsPage: React.FC = () => {
         <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
       </div>
 
-      {notifications.length === 0 ? (
+      {error ? <ErrorState message={error} onRetry={() => setRetry(value => value + 1)} /> : notifications.length === 0 ? (
         <EmptyState icon={Bell} title="No Notifications" desc="No facility notifications yet." />
       ) : (
         <div className="space-y-2">
-          {notifications.map((n: any) => (
+          {notifications.map((n) => (
             <div key={n.id} className={`card-stat p-3 flex items-start space-x-3 border-l-4 ${typeColors[n.type] || 'border-l-slate-300'}`}>
               <div className="flex-1">
-                <p className="text-sm text-slate-900">{n.message || n.title}</p>
-                <p className="text-xs text-slate-500 mt-0.5">{n.details || n.relatedEntityType || ''}</p>
-                <p className="text-[10px] text-slate-400 mt-1 font-mono">{n.timestamp || n.createdAt ? new Date(n.timestamp || n.createdAt).toLocaleString() : ''}</p>
+                <p className="text-sm font-semibold text-slate-900">{n.title}</p>
+                <p className="text-xs text-slate-500 mt-0.5">{n.message}</p>
+                <p className="text-[10px] text-slate-400 mt-1 font-mono">{new Date(n.createdAt).toLocaleString('en-PH')}</p>
               </div>
+              {!n.read && <button onClick={async () => { await notificationService.markNotificationRead(n.id); setNotifications(rows => rows.map(row => row.id === n.id ? { ...row, read: true } : row)); }} className="rounded-lg border border-emerald-200 px-2 py-1 text-[11px] font-bold text-emerald-700">Mark read</button>}
             </div>
           ))}
         </div>

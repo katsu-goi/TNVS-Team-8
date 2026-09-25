@@ -1,10 +1,11 @@
 import { verifyAccessToken } from "./jwt.ts";
 import { findUserByEmail, findUserById, AuthUser, isAccountActive, userSummary } from "./auth-users.ts";
-import { corsHeaders, isPreflight, jsonResponse, preflightResponse } from "./cors.ts";
+import { applyCors, corsHeaders, isPreflight, jsonResponse, preflightResponse } from "./cors.ts";
 import { fail } from "./envelope.ts";
 import { assertEnv } from "./config.ts";
 import { adminDb } from "./db.ts";
 import { resolveClientIp } from "./ip.ts";
+import { consumeRateLimit, tierFor } from "./rate-limit.ts";
 
 export type AuthContext = {
   user: AuthUser;
@@ -83,6 +84,7 @@ export async function extractAuthContext(req: Request): Promise<AuthContext | nu
 
   const user = await findUserByEmail(payload.sub);
   if (!user || !isAccountActive(user)) return null;
+  if ((payload.sessionVersion ?? 1) !== user.row.auth_version) return null;
 
   const authorities = user.roles.map((r) => `ROLE_${r}`).concat(user.permissions);
   return {
@@ -240,16 +242,18 @@ export function createHandler(routes: Route[], options: RouterOptions = {}): (re
   return async (req: Request): Promise<Response> => {
     if (isPreflight(req)) return preflightResponse(req);
 
+    const finish = (response: Response) => applyCors(req, response);
+
     try {
       assertEnv();
     } catch (e) {
-      return envMissingResponse(e);
+      return finish(envMissingResponse(e));
     }
 
     const url = new URL(req.url);
     const path = url.pathname.replace(/\/+$/, "");
     const route = routes.find((r) => r.method === req.method && matchPath(path, r.path));
-    if (!route) return notFoundResponse(req);
+    if (!route) return finish(notFoundResponse(req));
     const params = matchPath(path, route.path) ?? {};
 
     let body: unknown = null;
@@ -267,44 +271,64 @@ export function createHandler(routes: Route[], options: RouterOptions = {}): (re
     }
 
     if (route.guard.kind === "public") {
-      return safeRun(route.handler, null, req, body, params);
+      const rate = tierFor("guest", route.path);
+      const key = `${resolveClientIp(req).ip}:${rate.name}:${route.path}`;
+      if (!(await consumeRateLimit(key, rate.spec))) return finish(rateLimitedResponse(rate.spec.windowSeconds));
+      return finish(await safeRun(route.handler, null, req, body, params));
     }
 
     const actorCtx = await extractAuthContext(req);
-    if (!actorCtx) return unauthorizedResponse();
+    if (!actorCtx) return finish(unauthorizedResponse());
+
+    const rate = tierFor(
+      hasAnyRole(actorCtx, ["SUPER_ADMIN", "SYSTEM_ADMIN"]) ? "admin" : "user",
+      route.path,
+    );
+    const key = `${actorCtx.userId}:${rate.name}:${route.path}`;
+    if (!(await consumeRateLimit(key, rate.spec))) return finish(rateLimitedResponse(rate.spec.windowSeconds));
 
     try {
       if (await activeReadOnlyOversightSession(actorCtx, req)) {
-        return oversightReadOnlyResponse();
+        return finish(oversightReadOnlyResponse());
       }
     } catch (e) {
-      return internalErrorResponse(e);
+      return finish(internalErrorResponse(e));
     }
 
     let ctx = actorCtx;
     try {
       ctx = await oversightTargetContext(actorCtx, req);
     } catch (e) {
-      return internalErrorResponse(e);
+      return finish(internalErrorResponse(e));
     }
 
     if (route.guard.kind === "roles" && !hasAnyRole(ctx, route.guard.roles)) {
-      return forbiddenResponse();
+      return finish(forbiddenResponse());
     }
     if (route.guard.kind === "assignedRoles" && !hasAnyAssignedRole(ctx, route.guard.roles)) {
-      return forbiddenResponse();
+      return finish(forbiddenResponse());
     }
     if (route.guard.kind === "permissions" && !hasAnyPermission(ctx, route.guard.permissions)) {
-      return forbiddenResponse();
+      return finish(forbiddenResponse());
     }
     if (route.guard.kind === "rolesOrPermissions"
       && !hasAnyRole(ctx, route.guard.roles)
       && !hasAnyPermission(ctx, route.guard.permissions)) {
-      return forbiddenResponse();
+      return finish(forbiddenResponse());
     }
 
-    return safeRun(route.handler, ctx, req, body, params);
+    return finish(await safeRun(route.handler, ctx, req, body, params));
   };
+}
+
+function rateLimitedResponse(windowSeconds: number): Response {
+  const headers = corsHeaders();
+  headers.set("Retry-After", String(windowSeconds));
+  return jsonResponse(
+    fail("Too many requests. Please retry later.", "RATE_LIMITED"),
+    429,
+    headers,
+  );
 }
 
 async function safeRun(

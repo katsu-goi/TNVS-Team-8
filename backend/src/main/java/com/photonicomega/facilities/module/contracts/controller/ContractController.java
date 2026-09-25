@@ -1,6 +1,5 @@
 package com.photonicomega.facilities.module.contracts.controller;
 
-import com.photonicomega.facilities.ai.ContractAnalyticsAiService;
 import com.photonicomega.facilities.common.dto.ApiResponse;
 import com.photonicomega.facilities.module.contracts.domain.Contract;
 import com.photonicomega.facilities.module.contracts.domain.ContractStatus;
@@ -16,7 +15,6 @@ import org.springframework.web.bind.annotation.*;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 @RestController
 @RequestMapping("/v1/contracts")
@@ -26,8 +24,6 @@ import java.util.UUID;
 public class ContractController {
 
     private final ContractRepository contractRepository;
-    private final ContractAnalyticsAiService contractAiService;
-
     @GetMapping
     @Operation(summary = "Get all contracts")
     // Contract.associatedDocument is LAZY OneToOne and open-in-view is disabled,
@@ -58,26 +54,13 @@ public class ContractController {
     }
 
     @PostMapping
-    @Operation(summary = "Create contract with automatic AI clause extraction & risk assessment")
+    @Operation(summary = "Create a draft contract; source-document AI analysis is handled by the Contract AI Edge workflow")
     public ResponseEntity<ApiResponse<Contract>> createContract(@RequestBody Contract contract) {
         if (contract.getStatus() == null) {
-            contract.setStatus(ContractStatus.ACTIVE);
+            contract.setStatus(ContractStatus.DRAFT);
         }
-
-        // Perform AI contract risk assessment
-        var aiResult = contractAiService.analyzeContract(contract.getTitle());
-        contract.setAiAssessedRiskLevel(aiResult.getOverallRisk());
-        contract.setAiRiskSummary(aiResult.getSummary());
-
-        return ResponseEntity.ok(ApiResponse.success(contractRepository.save(contract), "Contract created & analyzed by AI"));
-    }
-
-    @GetMapping("/{id}/analyze")
-    @Operation(summary = "Run AI contract risk analysis on demand")
-    public ResponseEntity<ApiResponse<ContractAnalyticsAiService.ContractAnalysisResponse>> analyzeContract(@PathVariable UUID id) {
-        return contractRepository.findById(id).map(c -> {
-            var analysis = contractAiService.analyzeContract(c.getTitle());
-            return ResponseEntity.ok(ApiResponse.success(analysis, "AI Contract analysis complete"));
-        }).orElse(ResponseEntity.notFound().build());
+        contract.setAiAssessedRiskLevel(null);
+        contract.setAiRiskSummary(null);
+        return ResponseEntity.ok(ApiResponse.success(contractRepository.save(contract), "Draft contract created"));
     }
 }

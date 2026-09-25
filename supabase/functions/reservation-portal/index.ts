@@ -27,6 +27,18 @@ function team8Only(ctx: AuthContext | null): Response | null {
   );
 }
 
+function canOperateReservations(ctx: AuthContext): boolean {
+  return ctx.user.assignedRoles.some((role) =>
+    role === "FACILITIES_OFFICER" || role === "FACILITIES_MANAGER"
+  );
+}
+
+function maskEmail(email: string): string {
+  const [local = "", domain = ""] = email.split("@");
+  if (!domain) return "hidden";
+  return `${local.slice(0, 1)}***@${domain}`;
+}
+
 function badRequest(message: string, code = "INVALID_REQUEST") {
   return jsonResponse(fail(message, code), 400);
 }
@@ -173,8 +185,8 @@ async function handleReservations(ctx: AuthContext | null, req: Request) {
     .from("facility_reservations")
     .select("id, facility_id, host_user_id, title, start_time, end_time, notes, status, created_at")
     .neq("status", "CANCELLED")
-    .order("start_time");
-  if (url.searchParams.get("mine") === "true") query = query.eq("host_user_id", ctx!.userId);
+    .order("start_time").limit(500);
+  if (!canOperateReservations(ctx!) || url.searchParams.get("mine") === "true" || url.pathname.endsWith("/reservations/mine")) query = query.eq("host_user_id", ctx!.userId);
   if (date) {
     query = query.gte("start_time", `${date}T00:00:00.000Z`).lt("start_time", `${date}T23:59:59.999Z`);
   } else {
@@ -227,6 +239,8 @@ async function handleReservationDetails(ctx: AuthContext | null, _req: Request, 
     .maybeSingle();
   if (reservationError) throw new Error(`reservation details lookup failed: ${reservationError.message}`);
   if (!reservation) return notFound("Reservation not found.");
+
+  if (reservation.host_user_id !== ctx!.userId && !canOperateReservations(ctx!)) return notFound("Reservation not found.");
 
   const [{ data: facility, error: facilityError }, { data: invitees, error: inviteesError }] = await Promise.all([
     db.from("facilities").select("id, name, facility_name, code, capacity").eq("id", reservation.facility_id).maybeSingle(),
@@ -339,7 +353,7 @@ async function handleVerifyPass(req: Request) {
   const facility = Array.isArray(reservation.facilities) ? reservation.facilities[0] : reservation.facilities;
   return jsonResponse(ok({
     inviteeId: invitee.id,
-    inviteeEmail: invitee.email,
+    inviteeEmail: maskEmail(invitee.email),
     checkedIn: invitee.check_in_status,
     reservationId: reservation.id,
     title: reservation.title,
@@ -376,7 +390,7 @@ async function handleGuestPass(_ctx: AuthContext | null, _req: Request, _body: u
 
   return jsonResponse(ok({
     inviteeId: invitee.id,
-    inviteeEmail: invitee.email,
+    inviteeEmail: maskEmail(invitee.email),
     checkedIn: invitee.check_in_status,
     checkedInAt: invitee.checked_in_at,
     reservationId: reservation.id,
@@ -433,7 +447,7 @@ async function handleCheckInPass(ctx: AuthContext | null, req: Request) {
 
   return jsonResponse(ok({
     inviteeId: checkedIn.id,
-    inviteeEmail: checkedIn.email,
+    inviteeEmail: maskEmail(checkedIn.email),
     checkedIn: checkedIn.check_in_status,
     checkedInAt: checkedIn.checked_in_at,
     reservationId: reservation.id,
@@ -471,7 +485,7 @@ async function handleCheckOutPass(ctx: AuthContext | null, req: Request) {
   });
   if (auditError) console.error(`reservation QR check-out audit failed: ${auditError.message}`);
   return jsonResponse(ok({
-    inviteeId: updated.id, inviteeEmail: updated.email, checkedIn: false, checkedOutAt,
+    inviteeId: updated.id, inviteeEmail: maskEmail(updated.email), checkedIn: false, checkedOutAt,
     reservationId: reservation.id, title: reservation.title, startTime: reservation.start_time,
     endTime: reservation.end_time, status: reservation.status,
     facilityName: facility?.facility_name ?? facility?.name ?? "Meeting space",
@@ -628,8 +642,8 @@ const routes = [
   { method: "POST", path: "/reservations/:id/cancel", guard: { kind: "auth" }, handler: (ctx: AuthContext | null, req: Request, body: unknown, params: Record<string, string>) => handleCancelReservation(ctx, req, body, params) },
   { method: "GET", path: "/guest-pass/:token", guard: { kind: "public" }, handler: handleGuestPass },
   { method: "GET", path: "/passes", guard: { kind: "public" }, handler: (_ctx: AuthContext | null, req: Request) => handleVerifyPass(req) },
-  { method: "POST", path: "/passes/check-in", guard: { kind: "roles", roles: ["FACILITIES_OFFICER", "FACILITIES_MANAGER", "SUPER_ADMIN"] }, handler: (ctx: AuthContext | null, req: Request) => handleCheckInPass(ctx, req) },
-  { method: "POST", path: "/passes/check-out", guard: { kind: "roles", roles: ["FACILITIES_OFFICER", "FACILITIES_MANAGER", "SUPER_ADMIN"] }, handler: (ctx: AuthContext | null, req: Request) => handleCheckOutPass(ctx, req) },
+  { method: "POST", path: "/passes/check-in", guard: { kind: "roles", roles: ["FACILITIES_OFFICER", "FACILITIES_MANAGER"] }, handler: (ctx: AuthContext | null, req: Request) => handleCheckInPass(ctx, req) },
+  { method: "POST", path: "/passes/check-out", guard: { kind: "roles", roles: ["FACILITIES_OFFICER", "FACILITIES_MANAGER"] }, handler: (ctx: AuthContext | null, req: Request) => handleCheckOutPass(ctx, req) },
 ] as const;
 
 Deno.serve(createHandler(routes as never, { name: "reservation-portal" }));

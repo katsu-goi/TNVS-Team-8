@@ -5,6 +5,7 @@ import { adminDb } from "../_shared/db.ts";
 import {
   DocumentExtractionError,
   extractDocumentContent,
+  validateDocumentUpload,
   MAX_EXTRACTABLE_FILE_BYTES,
   SUPPORTED_DOCUMENT_EXTENSIONS,
 } from "../_shared/document-content.ts";
@@ -49,7 +50,9 @@ async function handleSuggestTitle(_ctx: AuthContext | null, req: Request) {
   }
 
   try {
-    const extraction = await extractDocumentContent(extension, new Uint8Array(await file.arrayBuffer()));
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    validateDocumentUpload(extension, file.type, bytes);
+    const extraction = await extractDocumentContent(extension, bytes);
     const { result: analysis } = await classifyDocumentContent(db, extraction.text, extraction.method);
     return jsonResponse(ok({
       suggestedTitle: buildSuggestedTitle(analysis),

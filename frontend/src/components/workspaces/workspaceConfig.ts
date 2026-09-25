@@ -1,8 +1,8 @@
 import {
-  Activity, Archive, BadgeCheck, BarChart3, Building2, Camera, ClipboardCheck,
+  Activity, Archive, BadgeCheck, BarChart3, Bell, Building2, Camera, ClipboardCheck,
   Database, FileCheck2, FileSearch, FileText, Fingerprint, Gavel, HardDrive,
   KeyRound, LayoutDashboard, LockKeyhole, Scale, Settings,
-  ShieldAlert, ShieldCheck, Siren, Trash2, UserCheck, UsersRound,
+  ScrollText, ShieldAlert, ShieldCheck, Siren, Trash2, UserCheck, UsersRound,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -99,7 +99,6 @@ export const workspaceConfigs: WorkspaceConfig[] = [
       { section: 'supervision', label: 'Compliance Supervision', icon: UsersRound },
       { section: 'activity', label: 'Team Activity', icon: Activity },
       { section: 'reports', label: 'Operational Reports', icon: BarChart3 },
-      { section: 'settings', label: 'Department Settings', icon: Settings },
     ],
   },
   {
@@ -130,7 +129,6 @@ export const workspaceConfigs: WorkspaceConfig[] = [
       { section: 'cyber-incidents', label: 'Cyber Incidents', icon: Siren },
       { section: 'vulnerabilities', label: 'Vulnerability Management', icon: LockKeyhole },
       { section: 'access-reviews', label: 'Access Reviews', icon: KeyRound },
-      { section: 'settings', label: 'InfoSec Settings', icon: Settings },
     ],
   },
   {
@@ -141,11 +139,12 @@ export const workspaceConfigs: WorkspaceConfig[] = [
     description: 'Records Retention & Compliance Monitoring',
     nav: [
       { section: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { section: 'franchise', label: 'Franchise & Regulatory Tracker', icon: Gavel },
-      { section: 'permits', label: 'Facility Permitting Matrix', icon: Building2 },
-      { section: 'contracts', label: 'Corporate Contracts & SLAs', icon: FileText },
-      { section: 'incidents', label: 'Incident & Risk Management', icon: Siren },
-      { section: 'settings', label: 'Profile & System Settings', icon: Settings },
+      { section: 'documents', label: 'Retention Records', icon: FileText },
+      { section: 'retention', label: 'Retention Policies', icon: Archive },
+      { section: 'alerts', label: 'Compliance Alerts', icon: Bell },
+      { section: 'disposal', label: 'Disposal Review', icon: Trash2 },
+      { section: 'contracts', label: 'Contract Deadlines', icon: Gavel },
+      { section: 'audit', label: 'Audit Logs', icon: ScrollText },
     ],
   },
 ];

@@ -14,7 +14,7 @@ The Edge Function uses the service-role client server-side, validates the caller
 
 ## Database objects
 
-Migration `20260907000100_team8_reservation_portal.sql` adds the portal metadata columns to the existing `facilities` table and creates:
+Migration `20260907000101_team8_reservation_portal.sql` adds the portal metadata columns to the existing `facilities` table and creates:
 
 - `facility_reservations` for confirmed or pending bookings
 - `reservation_invitees` for invitee identity and SHA-256 QR token hashes

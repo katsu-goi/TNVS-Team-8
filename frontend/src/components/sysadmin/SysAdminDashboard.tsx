@@ -1,31 +1,31 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Database, Activity, Users, Shield,
+  Activity, Users, Shield,
   RefreshCw, AlertCircle, Cpu,
-  Download, Bell, Layers, Loader2,
+  Download, Bell, Ban,
 } from 'lucide-react';
-import { supabaseMonitoringService } from '../../api/supabaseMonitoringService';
-import { kpiService } from '../../api/kpiService';
+import { fetchAnalytics } from '../../api/analyticsService';
 import { securityService } from '../../api/securityService';
-import { loadBackups, loadNotifications } from '../../api/adminService';
+import { loadBackups } from '../../api/adminService';
+import { notificationService, type AppNotification } from '../../api/notificationService';
 import { isActorSuperAdmin, useAuthStore } from '../../stores/authStore';
 import { OversightPanel } from '../oversight';
 import { useLiveActivities } from './useLiveActivities';
 import { SubsystemHealthGrid } from './SubsystemHealthGrid';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
-import type { DashboardMetrics, SecurityLog, AdminNotification, BackupRecord, SystemKpi } from '../../types';
+import type { DashboardMetrics, SecurityLog, BackupRecord } from '../../types';
 import { DashboardHero, DashboardMetricCard } from '../ui/DashboardPrimitives';
+import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 
 export const SysAdminDashboard: React.FC = () => {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const superAdministrator = isActorSuperAdmin(user);
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
-  const [kpi, setKpi] = useState<SystemKpi | null>(null);
   const [logs, setLogs] = useState<SecurityLog[]>([]);
   const [backups, setBackups] = useState<BackupRecord[]>([]);
-  const [notifications, setNotifications] = useState<AdminNotification[]>([]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
@@ -36,30 +36,29 @@ export const SysAdminDashboard: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [telemetry, k, l, b, n] = await Promise.all([
-        supabaseMonitoringService.getLiveDashboardCounts(),
-        kpiService.loadKpi(),
+      const [analytics, l, b, n] = await Promise.all([
+        fetchAnalytics({ preset: 'today' }),
         superAdministrator ? securityService.getLogs() : Promise.resolve([]),
         superAdministrator ? Promise.resolve([]) : loadBackups(),
-        superAdministrator ? Promise.resolve([]) : loadNotifications(),
+        notificationService.getNotifications(),
       ]);
+      if (!analytics.operational) throw new Error('Operational analytics are unavailable for this role');
       const m: DashboardMetrics = {
-        totalDocuments: telemetry.data.totalDocuments,
-        totalContracts: telemetry.data.totalContracts,
-        activeSessions: telemetry.data.activeSessionsCount,
-        failedLoginAttempts: telemetry.data.failedLoginAttemptsCount,
-        blockedIpsCount: telemetry.data.blockedIpsCount,
-        activeAlertsCount: telemetry.data.activeAlertsCount,
+        totalDocuments: 0,
+        totalContracts: 0,
+        activeSessions: analytics.operational.activeSessions,
+        failedLoginAttempts: analytics.operational.failedEvents,
+        blockedIpsCount: analytics.operational.blockedIps,
+        activeAlertsCount: analytics.operational.activeSecurityAlerts,
         totalBackups: b.length,
         totalNotifications: n.length,
       };
       setMetrics(m);
-      setKpi(k);
       setLogs(l);
       setBackups(b);
       setNotifications(n);
     } catch (err: any) {
-      console.warn('Backend connection issue:', err);
+      console.warn('Dashboard backend request failed; response details were withheld.');
       setError(err?.message || 'Failed to load system data');
     } finally {
       setLoading(false);
@@ -69,17 +68,7 @@ export const SysAdminDashboard: React.FC = () => {
   useEffect(() => { loadData(); }, [loadData]);
 
   if (loading && !metrics) {
-    return (
-      <div className="space-y-6">
-        <div className="glass-panel p-5 flex items-center space-x-3">
-          <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
-          <p className="text-sm text-slate-500">Loading system data from database...</p>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          {Array.from({ length: 8 }).map((_, i) => <div key={i} className="card-stat p-5 animate-pulse"><div className="h-3 w-20 bg-slate-200 rounded mb-3" /><div className="h-7 w-12 bg-slate-200 rounded" /></div>)}
-        </div>
-      </div>
-    );
+    return <PortalLoadingOverlay message="Loading system dashboard..." />;
   }
 
   if (error && !metrics) {
@@ -102,27 +91,30 @@ export const SysAdminDashboard: React.FC = () => {
   const lastBackupTime = latestBackup?.completedAt
     ? new Date(latestBackup.completedAt).toLocaleDateString()
     : 'No backups';
-  const backupStatus = latestBackup?.status || 'NONE';
+  const backupStatus = latestBackup?.status === 'COMPLETED'
+    ? latestBackup.verificationState ?? 'NOT_VERIFIED'
+    : latestBackup?.status ?? 'NONE';
+  const backupVerified = backupStatus === 'INTEGRITY_VERIFIED' || backupStatus === 'RESTORE_VERIFIED';
   const dashboardTitle = superAdministrator ? 'Super Administrator' : 'System Administrator';
   const dashboardSubtitle = superAdministrator
     ? 'Business Governance, RBAC & Security Oversight'
     : 'Infrastructure, Integration & Platform Monitoring';
   const dashboardCards = superAdministrator
     ? [
-        { label: 'Managed Documents', value: metrics.totalDocuments, icon: Database, color: 'text-blue-500', sub: 'Live document records', path: '/admin/analytics' },
-        { label: 'Managed Contracts', value: metrics.totalContracts, icon: Layers, color: 'text-indigo-500', sub: 'Live contract records', path: '/admin/analytics' },
         { label: 'Active Users', value: onlineCount, icon: Users, color: onlineCount > 0 ? 'text-emerald-600' : 'text-slate-400', sub: `${onlineCount} users online · Peak today: ${peakToday}`, path: '/security', pulse: true },
         { label: 'Active Sessions', value: metrics.activeSessions, icon: Activity, color: 'text-emerald-600', sub: 'Authenticated sessions', path: '/security/audit-logs' },
         { label: 'Security Alerts', value: metrics.activeAlertsCount, icon: Shield, color: metrics.activeAlertsCount > 0 ? 'text-rose-500' : 'text-emerald-600', sub: 'Open security alerts', path: '/security' },
         { label: 'Failed Logins', value: metrics.failedLoginAttempts, icon: Shield, color: metrics.failedLoginAttempts > 0 ? 'text-amber-500' : 'text-emerald-600', sub: 'Failed authentication attempts', path: '/security' },
+        { label: 'Blocked IPs', value: metrics.blockedIpsCount, icon: Ban, color: metrics.blockedIpsCount > 0 ? 'text-amber-500' : 'text-emerald-600', sub: 'Active network blocks', path: '/security' },
+        { label: 'Notifications', value: unreadNotifs, icon: Bell, color: unreadNotifs > 0 ? 'text-rose-500' : 'text-slate-400', sub: `${notifications.length} recipient-scoped`, path: '/admin/notifications' },
       ]
     : [
-        { label: 'Connected Subsystems', value: kpi ? `${[kpi.facilities.totalFacilities, kpi.visitors.totalVisitors, kpi.documents.totalDocuments, kpi.legal.totalCases, kpi.contracts.totalContracts].filter(v => v > 0).length}` : '0', icon: Layers, color: 'text-blue-500', sub: 'Modules with data', path: '/admin/integrations' },
         { label: 'Active Users', value: onlineCount, icon: Users, color: onlineCount > 0 ? 'text-emerald-600' : 'text-slate-400', sub: `${onlineCount} users online · Peak today: ${peakToday}`, path: '/admin/sessions', pulse: true },
-        { label: 'AI Services', value: `${metrics.totalDocuments} docs`, icon: Cpu, color: metrics.totalDocuments > 0 ? 'text-emerald-600' : 'text-slate-400', sub: `${metrics.totalContracts} contracts`, path: '/admin/ai-services' },
-        { label: 'Backup Status', value: backupStatus, icon: Download, color: backupStatus === 'COMPLETED' ? 'text-emerald-600' : 'text-amber-500', sub: `Last: ${lastBackupTime}`, path: '/admin/backup' },
+        { label: 'Active Sessions', value: metrics.activeSessions, icon: Cpu, color: metrics.activeSessions > 0 ? 'text-emerald-600' : 'text-slate-400', sub: 'Authenticated platform sessions', path: '/admin/sessions' },
+        { label: 'Backup Status', value: backupStatus, icon: Download, color: backupVerified ? 'text-emerald-600' : 'text-amber-500', sub: `Last: ${lastBackupTime}`, path: '/admin/backup' },
         { label: 'Security Alerts', value: metrics.activeAlertsCount, icon: Shield, color: metrics.activeAlertsCount > 0 ? 'text-rose-500' : 'text-emerald-600', sub: 'Open security alerts', path: '/admin/system-health' },
         { label: 'Failed Logins', value: metrics.failedLoginAttempts, icon: Shield, color: metrics.failedLoginAttempts > 0 ? 'text-amber-500' : 'text-emerald-600', sub: 'Failed authentication attempts', path: '/admin/account-lockouts' },
+        { label: 'Blocked IPs', value: metrics.blockedIpsCount, icon: Ban, color: metrics.blockedIpsCount > 0 ? 'text-amber-500' : 'text-emerald-600', sub: 'Active network blocks', path: '/admin/system-health' },
         { label: 'Notifications', value: unreadNotifs, icon: Bell, color: unreadNotifs > 0 ? 'text-rose-500' : 'text-slate-400', sub: `${notifications.length} total`, path: '/admin/notifications' },
       ];
 
@@ -225,47 +217,6 @@ export const SysAdminDashboard: React.FC = () => {
 
       {/* SUBSYSTEM HEALTH & AVAILABILITY MONITORING 2x2 GRID */}
       <SubsystemHealthGrid />
-
-      {superAdministrator && <div className="glass-panel p-5">
-        <div className="flex items-center space-x-3 mb-5">
-          <div className="p-2 rounded-xl bg-emerald-50 border border-emerald-200"><Database className="w-5 h-5 text-emerald-600" /></div>
-          <div><h2 className="text-lg font-bold text-slate-900">Database Summary</h2><p className="text-xs text-slate-500">Live record counts from primary database</p></div>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="text-xs text-slate-500">Documents</p>
-            <p className="text-lg font-bold text-slate-900 mt-1">{metrics.totalDocuments}</p>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="text-xs text-slate-500">Contracts</p>
-            <p className="text-lg font-bold text-slate-900 mt-1">{metrics.totalContracts}</p>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="text-xs text-slate-500">Active Sessions</p>
-            <p className="text-lg font-bold text-slate-900 mt-1">{metrics.activeSessions}</p>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="text-xs text-slate-500">Active Users</p>
-            <p className="text-lg font-bold text-slate-900 mt-1">{kpi?.global.activeUsers ?? 0}</p>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="text-xs text-slate-500">Blocked IPs</p>
-            <p className="text-lg font-bold text-slate-900 mt-1">{metrics.blockedIpsCount}</p>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="text-xs text-slate-500">Reservations Today</p>
-            <p className="text-lg font-bold text-slate-900 mt-1">{kpi?.facilities.bookingsToday ?? 0}</p>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="text-xs text-slate-500">Visitors On-Site</p>
-            <p className="text-lg font-bold text-slate-900 mt-1">{kpi?.visitors.onSite ?? 0}</p>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="text-xs text-slate-500">Legal Cases</p>
-            <p className="text-lg font-bold text-slate-900 mt-1">{kpi?.legal.totalCases ?? 0}</p>
-          </div>
-        </div>
-      </div>}
 
       <div className="glass-panel p-3 flex items-center justify-between text-xs text-slate-400">
         <span className="flex items-center space-x-2">

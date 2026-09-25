@@ -2,8 +2,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Bell, Check, CheckCheck, Trash2, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { notificationService, AppNotification } from '../../api/notificationService';
-import { isSuperAdmin, useAuthStore } from '../../stores/authStore';
+import { getAssignedRoles, useAuthStore } from '../../stores/authStore';
 import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
+import { getNotificationDestination } from '../../config/roleRegistry';
+import { extractErrorMessage } from '../../api/client';
 
 /** Colored dot by notification type — mirrors the employee Notifications page. */
 const dotColor = (type?: string) => {
@@ -46,6 +48,9 @@ const POLL_MS = 30000;
 const byDateDesc = (a: AppNotification, b: AppNotification) =>
   new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
 
+const authorizedNotificationPath = (notification: AppNotification, roles: string[]) =>
+  getNotificationDestination(roles, notification.relatedEntityType);
+
 /**
  * Role-agnostic notification bell for the header of every portal layout.
  *
@@ -56,44 +61,45 @@ const byDateDesc = (a: AppNotification, b: AppNotification) =>
  *
  * Realtime: subscribes to sanitized Supabase change markers and then
  * {@link useNotificationRealtimeStore}, so new notifications appear instantly
- * without a page refresh. SUPER_ADMINs also see their per-admin notifications
- * from `/v1/admin/notifications` merged into the same list.
+ * without a page refresh. The durable recipient-scoped feed is the only source.
  */
 export const NotificationBell: React.FC<{ className?: string }> = ({ className = '' }) => {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
-  const isAdmin = isSuperAdmin(user);
+  const roles = getAssignedRoles(user);
 
   const [open, setOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [rows, setRows] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState('');
   const wrapRef = useRef<HTMLDivElement>(null);
 
   const realtime = useNotificationRealtimeStore();
 
   const refreshCount = useCallback(async () => {
     try {
-      const userCount = await notificationService.getUnreadCount();
-      const adminCount = isAdmin ? await notificationService.getAdminUnreadCount() : 0;
-      setUnread(userCount + adminCount);
+      setUnread(await notificationService.getUnreadCount());
     } catch { /* silent — badge is best-effort */ }
-  }, [isAdmin]);
+  }, []);
 
   const loadList = useCallback(async () => {
     setLoading(true);
     try {
-      const [userRows, adminRows] = await Promise.all([
-        notificationService.getNotifications(),
-        isAdmin ? notificationService.getAdminNotifications() : Promise.resolve([]),
-      ]);
-      const merged = [...adminRows, ...userRows].sort(byDateDesc);
-      setRows(merged);
-      setUnread(merged.filter(n => !n.read).length);
-    } catch { /* keep prior rows */ }
+      const userRows = (await notificationService.getNotifications()).sort(byDateDesc);
+      setRows(userRows);
+      setUnread(userRows.filter(n => !n.read).length);
+    } catch (reason) { setFeedback(`Notifications could not be loaded: ${extractErrorMessage(reason)}`); }
     finally { setLoading(false); }
-  }, [isAdmin]);
+  }, []);
+
+  useEffect(() => {
+    setRows([]);
+    setUnread(0);
+    setOpen(false);
+    if (user?.id) void refreshCount();
+  }, [user?.id, refreshCount]);
 
   // Open a realtime connection for the whole time the bell is mounted.
   useEffect(() => {
@@ -138,40 +144,38 @@ export const NotificationBell: React.FC<{ className?: string }> = ({ className =
   const markRead = async (n: AppNotification) => {
     if (n.read) return;
     setBusy(n.id);
+    setFeedback('');
     try {
       await notificationService.markNotificationRead(n.id);
       setRows(rs => rs.map(r => (r.id === n.id ? { ...r, read: true } : r)));
       setUnread(u => Math.max(0, u - 1));
-    } catch { /* ignore */ } finally { setBusy(null); }
+    } catch (reason) { setFeedback(`Could not mark the notification as read: ${extractErrorMessage(reason)}`); } finally { setBusy(null); }
   };
 
   const dismiss = async (n: AppNotification) => {
     setBusy(n.id);
+    setFeedback('');
     try {
       await notificationService.dismissNotification(n.id);
       setRows(rs => rs.filter(r => r.id !== n.id));
       if (!n.read) setUnread(u => Math.max(0, u - 1));
-    } catch { /* ignore */ } finally { setBusy(null); }
+    } catch (reason) { setFeedback(`Could not dismiss the notification: ${extractErrorMessage(reason)}`); } finally { setBusy(null); }
   };
 
   const markAll = async () => {
     setBusy('all');
+    setFeedback('');
     try {
       await notificationService.markAllNotificationsRead();
-      if (isAdmin) {
-        for (const r of rows) {
-          if (r.severity) await notificationService.markAdminNotificationRead(r.id);
-        }
-      }
       setRows(rs => rs.map(r => ({ ...r, read: true })));
       setUnread(0);
-    } catch { /* ignore */ } finally { setBusy(null); }
+    } catch (reason) { setFeedback(`Could not mark notifications as read: ${extractErrorMessage(reason)}`); } finally { setBusy(null); }
   };
 
   const openNotification = (n: AppNotification) => {
     if (!n.read) markRead(n);
-    if (n.relatedEntityType === 'EmployeeRequest') navigate('/employee/requests');
-    else if (n.relatedEntityType === 'Visitor') navigate('/employee/visitors');
+    const path = authorizedNotificationPath(n, roles);
+    if (path) navigate(path);
   };
 
   const badge = unread > 99 ? '99+' : String(unread);
@@ -184,7 +188,7 @@ export const NotificationBell: React.FC<{ className?: string }> = ({ className =
         aria-label={`Notifications${unread ? ` (${unread} unread)` : ''}`}
         aria-haspopup="true"
         aria-expanded={open}
-        className="relative p-2 rounded-xl text-slate-500 hover:text-[#B5121B] hover:bg-[#FDF0F1] transition-colors focus:outline-none focus:ring-2 focus:ring-[#B5121B]/20"
+        className="relative rounded-xl p-2 text-slate-500 transition-colors hover:bg-brand-50 hover:text-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
       >
         <Bell className="w-5 h-5" />
         {unread > 0 && (
@@ -195,7 +199,7 @@ export const NotificationBell: React.FC<{ className?: string }> = ({ className =
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-80 sm:w-96 max-h-[70vh] flex flex-col bg-white rounded-2xl shadow-xl border border-slate-200 z-50 overflow-hidden">
+        <div className="absolute right-0 mt-2 flex max-h-[70vh] w-80 max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-modal border border-slate-200 bg-white shadow-xl sm:w-96">
           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 shrink-0">
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-bold text-slate-900">Notifications</h3>
@@ -218,6 +222,8 @@ export const NotificationBell: React.FC<{ className?: string }> = ({ className =
             )}
           </div>
 
+          {feedback && <div role="alert" className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-xs text-rose-700">{feedback}</div>}
+
           <div className="overflow-y-auto flex-1">
             {loading && rows.length === 0 ? (
               <div className="flex items-center justify-center py-10 text-slate-400">
@@ -234,7 +240,7 @@ export const NotificationBell: React.FC<{ className?: string }> = ({ className =
             ) : (
               <ul className="divide-y divide-slate-50">
                 {rows.map(n => {
-                  const clickable = n.relatedEntityType === 'EmployeeRequest' || n.relatedEntityType === 'Visitor';
+                  const clickable = authorizedNotificationPath(n, roles) !== null;
                   return (
                     <li
                       key={n.id}

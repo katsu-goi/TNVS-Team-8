@@ -88,7 +88,10 @@ export default {
         }
       },
       borderRadius: {
+        'control': '0.75rem',
         'card': '1rem',
+        'modal': '1.25rem',
+        'container': '1.5rem',
       },
       boxShadow: {
         glass: '0 8px 32px rgba(0, 0, 0, 0.1)',
@@ -99,6 +102,8 @@ export default {
         heavy: '0 12px 40px rgba(0, 0, 0, 0.15)',
         'card-light': '0 1px 2px rgba(0, 0, 0, 0.05)',
         'card-light-hover': '0 4px 6px rgba(0, 0, 0, 0.07)',
+        modal: '0 24px 60px rgba(70, 10, 16, 0.22)',
+        brand: '0 8px 24px rgba(101, 24, 30, 0.10)',
       },
       backgroundImage: {
         'gradient-page': 'linear-gradient(to bottom right, #F8FAFC, #FFFFFF)',

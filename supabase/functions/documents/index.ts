@@ -8,6 +8,7 @@ import { resolveClientIp } from "../_shared/ip.ts";
 import {
   DocumentExtractionError,
   extractDocumentContent,
+  validateDocumentUpload,
   MAX_EXTRACTABLE_FILE_BYTES,
   SUPPORTED_DOCUMENT_EXTENSIONS,
 } from "../_shared/document-content.ts";
@@ -82,6 +83,12 @@ function extensionOf(fileName: string | null): string {
   const dot = fileName.lastIndexOf(".");
   if (dot < 0 || dot === fileName.length - 1) return "";
   return fileName.slice(dot + 1).toLowerCase();
+}
+
+function isSupportedDocumentExtension(
+  extension: string,
+): extension is (typeof SUPPORTED_DOCUMENT_EXTENSIONS)[number] {
+  return SUPPORTED_DOCUMENT_EXTENSIONS.some((candidate) => candidate === extension);
 }
 
 function resolveTitle(title: string | null, originalFilename: string | null): string {
@@ -264,13 +271,20 @@ function toDocumentDto(d: Record<string, unknown>): Record<string, unknown> {
     classificationReviewedBy: str(d.classification_reviewed_by),
     classificationReviewedAt: str(d.classification_reviewed_at),
     classificationReviewNotes: str(d.classification_review_notes),
+    retentionPolicyId: str(d.retention_policy_id),
+    retentionPolicyVersion: num(d.retention_policy_version),
+    retentionAssignedAt: str(d.retention_assigned_at),
+    retentionAssignmentSource: str(d.retention_assignment_source),
+    retentionCalculationBasis: str(d.retention_calculation_basis),
+    retentionTriggerAt: str(d.retention_trigger_at),
+    retentionExpiresAt: str(d.retention_expires_at),
+    retentionStatus: str(d.retention_status),
+    physicalDispositionStatus: str(d.physical_disposition_status),
     tags: ((d.tags ?? []) as unknown[]).map((t: unknown) => {
       const tag = t as Record<string, unknown>;
       return { id: str(tag.id), name: str(tag.name) };
     }),
     versionNumber: num(d.version_number),
-    retentionPolicyId: str(d.retention_policy_id),
-    retentionExpiresAt: naiveStr(d.retention_expires_at),
   };
 }
 
@@ -318,10 +332,23 @@ async function loadTagsForDocs(docIds: string[]): Promise<Map<string, Array<Reco
 }
 
 async function loadDocumentRow(id: string): Promise<Record<string, unknown> | null> {
-  const { data, error } = await db.from("documents").select("*, categories(name), folders(name, path)")
-    .eq("id", id).maybeSingle();
+  const { data, error } = await db.from("documents").select("*").eq("id", id).maybeSingle();
   if (error) throw new Error(`document query failed: ${error.message}`);
-  return (data as unknown as Record<string, unknown>) ?? null;
+  if (!data) return null;
+  const row = data as unknown as Record<string, unknown>;
+  const categoryId = str(row.category_id);
+  const folderId = str(row.folder_id);
+  const [categoryResult, folderResult] = await Promise.all([
+    categoryId
+      ? db.from("categories").select("id, name, description").eq("id", categoryId).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    folderId
+      ? db.from("folders").select("id, name, path").eq("id", folderId).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+  if (categoryResult.error) throw new Error(`document category query failed: ${categoryResult.error.message}`);
+  if (folderResult.error) throw new Error(`document folder query failed: ${folderResult.error.message}`);
+  return { ...row, categories: categoryResult.data, folders: folderResult.data };
 }
 
 // ---------------------------------------------------------------------------
@@ -329,7 +356,10 @@ async function loadDocumentRow(id: string): Promise<Record<string, unknown> | nu
 // ---------------------------------------------------------------------------
 
 async function handleListDocuments(ctx: AuthContext | null) {
-  const { data, error } = await db.from("documents").select("*, categories(name), folders(name, path)");
+  const { data, error } = await db.from("documents")
+    .select("*, categories(name), folders(name, path)")
+    .order("created_at", { ascending: false })
+    .limit(500);
   if (error) throw new Error(`documents query failed: ${error.message}`);
   const rows = (data as unknown as Record<string, unknown>[]) ?? [];
   const ids = rows.map((r) => String(r.id ?? ""));
@@ -352,7 +382,9 @@ async function handleSearchDocuments(ctx: AuthContext | null, req: Request) {
     );
   }
   const { data, error } = await db.from("documents").select("*, categories(name), folders(name, path)")
-    .or(`title.ilike.%${query}%,ocr_extracted_text.ilike.%${query}%,ai_summary.ilike.%${query}%`);
+    .or(`title.ilike.%${query}%,ocr_extracted_text.ilike.%${query}%,ai_summary.ilike.%${query}%`)
+    .order("created_at", { ascending: false })
+    .limit(200);
   if (error) throw new Error(`documents search failed: ${error.message}`);
   const rows = (data as unknown as Record<string, unknown>[]) ?? [];
   const ids = rows.map((r) => String(r.id ?? ""));
@@ -469,7 +501,7 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
     const extension = extensionOf(file.name);
     if (extension === "") {
       errors.push(`The file has no extension. Allowed types: ${ALLOWED_EXTENSIONS.join(", ")}.`);
-    } else if (!ALLOWED_EXTENSIONS.includes(extension)) {
+    } else if (!isSupportedDocumentExtension(extension)) {
       errors.push(`File type '.${extension}' is not allowed. Allowed types: ${ALLOWED_EXTENSIONS.join(", ")}.`);
     }
   }
@@ -487,9 +519,18 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
   const extension = extensionOf(uploadFile.name);
   const storedName = crypto.randomUUID() + "." + extension;
   const bytes = new Uint8Array(await uploadFile.arrayBuffer());
+  let serverMime: string;
+  try {
+    serverMime = validateDocumentUpload(extension, uploadFile.type, bytes);
+  } catch (e) {
+    if (e instanceof DocumentExtractionError) {
+      return jsonResponse(fail("Upload rejected", e.code, [e.message]), 400);
+    }
+    throw e;
+  }
   const { error: upError } = await db.storage.from(BUCKET).upload(storedName, bytes, {
-    contentType: uploadFile.type || "application/octet-stream",
-    upsert: true,
+    contentType: serverMime,
+    upsert: false,
   });
   if (upError) throw new Error(`storage upload failed: ${upError.message}`);
 
@@ -514,7 +555,7 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
     const { data: saved, error: insError } = await db.from("documents").insert({
       title: resolveTitle(titleParam, uploadFile.name),
       file_name: uploadFile.name,
-      file_type: uploadFile.type || `application/${extension}`,
+      file_type: serverMime,
       file_size: uploadFile.size,
       file_path: storedName,
       owner_email: userEmail,
@@ -812,6 +853,43 @@ async function handleGetSignedUrl(ctx: AuthContext | null, _req: Request, _body:
   );
 }
 
+async function handleDeleteOwnedDocument(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
+  if (!isUuid(p.id)) return generic500();
+  const row = await loadDocumentRow(p.id);
+  if (!row) return jsonResponse(fail(`Document not found: ${p.id}`, "RESOURCE_NOT_FOUND"), 404);
+  const owner = String(row.created_by ?? row.owner_email ?? "").toLowerCase();
+  if (!ctx || owner !== ctx.email.toLowerCase()) {
+    return jsonResponse(fail("Only the document owner can delete an unlinked source document.", "ACCESS_DENIED"), 403);
+  }
+
+  for (const [table, label] of [["contracts", "a contract"], ["contract_ai_analyses", "a contract analysis"], ["records_archives", "a records archive"]] as const) {
+    const column = table === "contract_ai_analyses" ? "source_document_id" : "document_id";
+    const linked = await db.from(table).select("id", { count: "exact", head: true }).eq(column, p.id);
+    if (linked.error) throw new Error(`${table} reference check failed: ${linked.error.message}`);
+    if ((linked.count ?? 0) > 0) {
+      return jsonResponse(fail(`The document cannot be deleted while linked to ${label}.`, "DOCUMENT_IN_USE"), 409);
+    }
+  }
+
+  const tagDelete = await db.from("document_tags").delete().eq("document_id", p.id);
+  if (tagDelete.error) throw new Error(`document tag cleanup failed: ${tagDelete.error.message}`);
+  const classificationDelete = await db.from("document_ai_classifications").delete().eq("document_id", p.id);
+  if (classificationDelete.error) throw new Error(`document AI cleanup failed: ${classificationDelete.error.message}`);
+  const documentDelete = await db.from("documents").delete().eq("id", p.id);
+  if (documentDelete.error) throw new Error(`document deletion failed: ${documentDelete.error.message}`);
+
+  const filePath = str(row.file_path)?.trim() ?? "";
+  if (isValidStorageObjectPath(filePath)) {
+    const removal = await db.storage.from(BUCKET).remove([filePath]);
+    if (removal.error && !isMissingStorageObjectError(removal.error)) {
+      throw new Error(`document storage cleanup failed: ${removal.error.message}`);
+    }
+  }
+  await writeAudit(ctx.user, "DELETE_UNLINKED_SOURCE_DOCUMENT", MODULE, "Document", p.id,
+    `Deleted unlinked source document: ${str(row.title)}`, resolveClientIp(req).ip, "INFO");
+  return jsonResponse(ok({ documentDeleted: true }, "Unlinked source document deleted"), 200);
+}
+
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
@@ -825,6 +903,7 @@ const routes = [
   { method: "POST", path: "/documents/:id/classification-review", guard: { kind: "roles", roles: REVIEW_ROLES }, handler: handleClassificationReview },
   { method: "GET", path: "/documents/:id/download", guard: { kind: "auth" }, handler: handleDownloadDocument },
   { method: "GET", path: "/documents/:id/signed-url", guard: { kind: "auth" }, handler: handleGetSignedUrl },
+  { method: "DELETE", path: "/documents/:id", guard: { kind: "auth" }, handler: handleDeleteOwnedDocument },
 ] as const;
 
 Deno.serve(createHandler(routes as never, { name: "documents" }));

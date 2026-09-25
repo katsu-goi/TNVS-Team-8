@@ -34,6 +34,90 @@ function securityLogDto(r: SecurityLogRow) {
   };
 }
 
+function auditLogDto(r: Record<string, unknown>) {
+  return {
+    id: r.id,
+    timestamp: r.created_at,
+    userId: r.user_id,
+    username: r.user_email,
+    fullName: r.user_full_name,
+    role: null,
+    module: r.module ?? "SYSTEM",
+    action: r.action,
+    ipAddress: r.ip_address,
+    riskLevel: r.severity ?? "INFO",
+    status: r.status ?? "SUCCESS",
+    source: "APPLICATION_AUDIT",
+  };
+}
+
+function globalSecurityLogDto(r: Record<string, unknown>) {
+  return {
+    id: r.id,
+    timestamp: r.timestamp ?? r.created_at,
+    userId: r.user_id,
+    username: r.username,
+    fullName: r.full_name,
+    role: r.role,
+    module: r.module ?? "SECURITY",
+    action: r.action,
+    ipAddress: r.ip_address,
+    riskLevel: r.risk_level ?? "LOW",
+    status: r.status ?? "SUCCESS",
+    source: "SECURITY_AUDIT",
+  };
+}
+
+function adminAuditLogDto(r: Record<string, unknown>, actor?: Record<string, unknown>) {
+  const fullName = actor
+    ? `${String(actor.first_name ?? "")} ${String(actor.last_name ?? "")}`.trim()
+    : "";
+  return {
+    id: r.id,
+    timestamp: r.occurred_at,
+    userId: r.actor_user_id,
+    username: actor?.email ?? null,
+    fullName: fullName || null,
+    role: null,
+    module: "ADMIN",
+    action: r.action,
+    ipAddress: r.source_ip,
+    riskLevel: "INFO",
+    status: "SUCCESS",
+    source: "ADMIN_AUDIT",
+  };
+}
+
+function boundedInteger(rawValue: string | null, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number.parseInt(rawValue ?? "", 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(maximum, Math.max(minimum, parsed));
+}
+
+function auditPage(content: Record<string, unknown>[], total: number, page: number, size: number) {
+  const totalPages = size > 0 ? Math.ceil(total / size) : 0;
+  return {
+    content,
+    pageable: {
+      pageNumber: page,
+      pageSize: size,
+      sort: { sorted: true, unsorted: false, empty: false },
+      offset: page * size,
+      paged: true,
+      unpaged: false,
+    },
+    totalElements: total,
+    last: page >= totalPages - 1,
+    totalPages,
+    size,
+    number: page,
+    sort: { sorted: true, unsorted: false, empty: false },
+    first: page === 0,
+    numberOfElements: content.length,
+    empty: content.length === 0,
+  };
+}
+
 function activeSessionDto(r: Record<string, unknown>) {
   return {
     id: r.id, sessionId: r.session_id, userId: r.user_id, username: r.username,
@@ -138,6 +222,106 @@ async function handleLogs(_ctx: AuthContext | null, req: Request, _body: unknown
   });
 }
 
+/**
+ * Global audit view for Super Admin only. It intentionally excludes free-form
+ * metadata (`old_values`, `new_values`, security evidence, and admin `details`) so credentials or
+ * protected evidence cannot be returned by this endpoint even if bad historic
+ * data exists. Authorization is applied by the route guard before this
+ * service-role query runs.
+ */
+async function handleAuditLogs(_ctx: AuthContext | null, req: Request, _body: unknown, _p: RouteParams) {
+  const qp = new URL(req.url).searchParams;
+  const page = boundedInteger(qp.get("page"), 0, 0, 10_000);
+  const size = boundedInteger(qp.get("size"), 20, 1, 100);
+  const offset = page * size;
+  const fetchLimit = offset + size;
+  const userId = qp.get("userId")?.trim() || null;
+  const action = qp.get("action")?.trim().toUpperCase() || null;
+  const module = qp.get("module")?.trim().toUpperCase() || null;
+  const severity = qp.get("riskLevel")?.trim().toUpperCase() || null;
+  const startDate = qp.get("startDate")?.trim() || null;
+  const endDate = qp.get("endDate")?.trim() || null;
+
+  const safeToken = /^[A-Z][A-Z0-9_]{0,99}$/;
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (userId && !uuid.test(userId)) return raw({ error: "Invalid audit user filter" }, 400);
+  if ((action && !safeToken.test(action)) || (module && !safeToken.test(module))
+    || (severity && !safeToken.test(severity))) {
+    return raw({ error: "Invalid audit filter" }, 400);
+  }
+  if ((startDate && Number.isNaN(Date.parse(startDate))) || (endDate && Number.isNaN(Date.parse(endDate)))) {
+    return raw({ error: "Invalid audit date range" }, 400);
+  }
+
+  let applicationQuery = db
+    .from("audit_logs")
+    .select(
+      "id,user_id,user_email,user_full_name,action,module,ip_address,severity,status,created_at",
+      { count: "exact" },
+    )
+    .order("created_at", { ascending: false })
+    .limit(fetchLimit);
+  if (userId) applicationQuery = applicationQuery.eq("user_id", userId);
+  if (action) applicationQuery = applicationQuery.eq("action", action);
+  if (module) applicationQuery = applicationQuery.eq("module", module);
+  if (severity) applicationQuery = applicationQuery.eq("severity", severity);
+  if (startDate) applicationQuery = applicationQuery.gte("created_at", startDate);
+  if (endDate) applicationQuery = applicationQuery.lte("created_at", endDate);
+
+  let securityQuery = db
+    .from("security_logs")
+    .select(
+      "id,timestamp,created_at,user_id,full_name,role,action,module,ip_address,risk_level,status",
+      { count: "exact" },
+    )
+    .order("timestamp", { ascending: false })
+    .limit(fetchLimit);
+  if (userId) securityQuery = securityQuery.eq("user_id", userId);
+  if (action) securityQuery = securityQuery.eq("action", action);
+  if (module) securityQuery = securityQuery.eq("module", module);
+  if (severity) securityQuery = securityQuery.eq("risk_level", severity);
+  if (startDate) securityQuery = securityQuery.gte("timestamp", startDate);
+  if (endDate) securityQuery = securityQuery.lte("timestamp", endDate);
+
+  const includeAdmin = (!module || module === "ADMIN") && (!severity || severity === "INFO");
+  let adminQuery = db
+    .from("admin_audit_logs")
+    .select("id,actor_user_id,action,source_ip,occurred_at", { count: "exact" })
+    .order("occurred_at", { ascending: false })
+    .limit(fetchLimit);
+  if (userId) adminQuery = adminQuery.eq("actor_user_id", userId);
+  if (action) adminQuery = adminQuery.eq("action", action);
+  if (startDate) adminQuery = adminQuery.gte("occurred_at", startDate);
+  if (endDate) adminQuery = adminQuery.lte("occurred_at", endDate);
+
+  const [applicationResult, securityResult, adminResult] = await Promise.all([
+    applicationQuery,
+    securityQuery,
+    includeAdmin ? adminQuery : Promise.resolve({ data: [], count: 0, error: null }),
+  ]);
+  if (applicationResult.error) throw new Error(`audit logs query failed: ${applicationResult.error.message}`);
+  if (securityResult.error) throw new Error(`security audit logs query failed: ${securityResult.error.message}`);
+  if (adminResult.error) throw new Error(`admin audit logs query failed: ${adminResult.error.message}`);
+
+  const adminRows = (adminResult.data ?? []) as Record<string, unknown>[];
+  const actorIds = [...new Set(adminRows.map((row) => row.actor_user_id).filter(Boolean) as string[])];
+  const actors = new Map<string, Record<string, unknown>>();
+  if (actorIds.length > 0) {
+    const actorResult = await db.from("users").select("id,email,first_name,last_name").in("id", actorIds);
+    if (actorResult.error) throw new Error(`audit actor lookup failed: ${actorResult.error.message}`);
+    for (const actor of actorResult.data ?? []) actors.set(String(actor.id), actor as Record<string, unknown>);
+  }
+
+  const combined = [
+    ...((applicationResult.data ?? []) as Record<string, unknown>[]).map(auditLogDto),
+    ...((securityResult.data ?? []) as Record<string, unknown>[]).map(globalSecurityLogDto),
+    ...adminRows.map((row) => adminAuditLogDto(row, actors.get(String(row.actor_user_id ?? "")))),
+  ].sort((left, right) => Date.parse(String(right.timestamp ?? "")) - Date.parse(String(left.timestamp ?? "")));
+  const content = combined.slice(offset, offset + size);
+  const total = (applicationResult.count ?? 0) + (securityResult.count ?? 0) + (adminResult.count ?? 0);
+  return raw(auditPage(content, total, page, size));
+}
+
 // ---------------------------------------------------------------------------
 // Sessions
 // ---------------------------------------------------------------------------
@@ -238,23 +422,6 @@ const SEVERITY_ORDER: Record<string, number> = { LOW: 0, MEDIUM: 1, HIGH: 2, CRI
 const THREAT_TYPES = [
   "SQL_INJECTION", "XSS", "PORT_SCAN", "FAILED_LOGIN", "RATE_LIMIT", "ACCOUNT_LOCKED", "BLOCKED_IP",
 ];
-
-// Synthetic public IPs with plausible geolocation used by the admin Test
-// Security Event action. The map needs public addresses the geolocation layer
-// can place, so demo sources are drawn from this pool.
-const DEMO_THREAT_SOURCES = [
-  { ip: "45.155.205.233", country: "Russian Federation", countryCode: "RU", city: "Moscow", latitude: 55.7558, longitude: 37.6173, isp: "Sia Nano IT", asn: "AS197068" },
-  { ip: "185.220.101.34", country: "Germany", countryCode: "DE", city: "Frankfurt", latitude: 50.1109, longitude: 8.6821, isp: "EVANZO", asn: "AS50472" },
-  { ip: "103.99.10.20", country: "Vietnam", countryCode: "VN", city: "Ho Chi Minh City", latitude: 10.8231, longitude: 106.6297, isp: "Phuc Long Telecom", asn: "AS45195" },
-  { ip: "197.210.0.89", country: "Nigeria", countryCode: "NG", city: "Lagos", latitude: 6.5244, longitude: 3.3792, isp: "MTN Nigeria", asn: "AS37240" },
-  { ip: "111.90.150.90", country: "Malaysia", countryCode: "MY", city: "Kuala Lumpur", latitude: 3.139, longitude: 101.6869, isp: "GlobalConnect", asn: "AS45011" },
-  { ip: "218.92.0.15", country: "China", countryCode: "CN", city: "Shanghai", latitude: 31.2304, longitude: 121.4737, isp: "China Telecom", asn: "AS4134" },
-  { ip: "186.250.64.10", country: "Brazil", countryCode: "BR", city: "Sao Paulo", latitude: -23.5505, longitude: -46.6333, isp: "WHSR", asn: "AS53013" },
-];
-
-function pickRandom<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
 
 function normalizeWindow(raw: string | null): string {
   return raw && raw in WINDOW_MS ? raw : "24h";
@@ -477,72 +644,12 @@ async function handleThreatDiagnostics(_ctx: AuthContext | null, req: Request, _
   });
 }
 
-async function handleTestThreatEvent(ctx: AuthContext | null, _req: Request, _body: unknown, _p: RouteParams) {
-  const actor = ctx?.email ?? "admin@photonic-omega.com";
-  const source = pickRandom(DEMO_THREAT_SOURCES);
-  const threatType = normalizeThreatType(pickRandom(THREAT_TYPES));
-  const severity = pickRandom(["MEDIUM", "HIGH", "CRITICAL"]);
-  const status = Math.random() < 0.5 ? "BLOCKED" : "DETECTED";
-  const nowIso = new Date().toISOString();
-  const id = crypto.randomUUID();
-
-  const { error: threatError } = await db.from("ip_threats").insert({
-    id,
-    created_at: nowIso,
-    ip: source.ip,
-    country: source.country,
-    city: source.city,
-    latitude: source.latitude,
-    longitude: source.longitude,
-    threat_type: threatType,
-    severity,
-    requests: 1,
-    status,
-    first_seen: nowIso,
-    last_seen: nowIso,
-    asn: source.asn,
-    isp: source.isp,
-    flag: source.countryCode,
-  });
-  if (threatError) throw new Error(`test threat insert failed: ${threatError.message}`);
-
-  const { error: logError } = await db.from("security_logs").insert({
-    timestamp: nowIso,
-    created_at: nowIso,
-    action: "THREAT_TEST",
-    module: "THREAT_MAP",
-    username: actor,
-    full_name: actor,
-    role: "SUPER_ADMIN",
-    ip_address: source.ip,
-    risk_level: severity,
-    status: status === "BLOCKED" ? "BLOCKED" : "DETECTED",
-    reason: `Test security event: ${threatType} from ${source.ip} (${source.city}, ${source.country})`,
-    geo_location: `${source.city}, ${source.country}`,
-  });
-  if (logError) throw new Error(`test log insert failed: ${logError.message}`);
-
-  return raw({
-    eventId: id,
-    ip: source.ip,
-    privateIp: false,
-    geolocation: {
-      country: source.country,
-      countryCode: source.countryCode,
-      city: source.city,
-      latitude: source.latitude,
-      longitude: source.longitude,
-      isp: source.isp,
-      asn: source.asn,
-    },
-  });
-}
-
 // ---------------------------------------------------------------------------
 
 const routes = [
   { method: "GET", path: "/security/admin/metrics", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleMetrics },
   { method: "GET", path: "/security/admin/logs", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleLogs },
+  { method: "GET", path: "/security/admin/audit-logs", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleAuditLogs },
   { method: "GET", path: "/security/admin/sessions", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleSessions },
   { method: "POST", path: "/security/admin/sessions/:id/revoke", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleRevokeSession },
   { method: "GET", path: "/security/admin/blocked-ips", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleBlockedIps },
@@ -553,7 +660,6 @@ const routes = [
   { method: "GET", path: "/security/ip-threats/vector-map", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleVectorMap },
   { method: "GET", path: "/security/ip-threats/stats", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleThreatStats },
   { method: "GET", path: "/security/ip-threats/diagnostics", guard: { kind: "rolesOrPermissions", roles: ["SUPER_ADMIN"], permissions: ["SECURITY_MONITOR"] }, handler: handleThreatDiagnostics },
-  { method: "POST", path: "/security/ip-threats/test-event", guard: { kind: "roles", roles: ["SUPER_ADMIN"] }, handler: handleTestThreatEvent },
 ] as const;
 
 Deno.serve(createHandler(routes as never, { name: "security" }));

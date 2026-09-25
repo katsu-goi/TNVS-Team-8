@@ -1,7 +1,6 @@
-// DB-faithful subsystem health snapshot mirroring the Spring
-// SubsystemHealthMonitorService: real persisted counts feed every check,
-// metric and chart series; in-memory-only sources (rolling latency history,
-// live Hikari pool, STOMP load) are represented by their cold-start state.
+// Production subsystem health snapshot. Only runtime query timings and
+// persisted operational state are reported; provider-internal pool/load
+// telemetry that Supabase does not expose is deliberately omitted from UI.
 import { adminDb } from "./db.ts";
 
 type Db = ReturnType<typeof adminDb>;
@@ -140,7 +139,7 @@ function gauge(label: string, value: string, pctValue: number) {
   return { label, value, pct: Math.max(0, Math.min(100, pctValue)) };
 }
 
-function logsFromChecks(subsystemId: string, checks: Array<{ name: string; status: string; detail: string }>, poolPct: number, wsLoad: number) {
+function logsFromChecks(_subsystemId: string, checks: Array<{ name: string; status: string; detail: string }>, _poolPct: number, _wsLoad: number) {
   const logs: Array<{ time: string; level: string; message: string }> = [];
   for (const c of checks) {
     const level = c.status === "PASS" ? "INFO" : c.status === "WARN" ? "WARN" : "ERROR";
@@ -149,11 +148,11 @@ function logsFromChecks(subsystemId: string, checks: Array<{ name: string; statu
   }
   logs.push({
     time: clockLabel(), level: "INFO",
-    message: `Database connection pool check completed (0/0 active, ${poolPct}% utilization).`,
+    message: "Database checks use the managed Supabase serverless client; provider pool telemetry is not exposed.",
   });
   logs.push({
     time: clockLabel(), level: "INFO",
-    message: `WebSocket /topic/system-monitoring/subsystems payload delivered (${wsLoad}% stream load).`,
+    message: "Realtime refresh is driven by sanitized realtime_events invalidation markers.",
   });
   return logs.slice(0, 12);
 }
@@ -172,7 +171,7 @@ async function checkFacilities(db: Db) {
     pass("Facilities Service", `${facilities} facilities on record`),
     pass("Rooms Service", `${rooms} rooms on record`),
     pass("Reservations Service", `${reservations} reservations on record`),
-    pass("WebSocket Broker", "STOMP stream delivering to /topic/system-monitoring/subsystems"),
+    pass("Realtime Architecture", "Sanitized realtime_events markers configured for authenticated refetch"),
   ];
 
   const avg = t.length ? Math.round(t.reduce((a, b) => a + b, 0) / t.length) : 0;
@@ -185,9 +184,9 @@ async function checkFacilities(db: Db) {
 
   const metrics = [
     metric("API 1, 2, 3 Latency Bounds", `${avg} ms avg`, `Peak ${peak} ms`),
-    metric("Core Files vs Backups", `${core} / ${backups} synced`, "Real data parity from database"),
-    metric("DB Pool Utilization", "0%", "0 / 0 connections active"),
-    metric("WS Message Load", "0%", "Real-time STOMP stream OK"),
+    metric("Core Records / Backup Records", `${core} / ${backups}`, "Independent persisted record counts"),
+    metric("Database Pool Telemetry", "Managed", "Provider-internal pool utilization is not exposed"),
+    metric("Realtime Payload", "Sanitized markers", "Clients refetch protected data through authenticated APIs"),
   ];
   const poolPct = 0, wsLoad = 0;
 
@@ -278,8 +277,8 @@ async function checkVisitors(db: Db) {
   const metrics = [
     metric("QR Scanner Response Time", rangeText(scannerMin, scannerMax), "Real verification processing time"),
     metric("Scanner Status Heatmap", `${heatmap.length} Locations OK`, "Top check-in hosts"),
-    metric("Services A, B, C Status", "OK", "All 3 service pipelines active"),
-    metric("Database Connection", "Connected", "Primary DB Pool Active (0%)"),
+    metric("Service Query Status", "Responding", "Visitor, verification, and watchlist queries completed"),
+    metric("Database Connection", "Connected", "Managed Supabase database query completed"),
   ];
 
   return {
@@ -362,7 +361,7 @@ async function checkDocuments(db: Db) {
 
   const metrics = [
     metric("Vault Space Breakdown", `${gb(usedBytes)} / ${gb(capacity)} GB`, `${usedPct}% Vault Capacity Used`),
-    metric("Backup Sync Latency", `${backupAvg} ms`, "Rolling sync trend from live database"),
+    metric("Backup Metadata Query", `${backupAvg} ms`, "Observed database query duration"),
     metric("Archiving Rate", `${archivingRate}%`, `${archived24h} documents archived (24h)`),
     metric("Backup Status", backupStatus, backupSub),
   ];
@@ -507,14 +506,14 @@ async function checkLegal(db: Db) {
   const poolPct = 0, wsLoad = 0;
 
   const gauges = [
-    gauge("Case Vault Encryption", `${Math.round(vaultPct)}%`, vaultPct),
-    gauge("Audit Trail Hash", "Verified", auditPct),
+    gauge("Resolution Target Coverage", `${Math.round(vaultPct)}%`, vaultPct),
+    gauge("Legal Event Success Rate", `${auditPct}%`, auditPct),
   ];
   const metrics = [
     metric("Case Resolution Time", `${round1(avgResolution)} days avg`, `Across ${rows.length} legal cases`),
     metric("Court Hearing SLA", `${sla}% SLA Compliance`, "Rolling legal API success rate"),
-    metric("Case Vault Encryption", `${Math.round(vaultPct)}%`, `${withTarget} cases with resolution target`),
-    metric("Audit Trail Hash", "Verified", "Immutable security log stream"),
+    metric("Resolution Target Coverage", `${Math.round(vaultPct)}%`, `${withTarget} cases with resolution target`),
+    metric("Legal Event Success Rate", `${auditPct}%`, "Observed security-log outcomes (24h)"),
   ];
 
   return {

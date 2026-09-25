@@ -1,25 +1,8 @@
 import { apiClient } from './client';
-import { supabaseMonitoringService } from './supabaseMonitoringService';
 import type {
-  DashboardMetrics, SystemConfiguration, IntegrationStatus,
-  BackupRecord, AdminNotification,
+  SystemConfiguration, IntegrationStatus,
+  BackupRecord,
 } from '../types';
-
-export async function loadAdminData(): Promise<DashboardMetrics> {
-  const telemetry = await supabaseMonitoringService.getLiveDashboardCounts();
-  const d = telemetry.data;
-
-  return {
-    totalDocuments: d.totalDocuments,
-    totalContracts: d.totalContracts,
-    activeSessions: d.activeSessionsCount,
-    failedLoginAttempts: d.failedLoginAttemptsCount,
-    blockedIpsCount: d.blockedIpsCount,
-    activeAlertsCount: d.activeAlertsCount,
-    totalBackups: 0,
-    totalNotifications: d.unreadNotificationsCount,
-  };
-}
 
 export async function loadConfigs(): Promise<SystemConfiguration[]> {
   try {
@@ -65,21 +48,3 @@ export async function createBackup(backupType: string, triggeredBy?: string): Pr
     return null;
   }
 }
-
-export async function loadNotifications(): Promise<AdminNotification[]> {
-  try {
-    const { data } = await apiClient.get('/admin/notifications');
-    return data?.data ?? [];
-  } catch {
-    return [];
-  }
-}
-
-export async function markNotificationRead(id: string): Promise<void> {
-  try {
-    await apiClient.put(`/admin/notifications/${id}/read`);
-  } catch {
-    // Graceful no-op fallback
-  }
-}
-

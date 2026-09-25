@@ -10,6 +10,7 @@ import {
   FileJson,
   FileText,
   HardDrive,
+  LockKeyhole,
   Loader2,
   RefreshCw,
   Save,
@@ -20,15 +21,17 @@ import {
 import type { BackupRecord } from '../../types';
 import { useAuthStore } from '../../stores/authStore';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
-import { supabaseAvailable } from '../../lib/supabase';
 import {
   BACKUP_MODULES,
   downloadBackup,
   exportGranularBackup,
+  loadBackupHealth,
   loadBackupSchedule,
   listBackupRecords,
   runFullSqlBackup,
   saveBackupSchedule,
+  setBackupProtection,
+  type BackupHealth,
   type BackupExportFormat,
   type BackupSchedule,
 } from '../../api/backupRecoveryService';
@@ -101,6 +104,7 @@ export const BackupRecoveryConsole: React.FC = () => {
   const backupRevision = useRealtimeSyncStore((state) => state.backupRevision);
   const [records, setRecords] = useState<BackupRecord[]>([]);
   const [schedule, setSchedule] = useState<BackupSchedule>(DEFAULT_SCHEDULE);
+  const [health, setHealth] = useState<BackupHealth | null>(null);
   const [selectedModules, setSelectedModules] = useState<string[]>([]);
   const [exportFormat, setExportFormat] = useState<BackupExportFormat>('CSV');
   const [loading, setLoading] = useState(true);
@@ -112,12 +116,14 @@ export const BackupRecoveryConsole: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [nextRecords, nextSchedule] = await Promise.all([
+      const [nextRecords, nextSchedule, nextHealth] = await Promise.all([
         listBackupRecords(),
         loadBackupSchedule(),
+        loadBackupHealth(),
       ]);
       setRecords(nextRecords);
       setSchedule(nextSchedule);
+      setHealth(nextHealth);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Unable to load backup data.');
     } finally {
@@ -138,13 +144,13 @@ export const BackupRecoveryConsole: React.FC = () => {
     [records],
   );
 
-  const lastBackup = orderedRecords[0];
+  const lastBackup = orderedRecords.find((record) => record.status === 'COMPLETED');
   const currentMonth = new Date();
   const backupsThisMonth = orderedRecords.filter((record) => {
     const date = new Date(recordDate(record));
     return date.getFullYear() === currentMonth.getFullYear() && date.getMonth() === currentMonth.getMonth();
   }).length;
-  const healthOnline = !error && (supabaseAvailable || realtimeConnected || !loading);
+  const healthOnline = !error && health !== null;
   const scheduleLabel = SCHEDULE_OPTIONS.find((option) => option.value === schedule.cronExpression)?.label ?? schedule.cronExpression;
 
   const runAction = async (action: string, operation: () => Promise<BackupRecord>) => {
@@ -153,10 +159,27 @@ export const BackupRecoveryConsole: React.FC = () => {
     setNotice(null);
     try {
       const record = await operation();
-      setNotice(`${displayType(record)} request accepted and recorded as ${record.status.toLowerCase()}.`);
+      setNotice(record.status === 'COMPLETED'
+        ? `${displayType(record)} completed and passed artifact integrity verification.`
+        : `${displayType(record)} finished with status ${record.status}.`);
       await refresh();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Backup request failed.');
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleProtection = async (record: BackupRecord) => {
+    setBusyAction(`protect-${record.id}`);
+    setError(null);
+    setNotice(null);
+    try {
+      const saved = await setBackupProtection(record.id, !record.protected);
+      setNotice(saved.protected ? 'Backup protected from retention cleanup.' : 'Backup returned to ordinary retention.');
+      await refresh();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Unable to update backup protection.');
     } finally {
       setBusyAction(null);
     }
@@ -226,14 +249,14 @@ export const BackupRecoveryConsole: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 border border-slate-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="dashboard-hero flex-col sm:flex-row sm:items-center">
         <div className="flex items-start gap-3">
           <div className="rounded-lg bg-red-50 p-2.5 text-red-700">
             <Database className="h-5 w-5" />
           </div>
           <div>
             <h1 className="font-heading text-2xl font-bold text-slate-900">Backup &amp; Disaster Recovery</h1>
-            <p className="mt-1 text-sm text-slate-500">Hybrid protection for full database snapshots and module exports.</p>
+            <p className="mt-1 text-sm text-slate-500">Verified logical data, private Storage copies, retention, and isolated recovery evidence.</p>
           </div>
         </div>
         <button
@@ -265,7 +288,7 @@ export const BackupRecoveryConsole: React.FC = () => {
           icon={Clock3}
           label="Last Backup Date"
           value={lastBackup ? formatDate(recordDate(lastBackup)) : 'No backup yet'}
-          detail={lastBackup ? `${displayType(lastBackup)} · ${lastBackup.status}` : 'Awaiting first backup request'}
+          detail={lastBackup ? `${displayType(lastBackup)} · ${lastBackup.verificationState ?? lastBackup.status}` : 'Awaiting first verified backup'}
           tone="border-red-200 bg-red-50 text-red-700"
         />
         <Metric
@@ -279,7 +302,7 @@ export const BackupRecoveryConsole: React.FC = () => {
           icon={Activity}
           label="System Health Status"
           value={healthOnline ? 'Online' : 'Unavailable'}
-          detail={realtimeConnected ? 'Supabase realtime connected' : 'Cloud backup API status'}
+          detail={health ? `${health.consecutiveFailures} consecutive failure${health.consecutiveFailures === 1 ? '' : 's'} · ${realtimeConnected ? 'Realtime connected' : 'API reachable'}` : 'Backup health API unavailable'}
           tone={healthOnline ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}
         />
       </div>
@@ -292,12 +315,12 @@ export const BackupRecoveryConsole: React.FC = () => {
                 <Database className="h-5 w-5" />
                 <h2 className="text-base font-bold text-slate-900">Full System Backup</h2>
               </div>
-              <p className="mt-2 text-sm leading-6 text-slate-500">Queue a complete SQL snapshot of the connected PostgreSQL database.</p>
+              <p className="mt-2 text-sm leading-6 text-slate-500">Create a logical application-data SQL export, restore JSON, schema-control inventory, and verified copies of private business files.</p>
             </div>
             <FileText className="h-5 w-5 text-slate-300" />
           </div>
           <div className="mt-5 border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-            <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-emerald-600" /> Metadata, creator, checksum, and download activity are retained.</div>
+            <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-emerald-600" /> Completion is recorded only after every artifact is downloaded again and SHA-256 verified.</div>
           </div>
           <button
             type="button"
@@ -361,7 +384,7 @@ export const BackupRecoveryConsole: React.FC = () => {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h2 className="text-base font-bold text-slate-900">Automated Scheduling</h2>
-            <p className="mt-1 text-sm text-slate-500">Persist the pg_cron schedule used to queue automated backup events.</p>
+            <p className="mt-1 text-sm text-slate-500">Control the secure pg_cron dispatcher; scheduled and manual requests use the same verified backup engine.</p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <select
@@ -396,6 +419,9 @@ export const BackupRecoveryConsole: React.FC = () => {
           <span className="inline-flex items-center gap-2"><Clock3 className="h-4 w-4 text-red-700" />{scheduleLabel}</span>
           <span className={`inline-flex items-center gap-2 font-semibold ${schedule.enabled ? 'text-emerald-700' : 'text-slate-500'}`}><span className={`h-2 w-2 rounded-full ${schedule.enabled ? 'bg-emerald-500' : 'bg-slate-400'}`} />{schedule.enabled ? 'Enabled' : 'Disabled'}</span>
           {schedule.updatedAt && <span>Updated {formatDate(schedule.updatedAt)}{schedule.updatedBy ? ` by ${schedule.updatedBy}` : ''}</span>}
+          {schedule.lastSuccessAt && <span>Last scheduled success {formatDate(schedule.lastSuccessAt)}</span>}
+          {schedule.lastFailureAt && <span className="text-rose-700">Last scheduled failure {formatDate(schedule.lastFailureAt)}</span>}
+          {health?.nextSchedule && <span>{health.nextSchedule}</span>}
         </div>
       </section>
 
@@ -408,7 +434,7 @@ export const BackupRecoveryConsole: React.FC = () => {
           <span className="text-xs font-semibold text-slate-500">{orderedRecords.length} record{orderedRecords.length === 1 ? '' : 's'}</span>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-left text-sm">
+          <table className="w-full min-w-[1260px] text-left text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-[10px] uppercase tracking-[0.08em] text-slate-500">
                 <th className="px-3 py-3 font-semibold">Date/Time</th>
@@ -416,12 +442,16 @@ export const BackupRecoveryConsole: React.FC = () => {
                 <th className="px-3 py-3 font-semibold">Triggered By</th>
                 <th className="px-3 py-3 font-semibold">File Size</th>
                 <th className="px-3 py-3 font-semibold">SHA-256 Checksum</th>
-                <th className="px-3 py-3 text-right font-semibold">Download</th>
+                <th className="px-3 py-3 font-semibold">Verification</th>
+                <th className="px-3 py-3 font-semibold">Retention</th>
+                <th className="px-3 py-3 font-semibold">Restore Test</th>
+                <th className="px-3 py-3 text-right font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody>
               {orderedRecords.map((record) => {
-                const hasDownload = Boolean(record.fileUrl || record.filePath || record.status === 'COMPLETED' || record.status === 'FAILED');
+                const hasDownload = record.status === 'COMPLETED'
+                  && ['INTEGRITY_VERIFIED', 'RESTORE_VERIFIED'].includes(record.verificationState ?? '');
                 const downloadBusy = busyAction === `download-${record.id}`;
                 return (
                   <tr key={record.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
@@ -433,17 +463,41 @@ export const BackupRecoveryConsole: React.FC = () => {
                     <td className="px-3 py-3 text-xs text-slate-600">{record.createdBy ?? record.triggeredBy ?? 'System Scheduler'}</td>
                     <td className="px-3 py-3 font-mono text-xs text-slate-600">{formatBytes(record.fileSize)}</td>
                     <td className="px-3 py-3 font-mono text-xs text-slate-500" title={record.checksum ?? 'Checksum pending'}>{record.checksum ? `${record.checksum.slice(0, 18)}...` : 'Pending'}</td>
+                    <td className="px-3 py-3 text-xs text-slate-600">
+                      <div className="font-semibold text-slate-800">{record.verificationState ?? 'NOT_VERIFIED'}</div>
+                      <div className="mt-1">{record.rowCount ?? 0} rows · {record.storageObjectCount ?? 0} files</div>
+                      {record.failureReason && <div className="mt-1 max-w-64 text-rose-700">{record.failureReason}</div>}
+                    </td>
+                    <td className="px-3 py-3 text-xs text-slate-600">
+                      <div>{record.protected ? 'Protected' : formatDate(record.retentionExpiresAt)}</div>
+                      <div className="mt-1">{record.cleanupStatus ?? 'RETAINED'}</div>
+                    </td>
+                    <td className="px-3 py-3 text-xs text-slate-600">
+                      <div className="font-semibold">{record.restoreTestStatus ?? 'NOT_VERIFIED'}</div>
+                      {record.lastRestoreTestAt && <div className="mt-1">{formatDate(record.lastRestoreTestAt)}</div>}
+                    </td>
                     <td className="px-3 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => void handleDownload(record)}
-                        disabled={!hasDownload || busyAction !== null}
-                        title={hasDownload ? 'Prepare, authorize, and download backup' : 'Archive file is not available yet'}
-                        className="inline-flex items-center gap-2 border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-red-300 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {downloadBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                        {hasDownload ? 'Download' : 'Pending'}
-                      </button>
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleProtection(record)}
+                          disabled={busyAction !== null || record.cleanupStatus === 'DELETED'}
+                          title={record.protected ? 'Return to ordinary retention' : 'Protect from retention cleanup'}
+                          className="inline-flex items-center gap-2 border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-red-300 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <LockKeyhole className="h-3.5 w-3.5" />{record.protected ? 'Unprotect' : 'Protect'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDownload(record)}
+                          disabled={!hasDownload || busyAction !== null}
+                          title={hasDownload ? 'Authorize a five-minute download after re-verifying its checksum' : 'Only integrity-verified completed artifacts can be downloaded'}
+                          className="inline-flex items-center gap-2 border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-red-300 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {downloadBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                          {hasDownload ? 'Download' : 'Unavailable'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -465,7 +519,7 @@ export const BackupRecoveryConsole: React.FC = () => {
 
       <div className="flex items-center gap-2 border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
         <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-        <span>All requests are attributed to {user?.email ?? 'the authenticated System Administrator'} and persisted through Supabase.</span>
+        <span>Requests are attributed to {user?.email ?? 'the authenticated System Administrator'}. Production restore is deliberately not exposed; recovery verification uses an isolated service-only schema.</span>
       </div>
     </div>
   );

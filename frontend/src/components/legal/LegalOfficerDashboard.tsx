@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FileSignature, Gavel,
-  RefreshCw, AlertCircle, Loader2, Activity,
+  RefreshCw, AlertCircle, Activity,
   Clock, ScrollText, ShieldAlert, BarChart3,
   BellRing, FileText,
 } from 'lucide-react';
@@ -12,7 +12,8 @@ import {
 } from 'recharts';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { safeFetchJson } from '../../api/client';
-import { DashboardMetricCard as KpiCard } from '../ui/DashboardPrimitives';
+import { DashboardHero, DashboardMetricCard as KpiCard } from '../ui/DashboardPrimitives';
+import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 
 const PIE_COLORS = ['#10B981', '#F59E0B', '#EF4444', '#6B7280', '#3B82F6', '#8B5CF6'];
 
@@ -65,17 +66,7 @@ export const LegalOfficerDashboard: React.FC = () => {
   useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
 
   if (loading && !data) {
-    return (
-      <div className="space-y-6">
-        <div className="glass-panel p-5 flex items-center space-x-3">
-          <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
-          <p className="text-sm text-slate-500">Loading legal dashboard...</p>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          {Array.from({ length: 4 }).map((_, i) => <div key={i} className="card-stat p-5 animate-pulse"><div className="h-3 w-20 bg-slate-200 rounded mb-3" /><div className="h-7 w-12 bg-slate-200 rounded" /></div>)}
-        </div>
-      </div>
-    );
+    return <PortalLoadingOverlay message="Loading legal dashboard..." />;
   }
 
   if (error && !data) {
@@ -101,12 +92,8 @@ export const LegalOfficerDashboard: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="dashboard-hero">
-        <div>
-          <h1 className="text-[34px] font-extrabold font-heading text-slate-900 leading-tight">Legal Officer</h1>
-          <p className="text-slate-500 text-sm mt-1">Legal Cases &amp; Administrative Legal Management</p>
-        </div>
-        <div className="flex items-center space-x-3">
+      <DashboardHero title="Legal Officer" subtitle="Legal Cases & Administrative Legal Management" actions={
+        <>
           <div className="flex items-center px-3 py-1.5 rounded-lg border bg-emerald-50 border-emerald-200">
             <Activity className="w-4 h-4 mr-2 text-emerald-600" />
             <span className="text-xs font-mono font-semibold text-emerald-600">ONLINE</span>
@@ -114,8 +101,8 @@ export const LegalOfficerDashboard: React.FC = () => {
           <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition text-slate-400 hover:text-slate-700" title="Refresh">
             <RefreshCw className="w-4 h-4" />
           </button>
-        </div>
-      </div>
+        </>
+      } />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <KpiCard label="Pending Reviews" value={data.pendingContractReviews ?? 0} icon={Clock} color={(data.pendingContractReviews ?? 0) > 0 ? 'text-amber-500' : 'text-slate-400'} sub="Contracts under review" onClick={() => navigate('/legal/contracts')} />

@@ -1,99 +1,121 @@
 import { adminDb } from "./db.ts";
-import { AuthUser, naiveIso, tzIso } from "./auth-users.ts";
+import { AuthUser, tzIso } from "./auth-users.ts";
+import { config } from "./config.ts";
 import { parseUserAgent } from "./sessions.ts";
 
-const MAX_ATTEMPTS = 3;
-const LOCK_DURATIONS_SECONDS = [10, 30];
-const PERMANENT_LOCK_DAYS = 365;
-
 export type LockoutInfo = {
+  accountExists: boolean;
   failedAttempts: number;
-  maxAttempts: number;
-  remainingAttempts: number;
-  lockSecondsRemaining: number;
-  permanentlyLocked: boolean;
   lockedUntil: string | null;
+  retryAfterSeconds: number;
+  counted: boolean;
 };
 
-export function currentLockoutInfo(user: AuthUser, now: Date): LockoutInfo | null {
-  const attempts = user.row.failed_login_attempts;
-  if (attempts >= MAX_ATTEMPTS) {
-    return infoOf(user, true, now);
-  }
-  if (isLockedUntilFuture(user.row.locked_until, now)) {
-    return infoOf(user, false, now);
-  }
-  return null;
+export type LoginFinalization = {
+  allowed: boolean;
+  failedAttempts: number;
+  lockedUntil: string | null;
+  retryAfterSeconds: number;
+};
+
+type LockoutRow = {
+  account_exists: boolean;
+  failed_attempts: number;
+  locked_until: string | null;
+  counted: boolean;
+};
+
+type LoginSuccessRow = {
+  allowed: boolean;
+  failed_attempts: number;
+  locked_until: string | null;
+};
+
+const encoder = new TextEncoder();
+
+async function identifierHash(identifier: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(config.jwtSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const digest = new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(identifier)));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export function isLockedUntilFuture(lockedUntil: string | null, now: Date): boolean {
-  return lockedUntil !== null && now < new Date(lockedUntil);
+function retryAfterSeconds(lockedUntil: string | null, now = new Date()): number {
+  if (!lockedUntil) return 0;
+  const milliseconds = new Date(lockedUntil).getTime() - now.getTime();
+  return Number.isFinite(milliseconds) ? Math.max(0, Math.ceil(milliseconds / 1000)) : 0;
 }
 
-function lockDurationFor(attempt: number): number {
-  const index = attempt - 1;
-  if (LOCK_DURATIONS_SECONDS.length === 0) return 30;
-  return LOCK_DURATIONS_SECONDS[Math.min(index, LOCK_DURATIONS_SECONDS.length - 1)];
-}
-
-function infoOf(user: AuthUser, permanentlyLocked: boolean, now: Date): LockoutInfo {
-  const attempts = user.row.failed_login_attempts;
-  const remaining = permanentlyLocked
-    ? 0
-    : Math.max(0, Math.floor((new Date(user.row.locked_until!).getTime() - now.getTime()) / 1000));
+function normalizeLockout(row: LockoutRow): LockoutInfo {
   return {
-    failedAttempts: attempts,
-    maxAttempts: MAX_ATTEMPTS,
-    remainingAttempts: Math.max(0, MAX_ATTEMPTS - attempts),
-    lockSecondsRemaining: remaining,
-    permanentlyLocked,
-    lockedUntil: user.row.locked_until,
+    accountExists: row.account_exists,
+    failedAttempts: row.failed_attempts,
+    lockedUntil: row.locked_until,
+    retryAfterSeconds: retryAfterSeconds(row.locked_until),
+    counted: row.counted,
   };
 }
 
-/**
- * Records one failed attempt and applies the progressive lock.
- * Mirrors LoginAttemptService.recordFailedAttempt (persisted in DB so the
- * lock cannot be bypassed by browser refresh or another client).
- */
-export async function recordFailedAttempt(user: AuthUser, ipAddress: string, userAgent: string): Promise<LockoutInfo> {
-  const db = adminDb();
-  const now = new Date();
-  const attempts = user.row.failed_login_attempts + 1;
-  const permanent = attempts >= MAX_ATTEMPTS;
+async function lockoutRpc(
+  name: "get_login_restriction" | "record_login_failure",
+  email: string,
+): Promise<LockoutInfo> {
+  const { data, error } = await adminDb().rpc(name, {
+    p_email: email,
+    p_identifier_hash: await identifierHash(email),
+  });
+  if (error) throw new Error(`${name} failed: ${error.message}`);
+  const row = (Array.isArray(data) ? data[0] : data) as LockoutRow | null;
+  if (!row) throw new Error(`${name} returned no result`);
+  return normalizeLockout(row);
+}
 
-  const lockedUntil = permanent
-    ? new Date(now.getTime() + PERMANENT_LOCK_DAYS * 86400_000)
-    : new Date(now.getTime() + lockDurationFor(attempts) * 1000);
+export async function getLoginRestriction(email: string): Promise<LockoutInfo> {
+  return lockoutRpc("get_login_restriction", email);
+}
 
-  const { error } = await db
-    .from("users")
-    .update({
-      failed_login_attempts: attempts,
-      last_failed_attempt_at: naiveIso(now),
-      locked_until: naiveIso(lockedUntil),
-    })
-    .eq("id", user.row.id);
-  if (error) throw new Error(`failed-attempt update failed: ${error.message}`);
+export async function recordLoginFailure(
+  email: string,
+  user: AuthUser | null,
+  ipAddress: string,
+): Promise<LockoutInfo> {
+  const info = await lockoutRpc("record_login_failure", email);
+  await writeAudit(user, "LOGIN_FAILED", "AUTH", "User", user?.row.id ?? null,
+    `Failed login attempt ${info.failedAttempts}`, ipAddress, "WARNING");
 
-  user.row.failed_login_attempts = attempts;
-  user.row.locked_until = naiveIso(lockedUntil);
-  user.row.last_failed_attempt_at = naiveIso(now);
-
-  await writeAudit(user, "LOGIN_FAILED", "AUTH", "User", user.row.id,
-    `Failed login attempt ${attempts}/${MAX_ATTEMPTS}`, ipAddress, "WARNING");
-
-  if (permanent) {
-    await writeAudit(user, "ACCOUNT_LOCKED", "AUTH", "User", user.row.id,
-      `Account locked after ${attempts} consecutive failed login attempts`, ipAddress, "CRITICAL");
+  if (info.counted && info.retryAfterSeconds > 0) {
+    await writeAudit(user, "LOGIN_TEMPORARILY_LOCKED", "AUTH", "User", user?.row.id ?? null,
+      `Temporary login restriction applied after ${info.failedAttempts} failed attempts`, ipAddress, "WARNING");
+  }
+  if (user && info.counted && info.retryAfterSeconds > 0) {
     await writeSecurityAlert(
-      "Account locked - repeated failed logins",
-      `Account ${user.row.email} locked after ${attempts} failed attempts`,
+      "Temporary login restriction - repeated failures",
+      `Account ${user.row.email} temporarily restricted after ${info.failedAttempts} failed attempts`,
       "HIGH", "ACCOUNT_LOCKOUT", ipAddress, user.row.id,
     );
   }
+  return info;
+}
 
-  return infoOf(user, permanent, now);
+export async function finalizeLoginSuccess(email: string, ipAddress: string): Promise<LoginFinalization> {
+  const { data, error } = await adminDb().rpc("finalize_login_success", {
+    p_email: email,
+    p_ip: ipAddress,
+  });
+  if (error) throw new Error(`finalize_login_success failed: ${error.message}`);
+  const row = (Array.isArray(data) ? data[0] : data) as LoginSuccessRow | null;
+  if (!row) throw new Error("finalize_login_success returned no result");
+  return {
+    allowed: row.allowed,
+    failedAttempts: row.failed_attempts,
+    lockedUntil: row.locked_until,
+    retryAfterSeconds: retryAfterSeconds(row.locked_until),
+  };
 }
 
 export async function writeAudit(
@@ -191,12 +213,11 @@ export async function writeSecurityLog(
   try {
     const db = adminDb();
     const agent = parseUserAgent(userAgent);
-    await db.from("security_logs").insert({
+    const { error } = await db.from("security_logs").insert({
       action,
       module: "AUTH",
       full_name: user ? `${user.row.first_name} ${user.row.last_name}` : null,
       role: user?.roles[0] ?? null,
-      username: user?.row.email ?? null,
       user_id: user?.row.id ?? null,
       ip_address: ipAddress ?? null,
       browser: agent.browser,
@@ -206,6 +227,7 @@ export async function writeSecurityLog(
       reason,
       timestamp: tzIso(),
     });
+    if (error) throw new Error(`security_logs insert failed: ${error.message}`);
   } catch (e) {
     console.error("security_logs insert threw:", (e as Error).message);
   }

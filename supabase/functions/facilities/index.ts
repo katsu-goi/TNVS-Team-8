@@ -2,6 +2,7 @@ import { createHandler, AuthContext, RouteParams } from "../_shared/guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
 import { ok, fail } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
+import { managementRoutes } from "./management.ts";
 
 const db = adminDb();
 
@@ -15,6 +16,15 @@ function badRequest(message: string, errorCode: string) {
 
 function notFoundEnvelope(message: string) {
   return jsonResponse(fail(message, "RESOURCE_NOT_FOUND"), 404);
+}
+
+type WorkflowRpcResult = { ok: boolean; data?: Record<string, unknown>; errorCode?: string; message?: string };
+
+function workflowResponse(result: WorkflowRpcResult, successMessage: string) {
+  if (result.ok) return jsonResponse(ok(result.data ?? {}, successMessage), 200);
+  const code = result.errorCode ?? "BUSINESS_RULE_VIOLATION";
+  const status = code === "ACCESS_DENIED" ? 403 : code.endsWith("_NOT_FOUND") ? 404 : 422;
+  return jsonResponse(fail(result.message ?? "Workflow request rejected.", code), status);
 }
 
 /** Interprets a naive LocalDateTime as UTC (matches Spring's naive persistence). */
@@ -140,18 +150,48 @@ type ReservationRow = {
   status: string | null;
   rejection_reason: string | null;
   created_at: string | null;
+  officer_reviewed_by?: string | null;
+  officer_reviewed_at?: string | null;
+  officer_review_notes?: string | null;
+  officer_reviewed_schedule_revision?: number | null;
+  manager_decided_by?: string | null;
+  manager_decided_at?: string | null;
+  cancellation_reason?: string | null;
+  cancelled_at?: string | null;
+  reschedule_reason?: string | null;
+  rescheduled_at?: string | null;
+  confirmed_at?: string | null;
+  completed_at?: string | null;
+  schedule_revision?: number | null;
   rooms?: { id: string; name: string | null; room_number: string | null; floor_number: number | null; building: string | null; facility_id: string | null; facilities?: { id: string; name: string | null; code: string | null } | { id: string; name: string | null; code: string | null }[] | null } | null;
   users?: { id: string; employee_id: string | null; first_name: string | null; last_name: string | null; department: string | null; email: string | null } | { id: string; employee_id: string | null; first_name: string | null; last_name: string | null; department: string | null; email: string | null }[] | null;
 };
 
 async function loadReservationsWithJoins(roomIds?: string[]): Promise<ReservationRow[]> {
-  let q = db
-    .from("reservations")
-    .select("*, rooms(name, room_number, floor_number, building, facility_id, facilities(name, code)), users(employee_id, first_name, last_name, department, email)");
+  let q = db.from("reservations").select("*");
   if (roomIds && roomIds.length > 0) q = q.in("room_id", roomIds);
   const { data, error } = await q;
   if (error) throw new Error(`reservations load failed: ${error.message}`);
-  return (data as unknown as ReservationRow[]) ?? [];
+  const reservations = (data as unknown as ReservationRow[]) ?? [];
+  const reservationRoomIds = [...new Set(reservations.map((row) => row.room_id).filter((id): id is string => id != null))];
+  const reservationUserIds = [...new Set(reservations.map((row) => row.user_id).filter((id): id is string => id != null))];
+  const [roomResult, userResult] = await Promise.all([
+    reservationRoomIds.length
+      ? db.from("rooms").select("id, name, room_number, floor_number, building, facility_id, facilities(id, name, code)").in("id", reservationRoomIds)
+      : Promise.resolve({ data: [], error: null }),
+    reservationUserIds.length
+      ? db.from("users").select("id, employee_id, first_name, last_name, department, email").in("id", reservationUserIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (roomResult.error) throw new Error(`reservation rooms load failed: ${roomResult.error.message}`);
+  if (userResult.error) throw new Error(`reservation users load failed: ${userResult.error.message}`);
+  const rooms = new Map((roomResult.data ?? []).map((room) => [String(room.id), room]));
+  const users = new Map((userResult.data ?? []).map((user) => [String(user.id), user]));
+  return reservations.map((reservation) => ({
+    ...reservation,
+    rooms: reservation.room_id ? ((rooms.get(reservation.room_id) as ReservationRow["rooms"]) ?? null) : null,
+    users: reservation.user_id ? ((users.get(reservation.user_id) as ReservationRow["users"]) ?? null) : null,
+  }));
 }
 
 function roomName(r: ReservationRow): string | null {
@@ -264,6 +304,14 @@ async function handleManagerReservations(_ctx: AuthContext | null, req: Request)
       status: r.status,
       expectedAttendees: r.expected_attendees,
       rejectionReason: r.rejection_reason,
+      officerReviewedAt: r.officer_reviewed_at ?? null,
+      officerReviewNotes: r.officer_review_notes ?? null,
+      managerDecidedAt: r.manager_decided_at ?? null,
+      cancellationReason: r.cancellation_reason ?? null,
+      rescheduleReason: r.reschedule_reason ?? null,
+      confirmedAt: r.confirmed_at ?? null,
+      completedAt: r.completed_at ?? null,
+      scheduleRevision: r.schedule_revision ?? 1,
       roomId: r.room_id,
       roomName: roomName(r),
       roomNumber: roomNumber(r),
@@ -283,7 +331,8 @@ async function handleManagerReservations(_ctx: AuthContext | null, req: Request)
   const upcomingEnd = new Date(Date.now() + 30 * 86400_000).toISOString().slice(0, 10);
 
   const overview = {
-    pending: (statusCounts["PENDING"] ?? 0) + (statusCounts["PENDING_MANAGER_APPROVAL"] ?? 0),
+    pending: statusCounts["PENDING_MANAGER_APPROVAL"] ?? 0,
+    officerReview: statusCounts["PENDING"] ?? 0,
     approved: statusCounts["APPROVED"] ?? 0,
     rejected: statusCounts["REJECTED"] ?? 0,
     cancelled: statusCounts["CANCELLED"] ?? 0,
@@ -294,61 +343,32 @@ async function handleManagerReservations(_ctx: AuthContext | null, req: Request)
   return jsonResponse(ok({ overview, reservations }), 200);
 }
 
-async function recordApproval(actorEmail: string, reservationId: string, decision: string, comments: string | null) {
-  const { error } = await db.from("reservation_approvals").insert({
-    reservation_id: reservationId,
-    decision,
-    comments,
-    decided_at: new Date().toISOString(),
-    created_by: actorEmail,
-  });
-  if (error) console.error("reservation_approval insert failed:", error.message);
-}
-
 async function handleApproveReservation(ctx: AuthContext | null, _req: Request, body: unknown, p: RouteParams) {
-  const { data: r, error } = await db.from("reservations").select("*").eq("id", p.id).maybeSingle();
-  if (error) throw new Error(`reservation lookup failed: ${error.message}`);
-  if (!r) return notFound();
-  const row = r as unknown as ReservationRow;
-
-  const conflicts = await conflictingReservations(row.room_id!, row.start_time!, row.end_time!);
-  const stillValid = conflicts.every((c) => c.id === row.id || c.status !== "APPROVED");
-  if (!stillValid) {
-    const { error: ue } = await db.from("reservations").update({
-      status: "REJECTED",
-      rejection_reason: "Another reservation for this room in the same timeframe was approved first.",
-      updated_by: ctx!.email,
-    }).eq("id", row.id);
-    if (ue) throw new Error(`reservation update failed: ${ue.message}`);
-    await recordApproval(ctx!.email, row.id, "REJECTED", null);
-    return badRequest("Room was already approved for another booking in this timeframe. Reservation rejected.", "CONFLICT");
-  }
-
-  const { error: ue2 } = await db.from("reservations").update({
-    status: "APPROVED",
-    rejection_reason: null,
-    updated_by: ctx!.email,
-  }).eq("id", row.id);
-  if (ue2) throw new Error(`reservation update failed: ${ue2.message}`);
-  const comments = (body as Record<string, unknown> | null)?.comments != null ? String((body as Record<string, unknown>).comments) : null;
-  await recordApproval(ctx!.email, row.id, "APPROVED", comments);
-
-  return jsonResponse(ok({ id: row.id, status: "APPROVED" }), 200);
+  const b = (body ?? {}) as Record<string, unknown>;
+  const { data, error } = await db.rpc("phase5_manager_decide_reservation", {
+    p_reservation_id: p.id,
+    p_decision: "APPROVE",
+    p_notes: String(b.comments ?? "Final availability and operational review confirmed."),
+    p_actor_id: ctx!.userId,
+    p_actor_email: ctx!.email,
+    p_actor_role: "FACILITIES_MANAGER",
+  });
+  if (error) throw new Error(`manager approval transaction failed: ${error.message}`);
+  return workflowResponse(data as WorkflowRpcResult, "Reservation approved after final conflict re-check");
 }
 
 async function handleRejectReservation(ctx: AuthContext | null, _req: Request, body: unknown, p: RouteParams) {
-  const { data: r, error } = await db.from("reservations").select("*").eq("id", p.id).maybeSingle();
-  if (error) throw new Error(`reservation lookup failed: ${error.message}`);
-  if (!r) return notFound();
-  const row = r as unknown as ReservationRow;
-
   const b = (body as Record<string, unknown> | null) ?? {};
-  const reason = b.reason != null ? String(b.reason) : "Rejected by facilities manager";
-  const { error: ue } = await db.from("reservations").update({ status: "REJECTED", rejection_reason: reason, updated_by: ctx!.email }).eq("id", row.id);
-  if (ue) throw new Error(`reservation update failed: ${ue.message}`);
-  await recordApproval(ctx!.email, row.id, "REJECTED", b.reason != null ? String(b.reason) : null);
-
-  return jsonResponse(ok({ id: row.id, status: "REJECTED" }), 200);
+  const { data, error } = await db.rpc("phase5_manager_decide_reservation", {
+    p_reservation_id: p.id,
+    p_decision: "REJECT",
+    p_notes: String(b.reason ?? ""),
+    p_actor_id: ctx!.userId,
+    p_actor_email: ctx!.email,
+    p_actor_role: "FACILITIES_MANAGER",
+  });
+  if (error) throw new Error(`manager rejection transaction failed: ${error.message}`);
+  return workflowResponse(data as WorkflowRpcResult, "Reservation rejected with reason recorded");
 }
 
 // --- Room management ---
@@ -1043,14 +1063,21 @@ async function handleOfficerDashboard(_ctx: AuthContext | null, _req: Request) {
 
   const { data: maint, error: me } = await db
     .from("maintenance_schedules")
-    .select("id, title, start_time, end_time, status, room_id, rooms(name)")
+    .select("id, title, start_time, end_time, status, room_id")
     .gte("start_time", dayStartIso(today))
     .lte("start_time", dayEndIso(today));
   if (me) throw new Error(`maintenance load failed: ${me.message}`);
   const maintRows = (maint as unknown as {
     id: string; title: string | null; start_time: string; end_time: string; status: string | null; room_id: string | null;
-    rooms?: { name: string | null } | { name: string | null }[] | null;
   }[]) ?? [];
+  const maintenanceRoomIds = [...new Set(maintRows.map((row) => row.room_id).filter((id): id is string => id != null))];
+  const { data: maintenanceRooms, error: maintenanceRoomsError } = maintenanceRoomIds.length
+    ? await db.from("rooms").select("id, name").in("id", maintenanceRoomIds)
+    : { data: [], error: null };
+  if (maintenanceRoomsError) throw new Error(`maintenance rooms load failed: ${maintenanceRoomsError.message}`);
+  const maintenanceRoomNames = new Map(
+    (maintenanceRooms ?? []).map((room) => [String(room.id), String(room.name)]),
+  );
   const tasksDueToday = maintRows.filter((m) => m.status === "SCHEDULED" || m.status === "IN_PROGRESS").length;
 
   const dailyReservationLoad: Record<string, unknown>[] = [];
@@ -1079,7 +1106,7 @@ async function handleOfficerDashboard(_ctx: AuthContext | null, _req: Request) {
   const maintenanceTasks = maintRows.map((m) => ({
     task: m.title,
     priority: m.status === "IN_PROGRESS" ? "HIGH" : m.status === "SCHEDULED" ? "MEDIUM" : "LOW",
-    location: (Array.isArray(m.rooms) ? m.rooms[0] : m.rooms)?.name ?? "Unknown",
+    location: m.room_id ? (maintenanceRoomNames.get(m.room_id) ?? "Unknown") : "Unknown",
     dueDate: localDatePart(m.start_time),
   }));
 
@@ -1120,11 +1147,13 @@ async function handleOfficerDashboard(_ctx: AuthContext | null, _req: Request) {
 async function handleOfficerMyReservations(ctx: AuthContext | null, _req: Request) {
   const { data, error } = await db
     .from("reservations")
-    .select("*, rooms(name, room_number, floor_number, facility_id, facilities(name, code))")
-    .eq("user_id", ctx!.userId);
+    .select("*, rooms(name, room_number, floor_number, facility_id, facilities(name, code)), users(employee_id, first_name, last_name, department, email)")
+    .eq("is_deleted", false)
+    .order("created_at", { ascending: false });
   if (error) throw new Error(`reservations load failed: ${error.message}`);
   const items = ((data as unknown as ReservationRow[]) ?? []).map((r) => {
     const fac = roomFacility(r);
+    const requester = userOf(r);
     return {
       id: r.id,
       title: r.title,
@@ -1134,6 +1163,15 @@ async function handleOfficerMyReservations(ctx: AuthContext | null, _req: Reques
       status: r.status,
       expectedAttendees: r.expected_attendees,
       rejectionReason: r.rejection_reason,
+      requesterName: requester ? `${requester.first_name ?? ""} ${requester.last_name ?? ""}`.trim() : null,
+      requesterEmail: requester?.email ?? null,
+      requesterDepartment: requester?.department ?? null,
+      officerReviewedAt: r.officer_reviewed_at ?? null,
+      officerReviewNotes: r.officer_review_notes ?? null,
+      managerDecidedAt: r.manager_decided_at ?? null,
+      cancellationReason: r.cancellation_reason ?? null,
+      rescheduleReason: r.reschedule_reason ?? null,
+      scheduleRevision: r.schedule_revision ?? 1,
       roomId: r.room_id,
       roomName: roomName(r),
       roomNumber: roomNumber(r),
@@ -1148,96 +1186,87 @@ async function handleOfficerMyReservations(ctx: AuthContext | null, _req: Reques
 
 async function handleOfficerCreateReservation(ctx: AuthContext | null, _req: Request, body: unknown) {
   const req = (body ?? {}) as Record<string, unknown>;
-  let roomId = "";
-  try {
-    roomId = String(req.roomId);
-  } catch {
-    return badRequest("Room not found", "ROOM_NOT_FOUND");
-  }
-  const { data: room, error: re } = await db.from("rooms").select("*").eq("id", roomId).maybeSingle();
-  if (re) throw new Error(`room lookup failed: ${re.message}`);
-  if (!room) return badRequest("Room not found", "ROOM_NOT_FOUND");
-  const roomRow = room as unknown as { active: boolean | null; status: string | null; open_time: string | null; close_time: string | null; type: string | null; name: string | null };
-  if (roomRow.active !== true) return badRequest("This room is not active and cannot be reserved.", "ROOM_INACTIVE");
-
-  const start = toUtcIso(String(req.startTime ?? ""));
-  const end = toUtcIso(String(req.endTime ?? ""));
-  if (new Date(end).getTime() <= new Date(start).getTime()) {
-    return badRequest("End time must be after start time.", "INVALID_RANGE");
-  }
-  if (new Date(start).getTime() < Date.now()) {
-    return badRequest("Reservation cannot be in the past.", "PAST_TIME");
-  }
-  if (roomRow.open_time && roomRow.close_time) {
-    const startHm = String(req.startTime ?? "").split("T")[1]?.slice(0, 5) ?? "";
-    const endHm = String(req.endTime ?? "").split("T")[1]?.slice(0, 5) ?? "";
-    if (!(startHm >= hhmm(String(roomRow.open_time)).slice(0, 5) && endHm <= hhmm(String(roomRow.close_time)).slice(0, 5))) {
-      return badRequest(
-        `Selected time is outside the room's operating hours (${String(roomRow.open_time).slice(0, 5)} - ${String(roomRow.close_time).slice(0, 5)}).`,
-        "OUTSIDE_OPERATING_HOURS",
-      );
-    }
-  }
-  const maintenanceBlocked = roomRow.status === "MAINTENANCE" || roomRow.status === "OUT_OF_SERVICE"
-    || await hasMaintenanceOverlap(roomId, start, end);
-  if (maintenanceBlocked) {
-    return badRequest("This room is under maintenance for the selected timeframe.", "UNDER_MAINTENANCE");
-  }
-  const conflicts = await conflictingReservations(roomId, start, end);
-  if (conflicts.length > 0) {
-    const conflict = conflicts[0];
-    return badRequest(
-      `Room is already reserved for the selected timeframe (${conflict.start_time} - ${conflict.end_time}).`,
-      "CONFLICT",
-    );
-  }
-
-  const expectedAttendees = req.expectedAttendees != null ? Number.parseInt(String(req.expectedAttendees), 10) : null;
-  const roomText = `${roomRow.name ?? ""} ${roomRow.type ?? ""} ${String(req.category ?? "")}`.toLowerCase();
-  const highRisk = ["vehicle", "bay", "executive", "exec", "restricted", "secure"].some((term) => roomText.includes(term));
-  const approvalTier = highRisk ? "TIER_2" : "TIER_1";
-  const reservationStatus = highRisk ? "PENDING_MANAGER_APPROVAL" : "CONFIRMED";
-  const { data: saved, error: insErr } = await db.from("reservations").insert({
-    room_id: roomId,
-    user_id: ctx!.userId,
-    title: String(req.title ?? "Room Reservation"),
-    description: req.description != null ? String(req.description) : null,
-    start_time: start,
-    end_time: end,
-    expected_attendees: expectedAttendees,
-    status: reservationStatus,
-    created_by: ctx!.email,
-  }).select("id, title, start_time, end_time, status, room_id").single();
-  if (insErr) throw new Error(`reservation insert failed: ${insErr.message}`);
-
-  const result = {
-    id: (saved as { id: string }).id,
-    title: (saved as { title: string }).title,
-    startTime: (saved as { start_time: string }).start_time,
-    endTime: (saved as { end_time: string }).end_time,
-    status: (saved as { status: string }).status,
-    roomId,
-     roomName: (room as { name: string }).name,
-     approvalTier,
-     approvalRoute: highRisk ? "MANAGER_ESCALATION" : "AUTO_APPROVED",
-  };
-   return jsonResponse(ok(result, highRisk ? "Reservation submitted for Facilities Manager approval" : "Reservation auto-approved"), 200);
+  const attendees = Number.parseInt(String(req.expectedAttendees ?? 1), 10);
+  const { data, error } = await db.rpc("phase5_submit_reservation", {
+    p_room_id: String(req.roomId ?? ""),
+    p_user_id: ctx!.userId,
+    p_title: String(req.title ?? ""),
+    p_purpose: String(req.purpose ?? req.description ?? ""),
+    p_description: req.description != null ? String(req.description) : null,
+    p_start: toUtcIso(String(req.startTime ?? "")),
+    p_end: toUtcIso(String(req.endTime ?? "")),
+    p_attendees: Number.isNaN(attendees) ? 0 : attendees,
+    p_actor_email: ctx!.email,
+    p_actor_role: "FACILITIES_OFFICER",
+  });
+  if (error) throw new Error(`reservation submission transaction failed: ${error.message}`);
+  return workflowResponse(data as WorkflowRpcResult, "Reservation submitted for operational review");
 }
 
-async function handleOfficerCancelReservation(ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
-  const { data: r, error } = await db.from("reservations").select("*").eq("id", p.id).maybeSingle();
-  if (error) throw new Error(`reservation lookup failed: ${error.message}`);
-  if (!r) return notFound();
-  const row = r as unknown as ReservationRow;
-  if (row.user_id !== ctx!.userId) {
-    return jsonResponse(fail("You can only cancel your own reservations.", "FORBIDDEN"), 403);
-  }
-  if (row.status === "APPROVED" || row.status === "CHECKED_IN" || row.status === "COMPLETED") {
-    return badRequest(`A ${String(row.status).toLowerCase()} reservation cannot be cancelled by the requester.`, "INVALID_STATUS");
-  }
-  const { data: saved, error: ue } = await db.from("reservations").update({ status: "CANCELLED", updated_by: ctx!.email }).eq("id", row.id).select("id, status").single();
-  if (ue) throw new Error(`reservation update failed: ${ue.message}`);
-  return jsonResponse(ok({ id: (saved as { id: string }).id, status: (saved as { status: string }).status }, "Reservation cancelled successfully"), 200);
+async function handleOfficerCancelReservation(ctx: AuthContext | null, _req: Request, body: unknown, p: RouteParams) {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const { data, error } = await db.rpc("phase5_cancel_reservation", {
+    p_reservation_id: p.id,
+    p_reason: String(b.reason ?? "Cancelled by Facilities Officer."),
+    p_actor_id: ctx!.userId,
+    p_actor_email: ctx!.email,
+    p_actor_role: "FACILITIES_OFFICER",
+  });
+  if (error) throw new Error(`reservation cancellation transaction failed: ${error.message}`);
+  return workflowResponse(data as WorkflowRpcResult, "Reservation cancelled and slot released");
+}
+
+async function handleOfficerReviewReservation(ctx: AuthContext | null, _req: Request, body: unknown, p: RouteParams) {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const { data, error } = await db.rpc("phase5_officer_review_reservation", {
+    p_reservation_id: p.id,
+    p_notes: String(b.notes ?? ""),
+    p_actor_id: ctx!.userId,
+    p_actor_email: ctx!.email,
+    p_actor_role: "FACILITIES_OFFICER",
+  });
+  if (error) throw new Error(`operational review transaction failed: ${error.message}`);
+  return workflowResponse(data as WorkflowRpcResult, "Operational review completed and forwarded to Facilities Manager");
+}
+
+async function handleOfficerRescheduleReservation(ctx: AuthContext | null, _req: Request, body: unknown, p: RouteParams) {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const attendees = Number.parseInt(String(b.expectedAttendees ?? 1), 10);
+  const { data, error } = await db.rpc("phase5_reschedule_reservation", {
+    p_reservation_id: p.id,
+    p_start: toUtcIso(String(b.startTime ?? "")),
+    p_end: toUtcIso(String(b.endTime ?? "")),
+    p_attendees: Number.isNaN(attendees) ? 0 : attendees,
+    p_reason: String(b.reason ?? ""),
+    p_actor_id: ctx!.userId,
+    p_actor_email: ctx!.email,
+    p_actor_role: "FACILITIES_OFFICER",
+  });
+  if (error) throw new Error(`reservation reschedule transaction failed: ${error.message}`);
+  return workflowResponse(data as WorkflowRpcResult, "Reservation rescheduled; review and approval reset");
+}
+
+async function handleConfirmReservation(ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
+  const { data, error } = await db.rpc("phase5_confirm_reservation", {
+    p_reservation_id: p.id,
+    p_actor_id: ctx!.userId,
+    p_actor_email: ctx!.email,
+    p_actor_role: "FACILITIES_OFFICER",
+  });
+  if (error) throw new Error(`reservation confirmation transaction failed: ${error.message}`);
+  return workflowResponse(data as WorkflowRpcResult, "Reservation confirmed for facility use");
+}
+
+async function handleCompleteReservation(ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
+  const actorRole = ctx!.roles.includes("FACILITIES_MANAGER") ? "FACILITIES_MANAGER" : "FACILITIES_OFFICER";
+  const { data, error } = await db.rpc("phase5_complete_reservation", {
+    p_reservation_id: p.id,
+    p_actor_id: ctx!.userId,
+    p_actor_email: ctx!.email,
+    p_actor_role: actorRole,
+  });
+  if (error) throw new Error(`reservation completion transaction failed: ${error.message}`);
+  return workflowResponse(data as WorkflowRpcResult, "Reservation completed");
 }
 
 // ---------------------------------------------------------------------------
@@ -1384,26 +1413,25 @@ async function handleCreateReservationFacility(ctx: AuthContext | null, _req: Re
   const roomId = b.room != null && (b.room as Record<string, unknown>).id != null
     ? String((b.room as Record<string, unknown>).id)
     : String(b.roomId ?? "");
-  const start = toUtcIso(String(b.startTime ?? ""));
-  const end = toUtcIso(String(b.endTime ?? ""));
-
-  const conflicts = await conflictingReservations(roomId, start, end);
-  if (conflicts.length > 0) {
-    return badRequest("Room is already reserved for the selected timeframe.", "CONFLICT");
-  }
-  const { data: saved, error } = await db.from("reservations").insert({
-    room_id: roomId,
-    user_id: b.reservedBy != null && (b.reservedBy as Record<string, unknown>).id != null ? String((b.reservedBy as Record<string, unknown>).id) : String(b.userId ?? ""),
-    title: b.title != null ? String(b.title) : "Room Reservation",
-    description: b.description != null ? String(b.description) : null,
-    start_time: start,
-    end_time: end,
-    expected_attendees: b.expectedAttendees != null ? Number.parseInt(String(b.expectedAttendees), 10) : null,
-    status: "APPROVED",
-    created_by: ctx!.email,
-  }).select("*").single();
-  if (error) throw new Error(`reservation insert failed: ${error.message}`);
-  return jsonResponse(ok(saved, "Reservation confirmed successfully"), 200);
+  const userId = b.reservedBy != null && (b.reservedBy as Record<string, unknown>).id != null
+    ? String((b.reservedBy as Record<string, unknown>).id)
+    : String(b.userId ?? ctx!.userId);
+  const attendees = Number.parseInt(String(b.expectedAttendees ?? 1), 10);
+  const actorRole = ctx!.roles.includes("FACILITIES_MANAGER") ? "FACILITIES_MANAGER" : "FACILITIES_OFFICER";
+  const { data, error } = await db.rpc("phase5_submit_reservation", {
+    p_room_id: roomId,
+    p_user_id: userId,
+    p_title: String(b.title ?? ""),
+    p_purpose: String(b.purpose ?? b.description ?? ""),
+    p_description: b.description != null ? String(b.description) : null,
+    p_start: toUtcIso(String(b.startTime ?? "")),
+    p_end: toUtcIso(String(b.endTime ?? "")),
+    p_attendees: Number.isNaN(attendees) ? 0 : attendees,
+    p_actor_email: ctx!.email,
+    p_actor_role: actorRole,
+  });
+  if (error) throw new Error(`reservation submission transaction failed: ${error.message}`);
+  return workflowResponse(data as WorkflowRpcResult, "Reservation submitted for operational review");
 }
 
 // ---------------------------------------------------------------------------
@@ -1879,11 +1907,13 @@ async function handleAiApprovalSuggest(_ctx: AuthContext | null, _req: Request, 
 // ---------------------------------------------------------------------------
 
 const routes = [
+  ...managementRoutes,
   // Facilities Manager
   { method: "GET", path: "/facilities-manager/dashboard/kpi", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleManagerKpi },
   { method: "GET", path: "/facilities-manager/reservations", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleManagerReservations },
   { method: "POST", path: "/facilities-manager/reservations/:id/approve", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleApproveReservation },
   { method: "POST", path: "/facilities-manager/reservations/:id/reject", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleRejectReservation },
+  { method: "POST", path: "/facilities-manager/reservations/:id/complete", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleCompleteReservation },
   { method: "POST", path: "/facilities-manager/reservations/:id/ai/approval-suggest", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleAiApprovalSuggest },
   { method: "GET", path: "/facilities-manager/rooms/summary", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleRoomSummary },
   { method: "GET", path: "/facilities-manager/rooms", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleListRooms },
@@ -1896,16 +1926,18 @@ const routes = [
   { method: "GET", path: "/facilities-manager/inventory-alerts", guard: { kind: "assignedRoles", roles: ["FACILITIES_MANAGER"] }, handler: handleInventoryAlerts },
   { method: "POST", path: "/facilities-manager/inventory-alerts/reorder", guard: { kind: "assignedRoles", roles: ["FACILITIES_MANAGER"] }, handler: handleInitiateReorder },
   { method: "GET", path: "/facilities-manager/calendar", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleCalendar },
-  { method: "GET", path: "/facilities-manager/analytics", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleAnalytics },
-  { method: "GET", path: "/facilities-manager/reports", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleReports },
 
   // Facilities Officer
   { method: "POST", path: "/facilities-officer/rooms/available", guard: { kind: "roles", roles: ["FACILITIES_OFFICER"] }, handler: handleOfficerRoomsAvailable },
   { method: "GET", path: "/facilities-officer/rooms/filters", guard: { kind: "roles", roles: ["FACILITIES_OFFICER"] }, handler: handleOfficerRoomFilters },
   { method: "GET", path: "/facilities-officer/dashboard/summary", guard: { kind: "roles", roles: ["FACILITIES_OFFICER"] }, handler: handleOfficerDashboard },
   { method: "GET", path: "/facilities-officer/reservations", guard: { kind: "roles", roles: ["FACILITIES_OFFICER"] }, handler: handleOfficerMyReservations },
-  { method: "POST", path: "/facilities-officer/reservations", guard: { kind: "roles", roles: ["FACILITIES_OFFICER"] }, handler: handleOfficerCreateReservation },
-  { method: "POST", path: "/facilities-officer/reservations/:id/cancel", guard: { kind: "roles", roles: ["FACILITIES_OFFICER"] }, handler: handleOfficerCancelReservation },
+  { method: "POST", path: "/facilities-officer/reservations", guard: { kind: "assignedRoles", roles: ["FACILITIES_OFFICER"] }, handler: handleOfficerCreateReservation },
+  { method: "POST", path: "/facilities-officer/reservations/:id/review", guard: { kind: "assignedRoles", roles: ["FACILITIES_OFFICER"] }, handler: handleOfficerReviewReservation },
+  { method: "POST", path: "/facilities-officer/reservations/:id/reschedule", guard: { kind: "assignedRoles", roles: ["FACILITIES_OFFICER"] }, handler: handleOfficerRescheduleReservation },
+  { method: "POST", path: "/facilities-officer/reservations/:id/cancel", guard: { kind: "assignedRoles", roles: ["FACILITIES_OFFICER"] }, handler: handleOfficerCancelReservation },
+  { method: "POST", path: "/facilities-officer/reservations/:id/confirm", guard: { kind: "assignedRoles", roles: ["FACILITIES_OFFICER"] }, handler: handleConfirmReservation },
+  { method: "POST", path: "/facilities-officer/reservations/:id/complete", guard: { kind: "assignedRoles", roles: ["FACILITIES_OFFICER"] }, handler: handleCompleteReservation },
   { method: "POST", path: "/facilities-officer/ai/suggest", guard: { kind: "roles", roles: ["FACILITIES_OFFICER"] }, handler: handleAiSuggestRooms },
   { method: "POST", path: "/facilities-officer/ai/draft", guard: { kind: "roles", roles: ["FACILITIES_OFFICER"] }, handler: handleAiDraft },
   { method: "POST", path: "/facilities-officer/ai/validate", guard: { kind: "roles", roles: ["FACILITIES_OFFICER"] }, handler: handleAiValidate },

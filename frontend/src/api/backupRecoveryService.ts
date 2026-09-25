@@ -25,6 +25,19 @@ export interface BackupSchedule {
   enabled: boolean;
   updatedAt?: string;
   updatedBy?: string;
+  lastDispatchedAt?: string;
+  lastSuccessAt?: string;
+  lastFailureAt?: string;
+  consecutiveFailures?: number;
+}
+
+export interface BackupHealth {
+  lastSuccess: { id: string; completed_at: string; verification_state: string } | null;
+  lastFailure: { id: string; completed_at: string; failure_reason: string } | null;
+  scheduleEnabled: boolean;
+  cronExpression: string | null;
+  nextSchedule: string | null;
+  consecutiveFailures: number;
 }
 
 function unwrap<T>(response: { data?: { data?: T } }): T {
@@ -69,6 +82,37 @@ function normalizeRecord(raw: Record<string, unknown>): BackupRecord {
       ? String(raw.exportFormat ?? raw.export_format)
       : undefined,
     notes: typeof raw.notes === 'string' ? raw.notes : undefined,
+    verificationState: typeof (raw.verificationState ?? raw.verification_state) === 'string'
+      ? String(raw.verificationState ?? raw.verification_state) : undefined,
+    verifiedAt: typeof (raw.verifiedAt ?? raw.verified_at) === 'string'
+      ? String(raw.verifiedAt ?? raw.verified_at) : undefined,
+    retentionExpiresAt: typeof (raw.retentionExpiresAt ?? raw.retention_expires_at) === 'string'
+      ? String(raw.retentionExpiresAt ?? raw.retention_expires_at) : undefined,
+    protected: (raw.protected ?? raw.is_protected) === true,
+    protectedAt: typeof (raw.protectedAt ?? raw.protected_at) === 'string'
+      ? String(raw.protectedAt ?? raw.protected_at) : undefined,
+    sourceEnvironment: typeof (raw.sourceEnvironment ?? raw.source_environment) === 'string'
+      ? String(raw.sourceEnvironment ?? raw.source_environment) : undefined,
+    schemaVersion: typeof (raw.schemaVersion ?? raw.schema_version) === 'string'
+      ? String(raw.schemaVersion ?? raw.schema_version) : undefined,
+    manifestVersion: typeof (raw.manifestVersion ?? raw.manifest_version) === 'number'
+      ? Number(raw.manifestVersion ?? raw.manifest_version) : undefined,
+    manifestPath: typeof (raw.manifestPath ?? raw.manifest_path) === 'string'
+      ? String(raw.manifestPath ?? raw.manifest_path) : undefined,
+    tableCount: typeof (raw.tableCount ?? raw.table_count) === 'number'
+      ? Number(raw.tableCount ?? raw.table_count) : undefined,
+    rowCount: typeof (raw.rowCount ?? raw.row_count) === 'number'
+      ? Number(raw.rowCount ?? raw.row_count) : undefined,
+    storageObjectCount: typeof (raw.storageObjectCount ?? raw.storage_object_count) === 'number'
+      ? Number(raw.storageObjectCount ?? raw.storage_object_count) : undefined,
+    failureReason: typeof (raw.failureReason ?? raw.failure_reason) === 'string'
+      ? String(raw.failureReason ?? raw.failure_reason) : undefined,
+    restoreTestStatus: typeof (raw.restoreTestStatus ?? raw.restore_test_status) === 'string'
+      ? String(raw.restoreTestStatus ?? raw.restore_test_status) : undefined,
+    lastRestoreTestAt: typeof (raw.lastRestoreTestAt ?? raw.last_restore_test_at) === 'string'
+      ? String(raw.lastRestoreTestAt ?? raw.last_restore_test_at) : undefined,
+    cleanupStatus: typeof (raw.cleanupStatus ?? raw.cleanup_status) === 'string'
+      ? String(raw.cleanupStatus ?? raw.cleanup_status) : undefined,
   };
 }
 
@@ -105,46 +149,24 @@ export async function exportGranularBackup(
 }
 
 export async function loadBackupSchedule(): Promise<BackupSchedule> {
-  try {
-    const schedule = await request<BackupSchedule>(() => apiClient.get('/admin/backups/schedule'));
-    return schedule ?? DEFAULT_SCHEDULE;
-  } catch {
-    try {
-      const response = await apiClient.get('/admin/config');
-      const config = (response.data?.data as Array<{ configKey?: string; configValue?: string }> | undefined)
-        ?.find((item) => item.configKey === BACKUP_SCHEDULE_CONFIG_KEY);
-      if (config?.configValue) {
-        const parsed = JSON.parse(config.configValue) as Partial<BackupSchedule>;
-        return {
-          ...DEFAULT_SCHEDULE,
-          cronExpression: parsed.cronExpression === '0 0 * * 0' ? '0 0 * * 0' : '0 0 * * *',
-          enabled: parsed.enabled === true,
-        };
-      }
-    } catch {
-    }
-    return DEFAULT_SCHEDULE;
-  }
+  const schedule = await request<BackupSchedule>(() => apiClient.get('/admin/backups/schedule'));
+  return schedule ?? DEFAULT_SCHEDULE;
 }
 
 export async function saveBackupSchedule(schedule: Pick<BackupSchedule, 'cronExpression' | 'enabled'>): Promise<BackupSchedule> {
-  try {
-    return await request<BackupSchedule>(() => apiClient.put('/admin/backups/schedule', schedule));
-  } catch {
-    const value = JSON.stringify(schedule);
-    const response = await apiClient.put(`/admin/config/${BACKUP_SCHEDULE_CONFIG_KEY}`, {
-      value,
-      description: 'Automated backup schedule persisted while the dedicated backup schedule endpoint is unavailable.',
-      category: 'BACKUP',
-    });
-    const config = response.data?.data as { updatedAt?: string; updatedBy?: string } | undefined;
-    return {
-      ...DEFAULT_SCHEDULE,
-      ...schedule,
-      updatedAt: config?.updatedAt,
-      updatedBy: config?.updatedBy,
-    };
-  }
+  return await request<BackupSchedule>(() => apiClient.put('/admin/backups/schedule', schedule));
+}
+
+export async function loadBackupHealth(): Promise<BackupHealth> {
+  return await request<BackupHealth>(() => apiClient.get('/admin/backups/health'));
+}
+
+export async function setBackupProtection(id: string, protectedValue: boolean): Promise<BackupRecord> {
+  const row = await request<Record<string, unknown>>(() => apiClient.patch(
+    `/admin/backups/${encodeURIComponent(id)}/protection`,
+    { protected: protectedValue },
+  ));
+  return normalizeRecord(row);
 }
 
 export type BackupDownloadResult = {

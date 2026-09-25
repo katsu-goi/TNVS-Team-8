@@ -5,6 +5,14 @@ import { governanceService, WorkspacePayload } from '../../api/governanceService
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { OversightPanel } from '../oversight';
 import { RecordsDisposalConsole } from '../records/RecordsDisposalConsole';
+import { ComplianceOfficerDashboard } from '../compliance/ComplianceOfficerDashboard';
+import {
+  CoComplianceAlertsPage, CoContractsPage, CoDisposalApprovalsPage,
+  CoDocumentsPage, CoRetentionPoliciesPage, CoAuditLogsPage,
+} from '../compliance/ComplianceOfficerPages';
+import { EmptyState, ReasonDialog } from '../ui/SharedUI';
+import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
+import { DashboardHero } from '../ui/DashboardPrimitives';
 import type { WorkspaceConfig } from './workspaceConfig';
 
 const toneClass = {
@@ -44,6 +52,15 @@ function rowDetails(row: Record<string, any>): Array<[string, string]> {
 
 export const RoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: string }> = ({ config, section }) => {
   if (config.slug === 'records' && section === 'disposal') return <RecordsDisposalConsole />;
+  if (config.slug === 'compliance') {
+    if (section === 'dashboard') return <ComplianceOfficerDashboard />;
+    if (section === 'documents') return <CoDocumentsPage />;
+    if (section === 'contracts') return <CoContractsPage />;
+    if (section === 'retention') return <CoRetentionPoliciesPage />;
+    if (section === 'alerts') return <CoComplianceAlertsPage />;
+    if (section === 'disposal') return <CoDisposalApprovalsPage />;
+    if (section === 'audit') return <CoAuditLogsPage />;
+  }
   return <GenericRoleWorkspacePage config={config} section={section} />;
 };
 
@@ -52,6 +69,15 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState('');
   const [revealed, setRevealed] = useState<Record<string, Record<string, any>>>({});
+  const [reasonBusy, setReasonBusy] = useState(false);
+  const [reasonAction, setReasonAction] = useState<null | {
+    title: string;
+    description?: string;
+    label?: string;
+    confirmLabel: string;
+    tone?: 'primary' | 'danger' | 'success';
+    submit: (reason: string) => Promise<boolean>;
+  }>(null);
   const revision = useRealtimeSyncStore((state) => state.revision);
   const item = useMemo(() => config.nav.find((navItem) => navItem.section === section) || config.nav[0], [config, section]);
 
@@ -66,14 +92,16 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
 
   useEffect(() => { load(); }, [load, revision]);
 
-  const perform = async (id: string, action: () => Promise<void>) => {
+  const perform = async (id: string, action: () => Promise<void>): Promise<boolean> => {
     setBusyId(id);
     setError('');
     try {
       await action();
       await load();
+      return true;
     } catch (reason) {
       setError(extractErrorMessage(reason));
+      return false;
     } finally {
       setBusyId('');
     }
@@ -84,10 +112,7 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
       return (
         <div className="flex gap-2">
           <button onClick={() => perform(row.id, () => governanceService.decideLegalContract(row.id, 'COUNSEL_APPROVED'))} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700">Approve & Execute</button>
-          <button onClick={() => {
-            const comments = window.prompt('Review comments required for revision:')?.trim();
-            if (comments) perform(row.id, () => governanceService.decideLegalContract(row.id, 'REJECTED_REVISION', comments));
-          }} className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-bold text-white hover:bg-rose-700">Return for Revision</button>
+          <button onClick={() => setReasonAction({ title: 'Return contract for revision', description: 'Explain the changes required before this contract can be approved.', label: 'Review comments', confirmLabel: 'Return for revision', tone: 'danger', submit: (comments) => perform(row.id, () => governanceService.decideLegalContract(row.id, 'REJECTED_REVISION', comments)) })} className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-bold text-white hover:bg-rose-700">Return for Revision</button>
         </div>
       );
     }
@@ -95,10 +120,7 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
       return (
         <div className="flex gap-2">
           <button onClick={() => perform(row.id, () => governanceService.decideManagerSignoff(row.id, true))} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white">Authorize</button>
-          <button onClick={() => {
-            const comments = window.prompt('Revision comments:')?.trim();
-            if (comments) perform(row.id, () => governanceService.decideManagerSignoff(row.id, false, comments));
-          }} className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-bold text-white">Reject & Return</button>
+          <button onClick={() => setReasonAction({ title: 'Reject management sign-off', description: 'Provide the revision comments that will be sent back with this item.', label: 'Revision comments', confirmLabel: 'Reject and return', tone: 'danger', submit: (comments) => perform(row.id, () => governanceService.decideManagerSignoff(row.id, false, comments)) })} className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-bold text-white">Reject & Return</button>
         </div>
       );
     }
@@ -106,38 +128,33 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
       return (
         <div className="flex gap-2">
           <button onClick={() => perform(row.id, () => governanceService.decideDepartmentApproval(row.id, 'APPROVED'))} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white">Approve</button>
-          <button onClick={() => {
-            const comments = window.prompt('Return comments:')?.trim();
-            if (comments) perform(row.id, () => governanceService.decideDepartmentApproval(row.id, 'RETURNED', comments));
-          }} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-bold text-white">Return</button>
+          <button onClick={() => setReasonAction({ title: 'Return department approval', description: 'Explain why this item is being returned for further work.', label: 'Return comments', confirmLabel: 'Return item', tone: 'primary', submit: (comments) => perform(row.id, () => governanceService.decideDepartmentApproval(row.id, 'RETURNED', comments)) })} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-bold text-white">Return</button>
         </div>
       );
     }
     if (config.slug === 'privacy' && ['inventory', 'visitors', 'biometrics'].includes(section)) {
       return (
-        <button onClick={async () => {
-          const justification = window.prompt('State the reason for revealing protected data:')?.trim();
-          if (!justification) return;
-          setBusyId(row.id);
-          try {
-            const result = await governanceService.revealPrivacyLog(row.id, justification);
-            setRevealed((current) => ({ ...current, [row.id]: result.rawPii }));
-          } catch (reason) {
-            setError(extractErrorMessage(reason));
-          } finally {
-            setBusyId('');
-          }
-        }} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700"><Eye className="h-4 w-4" />Reveal</button>
+        <button onClick={() => setReasonAction({
+          title: 'Reveal protected data', description: 'This access is audited. State the business reason for viewing the protected values.', label: 'Access justification', confirmLabel: 'Reveal data', tone: 'primary',
+          submit: async (justification) => {
+            setBusyId(row.id);
+            try {
+              const result = await governanceService.revealPrivacyLog(row.id, justification);
+              setRevealed((current) => ({ ...current, [row.id]: result.rawPii }));
+              return true;
+            } catch (reason) {
+              setError(extractErrorMessage(reason));
+              return false;
+            } finally { setBusyId(''); }
+          },
+        })} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700"><Eye className="h-4 w-4" />Reveal</button>
       );
     }
     if (config.slug === 'privacy' && section === 'cctv' && row.status === 'PENDING_PRIVACY_APPROVAL') {
       return (
         <div className="flex gap-2">
           {[true, false].map((approve) => (
-            <button key={String(approve)} onClick={() => {
-              const justification = window.prompt(`${approve ? 'Approval' : 'Denial'} justification:`)?.trim();
-              if (justification) perform(row.id, () => governanceService.decideCctvExport(row.id, approve, justification));
-            }} className={`rounded-lg px-3 py-2 text-xs font-bold text-white ${approve ? 'bg-emerald-600' : 'bg-rose-600'}`}>{approve ? 'Approve Export' : 'Deny'}</button>
+            <button key={String(approve)} onClick={() => setReasonAction({ title: `${approve ? 'Approve' : 'Deny'} CCTV export`, description: 'Record the justification for this privacy decision.', label: 'Decision justification', confirmLabel: approve ? 'Approve export' : 'Deny export', tone: approve ? 'success' : 'danger', submit: (justification) => perform(row.id, () => governanceService.decideCctvExport(row.id, approve, justification)) })} className={`rounded-lg px-3 py-2 text-xs font-bold text-white ${approve ? 'bg-emerald-600' : 'bg-rose-600'}`}>{approve ? 'Approve Export' : 'Deny'}</button>
           ))}
         </div>
       );
@@ -148,25 +165,18 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
     return null;
   };
 
-  if (!payload && !error) return <div className="h-48 animate-pulse rounded-lg bg-slate-200" />;
+  if (!payload && !error) return <PortalLoadingOverlay message={`Loading ${item.label.toLowerCase()}...`} />;
 
   return (
     <div className="space-y-6">
-      <section className="dashboard-hero">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="hero-eyebrow text-xs font-bold uppercase tracking-wider text-[#FFBF2F]">{config.portalLabel}</p>
-            <h1 className="mt-1 text-3xl font-bold text-slate-950">{item.label}</h1>
-            <p className="mt-1 text-sm text-slate-400">{config.description}</p>
-          </div>
-          <div className="flex gap-2">
+      <DashboardHero eyebrow={config.portalLabel} title={item.label} subtitle={config.description} actions={
+          <>
             {config.slug === 'privacy' && section === 'retention' && (
-              <button onClick={() => perform('retention', async () => { await governanceService.runRetention(); })} className="rounded-lg bg-[#D02F34] px-4 py-2 text-xs font-bold text-white">Run Retention Enforcement</button>
+              <button onClick={() => perform('retention', async () => { await governanceService.runRetention(); })} className="rounded-control bg-brand-500 px-4 py-2 text-xs font-bold text-white hover:bg-brand-700">Run Retention Enforcement</button>
             )}
             <button onClick={load} title="Refresh" className="rounded-lg border border-slate-300 bg-white p-2 text-slate-600 hover:bg-slate-50"><RefreshCw className="h-4 w-4" /></button>
-          </div>
-        </div>
-      </section>
+          </>
+      } />
 
       {error && (
         <div className="flex items-center gap-3 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
@@ -187,24 +197,19 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
 
       {config.slug === 'compliance-management' && section === 'team-supervision' && <OversightPanel />}
 
-      {config.slug === 'compliance' && section === 'settings' ? (
-        <section className="flex min-h-64 items-center justify-center border-y border-dashed border-slate-300 text-sm text-slate-400">
-          Reserved for future profile and system settings.
-        </section>
-      ) : (
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_2px_8px_rgba(101,24,30,0.05)]">
+      <section className="overflow-hidden rounded-card border border-slate-200 bg-white shadow-card">
           <div className="border-b border-slate-200 px-5 py-4">
             <h2 className="text-sm font-bold text-slate-900">Live Workspace Records</h2>
             <p className="mt-1 text-xs text-slate-500">Supabase cloud data · updated {payload?.generatedAt ? new Date(payload.generatedAt).toLocaleString() : ''}</p>
           </div>
           {!payload?.rows?.length ? (
-            <div className="p-12 text-center text-sm text-slate-400">No records are currently available for this workspace.</div>
+            <EmptyState className="rounded-none border-0" description="No records are currently available for this workspace." />
           ) : (
             <div className="divide-y divide-slate-100">
               {payload.rows.map((row) => {
                 const status = rowStatus(row);
                 return (
-                  <article key={row.id || rowTitle(row)} className="p-5 transition-colors hover:bg-[#FFF7F7]">
+                  <article key={row.id || rowTitle(row)} className="p-5 transition-colors hover:bg-[var(--hirna-surface-hover)]">
                     <div className="flex flex-col items-start justify-between gap-5 lg:flex-row">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
@@ -220,15 +225,14 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
                           ))}
                         </dl>
                       </div>
-                      <div className="shrink-0">{busyId === row.id ? <Loader2 className="h-5 w-5 animate-spin text-[#D02F34]" /> : renderActions(row)}</div>
+                      <div className="shrink-0">{busyId === row.id ? <Loader2 className="h-5 w-5 animate-spin text-brand-500" /> : renderActions(row)}</div>
                     </div>
                   </article>
                 );
               })}
             </div>
           )}
-        </section>
-      )}
+      </section>
 
       {payload?.alerts?.length ? (
         <section className="rounded-lg border border-amber-200 bg-amber-50 p-5">
@@ -248,6 +252,26 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
           </div>
         </section>
       ) : null}
+      <ReasonDialog
+        open={Boolean(reasonAction)}
+        title={reasonAction?.title || ''}
+        description={reasonAction?.description}
+        label={reasonAction?.label}
+        confirmLabel={reasonAction?.confirmLabel}
+        tone={reasonAction?.tone}
+        busy={reasonBusy}
+        onClose={() => setReasonAction(null)}
+        onConfirm={async (reason) => {
+          if (!reasonAction) return;
+          setReasonBusy(true);
+          try {
+            const succeeded = await reasonAction.submit(reason);
+            if (succeeded) setReasonAction(null);
+            else throw new Error('The action failed. Your reason has been preserved.');
+          }
+          finally { setReasonBusy(false); }
+        }}
+      />
     </div>
   );
 };

@@ -5,10 +5,12 @@ import {
   FileText, Bell, Settings, Layers,
   RefreshCw, Wifi, WifiOff,
   Search, ChevronLeft, ChevronRight,} from 'lucide-react';
-import { loadConfigs, updateConfig, loadIntegrations, loadNotifications, markNotificationRead } from '../../api/adminService';
+import { loadConfigs, updateConfig, loadIntegrations } from '../../api/adminService';
+import { notificationService } from '../../api/notificationService';
 import { securityService } from '../../api/securityService';
 import { SecurityThreatSection } from '../security/SecurityThreatSection';
 import { SubsystemHealthGrid } from './SubsystemHealthGrid';
+import { DashboardHero } from '../ui/DashboardPrimitives';
 import type {
   SystemConfiguration, SecurityLog,
 } from '../../types';
@@ -53,12 +55,7 @@ function useQuery<T>(fetcher: () => Promise<T>) {
 }
 
 const PageHeader: React.FC<{ icon: React.ElementType; title: string; subtitle: string }> = ({ icon: Icon, title, subtitle }) => (
-  <div className="glass-panel p-5 flex items-center justify-between mb-6">
-    <div className="flex items-center space-x-4">
-      <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200"><Icon className="w-5 h-5 text-emerald-600" /></div>
-      <div><h1 className="text-2xl font-bold font-heading text-slate-900">{title}</h1><p className="text-sm text-slate-500">{subtitle}</p></div>
-    </div>
-  </div>
+  <div className="mb-6"><DashboardHero title={title} subtitle={subtitle} actions={<span className="rounded-xl border border-white/15 bg-white/10 p-2.5 text-white"><Icon className="h-5 w-5" /></span>} /></div>
 );
 
 export const IntegrationsPage: React.FC = () => {
@@ -198,7 +195,7 @@ export const AuditLogsPage: React.FC = () => {
     try {
       const params: Record<string, string> = { page: String(page), size: '20' };
       if (riskFilter) params.riskLevel = riskFilter;
-      const result = await securityService.getLogs(params);
+      const result = await securityService.getAuditLogs(params);
       setLogs(result);
     } catch (err: any) {
       setError(err?.message || 'Failed to load logs');
@@ -346,7 +343,7 @@ export const SettingsPage: React.FC = () => {
 };
 
 export const NotificationsPage: React.FC = () => {
-  const { data, loading, error, retry } = useQuery(loadNotifications);
+  const { data, loading, error, retry } = useQuery(() => notificationService.getNotifications());
   const [filter, setFilter] = useState('');
 
   if (loading) return <LoadingSkeleton />;
@@ -377,7 +374,7 @@ export const NotificationsPage: React.FC = () => {
                 n.severity === 'CRITICAL' ? 'bg-rose-50 border-rose-200' :
                 n.severity === 'WARNING' ? 'bg-amber-50 border-amber-200' :
                 'bg-slate-50 border-slate-200'
-              }`} onClick={() => { if (!n.read) { markNotificationRead(n.id); retry(); } }}>
+              }`} onClick={() => { if (!n.read) void notificationService.markNotificationRead(n.id).then(retry); }}>
                 {n.severity === 'CRITICAL' ? <AlertCircle className="w-5 h-5 text-rose-500 mt-0.5 shrink-0" /> :
                  n.severity === 'WARNING' ? <AlertTriangle className="w-5 h-5 text-amber-500 mt-0.5 shrink-0" /> :
                  <Bell className="w-5 h-5 text-slate-400 mt-0.5 shrink-0" />}

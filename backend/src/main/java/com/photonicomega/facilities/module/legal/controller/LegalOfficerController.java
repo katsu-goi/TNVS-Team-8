@@ -183,22 +183,6 @@ public class LegalOfficerController {
         return ResponseEntity.ok(ApiResponse.success(toContractDto(c), "Contract submitted for review"));
     }
 
-    @PostMapping("/contracts/{id}/approve")
-    @Operation(summary = "Approve a contract under review")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> approveContract(
-            @PathVariable UUID id, @AuthenticationPrincipal UserDetails userDetails) {
-        Contract c = legalService.approveContract(id, resolveUser(userDetails));
-        return ResponseEntity.ok(ApiResponse.success(toContractDto(c), "Contract approved"));
-    }
-
-    @PostMapping("/contracts/{id}/activate")
-    @Operation(summary = "Activate an approved contract")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> activateContract(
-            @PathVariable UUID id, @AuthenticationPrincipal UserDetails userDetails) {
-        Contract c = legalService.activateContract(id, resolveUser(userDetails));
-        return ResponseEntity.ok(ApiResponse.success(toContractDto(c), "Contract activated"));
-    }
-
     @PostMapping("/contracts/{id}/renew")
     @Operation(summary = "Renew a contract")
     public ResponseEntity<ApiResponse<Map<String, Object>>> renewContract(
@@ -375,7 +359,8 @@ public class LegalOfficerController {
     @Transactional(readOnly = true)
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getAuditLogs() {
         List<Map<String, Object>> result = auditLogRepository
-                .findByCreatedAtAfterOrderByCreatedAtDesc(LocalDateTime.now().minusDays(30)).stream()
+                .findByModuleAndCreatedAtAfterOrderByCreatedAtDesc(
+                        "LEGAL", LocalDateTime.now().minusDays(30)).stream()
                 .map(this::toAuditDto).collect(Collectors.toList());
         return ResponseEntity.ok(ApiResponse.success(result, "Audit logs retrieved"));
     }

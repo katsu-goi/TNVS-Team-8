@@ -6,8 +6,8 @@ export const systemMonitoringService = {
     try {
       const res = await apiClient.get('/monitoring/admin/system-monitoring/subsystems');
       return res.data?.data ?? null;
-    } catch (err) {
-      console.warn('Failed to load subsystem health:', err);
+    } catch {
+      console.warn('Failed to load subsystem health; response details were withheld.');
       return null;
     }
   },

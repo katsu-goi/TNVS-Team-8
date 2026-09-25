@@ -29,8 +29,6 @@ interface SecurityThreatState {
   lastEventType: 'EVENT' | 'SYNC' | null;
   lastEventLog: GatewayLogEntry | null;
   diagnostics: ThreatMapDiagnostics | null;
-  testingEvent: boolean;
-  testResult: string | null;
   supabaseChannel: RealtimeChannel | null;
   setWindow: (window: ThreatWindow) => void;
   loadInitial: () => Promise<void>;
@@ -39,7 +37,6 @@ interface SecurityThreatState {
   applyEvent: (event: SecurityThreatEvent) => void;
   applySync: (event: SecurityThreatEvent) => void;
   loadDiagnostics: () => Promise<void>;
-  triggerTestEvent: () => Promise<void>;
 }
 
 const upsertThreat = (list: IpThreatEntry[], threat: IpThreatEntry): IpThreatEntry[] => {
@@ -95,8 +92,6 @@ export const useSecurityThreatStore = create<SecurityThreatState>((set, get) => 
   lastEventType: null,
   lastEventLog: null,
   diagnostics: null,
-  testingEvent: false,
-  testResult: null,
   supabaseChannel: null,
 
   setWindow: (window) => {
@@ -204,20 +199,6 @@ export const useSecurityThreatStore = create<SecurityThreatState>((set, get) => 
       set({ diagnostics });
     } catch {
       set({ diagnostics: null });
-    }
-  },
-
-  triggerTestEvent: async () => {
-    set({ testingEvent: true, testResult: null });
-    try {
-      const result = await securityThreatService.triggerTestEvent();
-      set({ testResult: result
-        ? `Event created: ${result.ip ?? 'n/a'} (${result.privateIp ? 'LOCAL/PRIVATE' : 'geolocated'})`
-        : 'Test event returned no result.' });
-    } catch {
-      set({ testResult: 'Test event failed - check connection and permissions.' });
-    } finally {
-      set({ testingEvent: false });
     }
   },
 }));

@@ -236,14 +236,6 @@ public class ProcurementOfficerController {
         return ResponseEntity.ok(ApiResponse.success(toContractDto(c), "Contract submitted for review"));
     }
 
-    @PostMapping("/contracts/{id}/approve")
-    @Operation(summary = "Approve a contract under review")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> approveContract(
-            @PathVariable UUID id, @AuthenticationPrincipal UserDetails userDetails) {
-        Contract c = procurementService.approveContract(id, resolveUser(userDetails));
-        return ResponseEntity.ok(ApiResponse.success(toContractDto(c), "Contract approved"));
-    }
-
     @PostMapping("/contracts/{id}/activate")
     @Operation(summary = "Activate an approved contract")
     public ResponseEntity<ApiResponse<Map<String, Object>>> activateContract(
@@ -490,7 +482,8 @@ public class ProcurementOfficerController {
     @Transactional(readOnly = true)
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getAuditLogs() {
         List<Map<String, Object>> result = auditLogRepository
-                .findByCreatedAtAfterOrderByCreatedAtDesc(LocalDateTime.now().minusDays(30)).stream()
+                .findByModuleAndCreatedAtAfterOrderByCreatedAtDesc(
+                        "PROCUREMENT", LocalDateTime.now().minusDays(30)).stream()
                 .map(this::toAuditDto).collect(Collectors.toList());
         return ResponseEntity.ok(ApiResponse.success(result, "Audit logs retrieved"));
     }

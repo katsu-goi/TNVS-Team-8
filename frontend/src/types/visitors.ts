@@ -18,6 +18,7 @@ export type VerificationStatus = 'PENDING' | 'VERIFIED' | 'REJECTED' | 'ERROR';
 export type WatchlistStatus = 'CLEAR' | 'FLAGGED';
 
 export type WatchlistEntryStatus = 'ACTIVE' | 'INACTIVE';
+export type VisitorClearanceState = 'CLEAR' | 'REVIEW_REQUIRED' | 'BLOCKED';
 
 /** Components the heuristic parser pulled out of the presented ID. */
 export interface ExtractedIdFields {
@@ -48,6 +49,13 @@ export interface VisitorVerification {
   verifiedBy: string | null;
   notes: string | null;
   createdAt: string | null;
+  automatedClearance: VisitorClearanceState;
+  clearanceState: VisitorClearanceState;
+  matchedWatchlistEntryId: string | null;
+  matchType: 'ID_EXACT' | 'NAME_EXACT' | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  reviewNotes: string | null;
 }
 
 export interface VisitorWatchlistEntry {
@@ -56,6 +64,7 @@ export interface VisitorWatchlistEntry {
   idNumber: string | null;
   reason: string | null;
   status: WatchlistEntryStatus | string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   createdAt: string | null;
 }
 

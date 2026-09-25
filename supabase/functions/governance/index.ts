@@ -2,6 +2,7 @@ import { createHandler, AuthContext, RouteParams } from "../_shared/guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
 import { fail, ok } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
+import { hasAssignedWorkspace } from "../_shared/workspace-access.ts";
 
 const db = adminDb();
 
@@ -19,14 +20,11 @@ const WORKSPACE_BY_ROLE: Record<string, string> = {
 
 const WORKSPACE_ROLES = Object.keys(WORKSPACE_BY_ROLE);
 
-function assignedRole(ctx: AuthContext | null): string | null {
-  if (!ctx) return null;
-  return ctx.user.assignedRoles.find((role) => WORKSPACE_BY_ROLE[role]) ?? null;
-}
-
 function validateWorkspace(ctx: AuthContext | null, workspace: string): Response | null {
-  const role = assignedRole(ctx);
-  if (!role || WORKSPACE_BY_ROLE[role] !== workspace) {
+  const hasWorkspaceRole = ctx
+    ? hasAssignedWorkspace(ctx.user.assignedRoles, workspace, WORKSPACE_BY_ROLE)
+    : false;
+  if (!hasWorkspaceRole) {
     return jsonResponse(fail("This workspace is not assigned to the current account.", "ACCESS_DENIED"), 403);
   }
   return null;
@@ -35,6 +33,10 @@ function validateWorkspace(ctx: AuthContext | null, workspace: string): Response
 function integer(value: unknown): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function percentage(numerator: number, denominator: number): number | null {
+  return denominator === 0 ? null : Math.round((numerator * 1000) / denominator) / 10;
 }
 
 async function countRows(table: string, apply?: (query: any) => any): Promise<number> {
@@ -58,6 +60,16 @@ async function usersById(userIds: Array<string | null | undefined>): Promise<Map
   if (ids.length === 0) return new Map();
   const users = await rows("users", "id, first_name, last_name, email, department, position", (query) => query.in("id", ids));
   return new Map(users.map((user) => [user.id, user]));
+}
+
+async function departmentAuditUserIds(ctx: AuthContext): Promise<string[]> {
+  const department = ctx.user.row.department?.trim();
+  if (!department) return [ctx.userId];
+  const departmentUsers = await rows("users", "id", (query) => query
+    .eq("department", department)
+    .eq("status", "ACTIVE")
+    .eq("is_deleted", false));
+  return [...new Set([ctx.userId, ...departmentUsers.map((user) => String(user.id))])];
 }
 
 function userLabel(user: any): string | null {
@@ -120,7 +132,11 @@ function maskPii(raw: Record<string, unknown>): Record<string, unknown> {
   return masked;
 }
 
-async function workspacePayload(workspace: string, section: string): Promise<Record<string, unknown>> {
+async function workspacePayload(
+  ctx: AuthContext,
+  workspace: string,
+  section: string,
+): Promise<Record<string, unknown>> {
   const payload: Record<string, unknown> = {
     workspace,
     section,
@@ -133,7 +149,7 @@ async function workspacePayload(workspace: string, section: string): Promise<Rec
   if (workspace === "compliance-management") {
     if (section === "dashboard") {
       payload.metrics = [
-        { label: "Overall Compliance Score", value: 94, suffix: "%", tone: "success" },
+        { label: "Active Permit Rate", value: percentage(await countRows("facility_permits", (query) => query.eq("status", "ACTIVE")), await countRows("facility_permits")), suffix: "%", tone: "success" },
         { label: "Critical Expiring Permits", value: await countRows("facility_permits", (query) => query.eq("status", "CRITICAL")), tone: "danger" },
         { label: "Awaiting Sign-off", value: await countRows("management_signoffs", (query) => query.eq("status", "AWAITING_MANAGER_SIGNOFF")), tone: "warning" },
         { label: "Active Incident Escalations", value: await countRows("compliance_incidents", (query) => query.neq("status", "RESOLVED")), tone: "danger" },
@@ -223,7 +239,7 @@ async function workspacePayload(workspace: string, section: string): Promise<Rec
   if (workspace === "privacy") {
     if (section === "dashboard") {
       payload.metrics = [
-        { label: "Privacy Risk Index", value: 94, suffix: "%", tone: "success" },
+        { label: "Completed Privacy Request Rate", value: percentage(await countRows("data_subject_requests", (query) => query.eq("status", "COMPLETED")), await countRows("data_subject_requests")), suffix: "%", tone: "success" },
         { label: "Active Data Subject Requests", value: await countRows("data_subject_requests", (query) => query.not("status", "in", "(COMPLETED,REJECTED)")), tone: "warning" },
         { label: "CCTV Export Approvals", value: await countRows("cctv_export_requests", (query) => query.eq("status", "PENDING_PRIVACY_APPROVAL")), tone: "danger" },
         { label: "Retention Expiry Queue", value: await countRows("facility_data_logs", (query) => query.eq("status", "ACTIVE")), tone: "info" },
@@ -264,7 +280,12 @@ async function workspacePayload(workspace: string, section: string): Promise<Rec
     } else if (section === "supervision") {
       payload.rows = await rows("management_signoffs", "*", (query) => query.order("submitted_at", { ascending: false }));
     } else if (section === "activity") {
-      payload.rows = await rows("audit_logs", "id, user_email, user_full_name, action, module, description, severity, status, created_at", (query) => query.order("created_at", { ascending: false }).limit(100));
+      const userIds = await departmentAuditUserIds(ctx);
+      payload.rows = await rows(
+        "audit_logs",
+        "id, user_email, user_full_name, action, module, description, severity, status, created_at",
+        (query) => query.in("user_id", userIds).order("created_at", { ascending: false }).limit(100),
+      );
     } else if (section === "reports") {
       payload.rows = await rows("department_scope_assignments", "*", (query) => query.order("department_name"));
     }
@@ -294,7 +315,7 @@ async function workspacePayload(workspace: string, section: string): Promise<Rec
   if (workspace === "compliance") {
     if (section === "dashboard") {
       payload.metrics = [
-        { label: "Overall Regional Compliance", value: 92, suffix: "%", tone: "success" },
+        { label: "Active Permit Rate", value: percentage(await countRows("facility_permits", (query) => query.eq("status", "ACTIVE")), await countRows("facility_permits")), suffix: "%", tone: "success" },
         { label: "Permit Expiration Alerts", value: await countRows("facility_permits", (query) => query.in("status", ["WATCH", "CRITICAL", "EXPIRED"])), tone: "warning" },
         { label: "Vendor Contracts on Hold", value: await countRows("vendor_risk_assessments", (query) => query.eq("status", "FLAGGED_HOLD")), tone: "danger" },
         { label: "Government Action Items", value: await countRows("compliance_incidents", (query) => query.neq("status", "RESOLVED")), tone: "danger" },
@@ -320,13 +341,21 @@ async function workspacePayload(workspace: string, section: string): Promise<Rec
 async function handleWorkspace(ctx: AuthContext | null, _req: Request, _body: unknown, params: RouteParams) {
   const denied = validateWorkspace(ctx, params.workspace);
   if (denied) return denied;
-  return jsonResponse(ok(await workspacePayload(params.workspace, params.section)), 200);
+  return jsonResponse(ok(await workspacePayload(ctx!, params.workspace, params.section)), 200);
 }
 
 async function handleSubmitLegal(ctx: AuthContext | null, _req: Request, _body: unknown, params: RouteParams) {
-  const { data: workflow, error } = await db.from("legal_contract_workflows").select("*").eq("id", params.id).maybeSingle();
+  const { data: workflow, error } = await db.from("legal_contract_workflows")
+    .select("*, contract:contracts(id,status,ai_analysis_review_status)").eq("id", params.id).maybeSingle();
   if (error) throw new Error(`legal workflow lookup failed: ${error.message}`);
   if (!workflow) return jsonResponse(fail("Legal workflow not found.", "RESOURCE_NOT_FOUND"), 404);
+  const linkedContract = Array.isArray(workflow.contract) ? workflow.contract[0] : workflow.contract;
+  if (linkedContract?.status !== "UNDER_REVIEW") {
+    return jsonResponse(fail("The Contract Officer must submit the contract for review first.", "BUSINESS_RULE_VIOLATION"), 422);
+  }
+  if (!['APPROVED', 'CORRECTED'].includes(String(linkedContract?.ai_analysis_review_status ?? ''))) {
+    return jsonResponse(fail("The Contract AI analysis must be approved or corrected before counsel sign-off.", "BUSINESS_RULE_VIOLATION"), 422);
+  }
   if (workflow.state === "REJECTED_REVISION") {
     const { error: draftError } = await db.from("legal_contract_workflows").update({ state: "DRAFT", updated_at: new Date().toISOString() }).eq("id", params.id);
     if (draftError) throw new Error(`legal workflow reset failed: ${draftError.message}`);
@@ -356,11 +385,19 @@ async function handleCounselAction(ctx: AuthContext | null, _req: Request, body:
   if (action === "REJECTED_REVISION" && comments.length < 5) {
     return jsonResponse(fail("Revision comments must contain at least 5 characters.", "VALIDATION_ERROR"), 400);
   }
-  const { data: workflow, error } = await db.from("legal_contract_workflows").select("*, contract:contracts(id, document_id)").eq("id", params.id).maybeSingle();
+  const { data: workflow, error } = await db.from("legal_contract_workflows")
+    .select("*, contract:contracts(id,document_id,status,created_by,ai_analysis_review_status)").eq("id", params.id).maybeSingle();
   if (error) throw new Error(`legal workflow lookup failed: ${error.message}`);
   if (!workflow) return jsonResponse(fail("Legal workflow not found.", "RESOURCE_NOT_FOUND"), 404);
   if (workflow.state !== "PENDING_COUNSEL_REVIEW") {
     return jsonResponse(fail("Only pending counsel reviews can be decided.", "BUSINESS_RULE_VIOLATION"), 422);
+  }
+  const contract = Array.isArray(workflow.contract) ? workflow.contract[0] : workflow.contract;
+  if (String(contract?.created_by ?? '').toLowerCase() === String(ctx?.email ?? '').toLowerCase()) {
+    return jsonResponse(fail("A contract creator cannot approve their own contract.", "SEPARATION_OF_DUTIES_VIOLATION"), 403);
+  }
+  if (action === "COUNSEL_APPROVED" && !['APPROVED', 'CORRECTED'].includes(String(contract?.ai_analysis_review_status ?? ''))) {
+    return jsonResponse(fail("Counsel approval requires an authorized Contract AI review decision.", "BUSINESS_RULE_VIOLATION"), 422);
   }
   const { error: updateError } = await db.from("legal_contract_workflows").update({
     state: action,
@@ -371,7 +408,12 @@ async function handleCounselAction(ctx: AuthContext | null, _req: Request, body:
   }).eq("id", params.id);
   if (updateError) throw new Error(`counsel action failed: ${updateError.message}`);
 
-  const contract = Array.isArray(workflow.contract) ? workflow.contract[0] : workflow.contract;
+  const contractPatch = action === "COUNSEL_APPROVED"
+    ? { status: "APPROVED", approved_by: ctx?.email, approved_at: new Date().toISOString(), updated_by: ctx?.email, updated_at: new Date().toISOString() }
+    : { status: "DRAFT", approved_by: null, approved_at: null, updated_by: ctx?.email, updated_at: new Date().toISOString() };
+  const { error: contractError } = await db.from("contracts").update(contractPatch).eq("id", contract?.id);
+  if (contractError) throw new Error(`contract approval state update failed: ${contractError.message}`);
+
   if (action === "COUNSEL_APPROVED" && contract?.document_id) {
     await db.from("records_archives").upsert({
       document_id: contract.document_id,
