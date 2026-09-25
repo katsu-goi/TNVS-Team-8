@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   login: vi.fn(),
+  logout: vi.fn(),
   navigate: vi.fn(),
   setAuthTokens: vi.fn(),
   verifyLoginSession: vi.fn(),
@@ -11,9 +12,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../api/authService', () => ({ login: mocks.login }));
 vi.mock('../../stores/authStore', () => ({
   useAuthStore: (selector: (state: {
+    logout: typeof mocks.logout;
     setAuthTokens: typeof mocks.setAuthTokens;
     verifyLoginSession: typeof mocks.verifyLoginSession;
   }) => unknown) => selector({
+    logout: mocks.logout,
     setAuthTokens: mocks.setAuthTokens,
     verifyLoginSession: mocks.verifyLoginSession,
   }),
@@ -32,6 +35,7 @@ import { Team8LoginPage } from './Team8LoginPage';
 describe('Team8LoginPage', () => {
   beforeEach(() => {
     mocks.login.mockReset();
+    mocks.logout.mockReset();
     mocks.navigate.mockReset();
     mocks.setAuthTokens.mockReset();
     mocks.verifyLoginSession.mockReset();
@@ -61,5 +65,28 @@ describe('Team8LoginPage', () => {
 
     resolveProfile({ id: 'verified-user', email: 'employee@photonicomega.com' });
     await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/reservation-portal', { replace: true }));
+  });
+
+  it('clears a verified session whose authoritative email is outside Team 8', async () => {
+    mocks.login.mockResolvedValueOnce({
+      user: { id: 'login-user', email: 'employee@photonicomega.com' },
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+    });
+    mocks.verifyLoginSession.mockResolvedValueOnce({
+      id: 'verified-user',
+      email: 'employee@example.com',
+    });
+
+    render(<Team8LoginPage />);
+    fireEvent.change(screen.getByPlaceholderText('you@photonicomega.com'), {
+      target: { value: 'employee@photonicomega.com' },
+    });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'valid-password' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in to reserve' }));
+
+    expect(await screen.findByText('This account is not authorized for the Team 8 reservation portal.')).toBeInTheDocument();
+    expect(mocks.logout).toHaveBeenCalledOnce();
+    expect(mocks.navigate).not.toHaveBeenCalled();
   });
 });
