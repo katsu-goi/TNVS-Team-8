@@ -7,6 +7,8 @@ import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
 import { TimePicker } from '../ui/TimePicker';
 import { ReasonDialog } from '../ui/SharedUI';
+import { DashboardHero } from '../ui/DashboardPrimitives';
+import { FacilitiesAnalyticsPage } from './FacilitiesAnalyticsPage';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -102,12 +104,8 @@ export const ReservationsPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Reservations</h2>
-          <p className="text-xs text-slate-500">Manage room bookings</p>
-        </div>
-        <div className="flex items-center space-x-2">
+      <DashboardHero title="Reservations" subtitle="Manage room bookings" actions={
+        <div className="flex flex-wrap items-center gap-2">
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-600">
             <option value="">All Status</option>
             <option value="PENDING">Pending</option>
@@ -116,9 +114,9 @@ export const ReservationsPage: React.FC = () => {
             <option value="REJECTED">Rejected</option>
             <option value="CANCELLED">Cancelled</option>
           </select>
-          <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
+          <button onClick={() => setRetry(r => r + 1)} aria-label="Refresh reservations" className="portal-header-action p-2"><RefreshCw className="h-4 w-4" /></button>
         </div>
-      </div>
+      } />
 
       {Object.keys(overview).length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -265,18 +263,14 @@ export const ApprovalPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="glass-panel flex items-center justify-between gap-3 p-5">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Reservation Approval Queue</h2>
-          <p className="text-xs text-slate-500">Final decisions for requests already validated by a Facilities Officer</p>
-        </div>
+      <DashboardHero title="Reservation Approval Queue" subtitle="Final decisions for requests already validated by a Facilities Officer" actions={
         <div className="flex shrink-0 items-center gap-2">
-          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600">
+          <span className="portal-header-badge rounded-full px-2.5 py-1 text-[10px] font-bold">
             {reservations.length} {reservations.length === 1 ? 'request' : 'requests'}
           </span>
-          <button onClick={() => setRetry(r => r + 1)} className="rounded-lg border border-slate-200 bg-slate-100 p-2 transition hover:bg-slate-200" title="Refresh"><RefreshCw className="h-4 w-4 text-slate-400" /></button>
+          <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" title="Refresh" aria-label="Refresh approval queue"><RefreshCw className="h-4 w-4" /></button>
         </div>
-      </div>
+      } />
 
       {actionError && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{actionError}</div>}
 
@@ -1103,29 +1097,25 @@ export const CalendarPage: React.FC = () => {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="glass-panel p-5 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Facility Calendar</h2>
-          <p className="text-xs text-slate-500">{rangeLabel}</p>
-        </div>
+      <DashboardHero title="Facility Calendar" subtitle={rangeLabel} actions={
         <div className="flex flex-wrap items-center gap-2">
           <select
             value={roomFilter}
             onChange={e => setRoomFilter(e.target.value)}
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 focus:border-emerald-500 focus:outline-none"
+            className="portal-header-field rounded-xl px-3 py-2 text-xs font-medium focus:outline-none"
             title="Filter by room to spot double-bookings"
           >
             <option value="ALL">All rooms</option>
             {rooms.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
-          <div className="flex items-center rounded-xl border border-slate-200 bg-white p-0.5">
+          <div className="portal-header-control flex items-center rounded-xl p-0.5">
             <button onClick={() => setWeekStart(w => addDays(w, -7))} className="rounded-lg p-1.5 hover:bg-slate-100" title="Previous week"><ChevronLeft className="h-4 w-4 text-slate-500" /></button>
             <button onClick={() => setWeekStart(startOfWeek(new Date()))} className="px-2.5 py-1 text-xs font-semibold text-slate-700 hover:text-emerald-600">Today</button>
             <button onClick={() => setWeekStart(w => addDays(w, 7))} className="rounded-lg p-1.5 hover:bg-slate-100" title="Next week"><ChevronRight className="h-4 w-4 text-slate-500" /></button>
           </div>
-          <button onClick={() => setRetry(r => r + 1)} className="rounded-lg border border-slate-200 bg-slate-100 p-2 transition hover:bg-slate-200" title="Refresh"><RefreshCw className="h-4 w-4 text-slate-400" /></button>
+          <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" title="Refresh" aria-label="Refresh calendar"><RefreshCw className="h-4 w-4" /></button>
         </div>
-      </div>
+      } />
 
       {/* Legend + conflict summary */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1 text-[11px] text-slate-500">
@@ -1361,13 +1351,9 @@ export const AssetsPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Asset Overview</h2>
-          <p className="text-xs text-slate-500">Equipment and facility assets</p>
-        </div>
-        <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
-      </div>
+      <DashboardHero title="Merchandise & Supply Logistics" subtitle="Equipment and facility assets" actions={
+        <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" aria-label="Refresh assets"><RefreshCw className="h-4 w-4" /></button>
+      } />
 
       {overview && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -1438,7 +1424,7 @@ export const AssetsPage: React.FC = () => {
   );
 };
 
-export const ReportsPage: React.FC = () => {
+const LegacyReportsPage: React.FC = () => {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1488,7 +1474,7 @@ export const ReportsPage: React.FC = () => {
   );
 };
 
-export const AnalyticsPage: React.FC = () => {
+const LegacyAnalyticsPage: React.FC = () => {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1577,6 +1563,15 @@ export const AnalyticsPage: React.FC = () => {
   );
 };
 
+// Retain the legacy implementations above temporarily for source compatibility while
+// routing both active destinations through the shared, authorized analytics surface.
+void LegacyReportsPage;
+void LegacyAnalyticsPage;
+
+export const ReportsPage: React.FC = () => <FacilitiesAnalyticsPage title="Facility Reports" subtitle="Operational reporting, utilization, and exact facility totals" />;
+
+export const AnalyticsPage: React.FC = () => <FacilitiesAnalyticsPage title="Hub Performance Analytics" subtitle="Performance trends and facility utilization" />;
+
 export const FacilitiesNotificationsPage: React.FC = () => {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1600,13 +1595,9 @@ export const FacilitiesNotificationsPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Notifications</h2>
-          <p className="text-xs text-slate-500">Real-time facility updates</p>
-        </div>
-        <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
-      </div>
+      <DashboardHero title="Notifications" subtitle="Real-time facility updates" actions={
+        <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" aria-label="Refresh notifications"><RefreshCw className="h-4 w-4" /></button>
+      } />
 
       {error ? <ErrorState message={error} onRetry={() => setRetry(r => r + 1)} /> : notifications.length === 0 ? (
         <EmptyState icon={Bell} title="No Notifications" desc="No facility notifications yet." />

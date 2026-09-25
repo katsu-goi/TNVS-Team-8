@@ -14,6 +14,7 @@ import { RoomPicker, RoomPickerSelection } from './RoomPicker';
 import { DatePicker } from '../ui/DatePicker';
 import { TimePicker } from '../ui/TimePicker';
 import { downloadCsv } from '../../utils/csvExport';
+import { DashboardHero } from '../ui/DashboardPrimitives';
 
 export interface ReservationItem {
   id: string;
@@ -410,29 +411,19 @@ export const FoReservationsPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header Banner & Governance Notice */}
-      <div className="dashboard-hero flex-col md:flex-row md:items-center">
-        <div>
-          <div className="flex items-center space-x-2">
-            <Building2 className="w-6 h-6 text-emerald-600" />
-            <h1 className="text-2xl font-extrabold font-heading text-slate-900">Facilities Reservation Console</h1>
-          </div>
-          <p className="text-slate-500 text-xs mt-1">
-             Operational coordination, scheduling, creation, and management. <strong className="text-emerald-700 font-semibold">Tier 1 requests auto-approve; Tier 2 requests escalate to Facilities Manager.</strong>
-          </p>
-        </div>
-
-        {/* Component 8: Quick Action Buttons & Real-Time Sync Badge */}
+      <DashboardHero title="Facilities Reservation Console" subtitle="Operational coordination and scheduling. Tier 1 requests auto-approve; Tier 2 requests escalate to Facilities Manager." actions={
+        /* Component 8: Quick Action Buttons & Real-Time Sync Badge */
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <div className={`hidden items-center rounded-xl border px-3 py-1.5 sm:flex ${syncConnected ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
-            <Activity className={`mr-2 h-4 w-4 ${syncConnected ? 'text-emerald-600' : 'text-amber-600'}`} />
-            <span className={`text-xs font-mono font-semibold ${syncConnected ? 'text-emerald-600' : 'text-amber-700'}`}>
+          <div className="portal-header-badge hidden items-center rounded-xl px-3 py-1.5 sm:flex">
+            <Activity className={`mr-2 h-4 w-4 ${syncConnected ? 'text-emerald-400' : 'text-amber-400'}`} />
+            <span className="text-xs font-mono font-semibold">
               {syncConnected ? 'REALTIME CONNECTED' : 'REALTIME CONNECTING'}
             </span>
           </div>
 
           <button
             onClick={() => setShowCreateModal(true)}
-            className="flex items-center space-x-1.5 rounded-xl bg-brand-500 px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-brand-700"
+            className="portal-header-primary flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-semibold shadow-sm transition"
           >
             <PlusCircle className="w-4 h-4" />
             <span>New Reservation</span>
@@ -440,21 +431,21 @@ export const FoReservationsPage: React.FC = () => {
 
           <button
             onClick={() => setActiveTab('calendar')}
-            className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold text-xs transition flex items-center space-x-1.5 shadow-sm"
+            className="portal-header-action flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-semibold transition"
           >
-            <Calendar className="w-4 h-4 text-emerald-600" />
+            <Calendar className="h-4 w-4" />
             <span>View Calendar</span>
           </button>
 
           <button
             onClick={() => setShowReportModal(true)}
-            className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold text-xs transition flex items-center space-x-1.5 shadow-sm"
+            className="portal-header-action flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-semibold transition"
           >
-            <Download className="w-4 h-4 text-blue-600" />
+            <Download className="h-4 w-4" />
             <span>Generate Report</span>
           </button>
         </div>
-      </div>
+      } />
 
       {reservationLoadError && (
         <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">

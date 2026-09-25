@@ -35,6 +35,7 @@ import {
   type BackupExportFormat,
   type BackupSchedule,
 } from '../../api/backupRecoveryService';
+import { DashboardHero } from '../ui/DashboardPrimitives';
 
 const DEFAULT_SCHEDULE: BackupSchedule = {
   scheduleKey: 'BACKUP_DAILY',
@@ -249,26 +250,17 @@ export const BackupRecoveryConsole: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="dashboard-hero flex-col sm:flex-row sm:items-center">
-        <div className="flex items-start gap-3">
-          <div className="rounded-lg bg-red-50 p-2.5 text-red-700">
-            <Database className="h-5 w-5" />
-          </div>
-          <div>
-            <h1 className="font-heading text-2xl font-bold text-slate-900">Backup &amp; Disaster Recovery</h1>
-            <p className="mt-1 text-sm text-slate-500">Verified logical data, private Storage copies, retention, and isolated recovery evidence.</p>
-          </div>
-        </div>
+      <DashboardHero title="Backup & Disaster Recovery" subtitle="Verified logical data, private Storage copies, retention, and isolated recovery evidence." actions={
         <button
           type="button"
           onClick={() => void refresh()}
           disabled={loading}
-          className="inline-flex items-center justify-center gap-2 border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-red-300 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+          className="portal-header-action inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
         >
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           Refresh data
         </button>
-      </div>
+      } />
 
       {error && (
         <div className="flex items-start gap-3 border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 shadow-sm" role="alert">

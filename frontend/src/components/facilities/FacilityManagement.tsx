@@ -3,6 +3,7 @@ import { AlertCircle, Building2, CheckCircle2, Edit3, ImagePlus, Loader2, MapPin
 import { extractErrorMessage } from '../../api/client';
 import { facilityManagementService, type FacilityInput, type ManagedFacility } from '../../api/facilityManagementService';
 import { FacilityFloorPlanEditor } from './FacilityFloorPlanEditor';
+import { DashboardHero } from '../ui/DashboardPrimitives';
 
 type FacilityForm = {
   facilityName: string;
@@ -190,13 +191,8 @@ export const FacilityManagement: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <section className="flex flex-wrap items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-red-700">Facilities Administration</p>
-          <h1 className="mt-1 text-xl font-bold tracking-tight text-slate-900">Facility Management</h1>
-          <p className="mt-1 text-sm text-slate-500">Configure meeting spaces, capacities, amenities, and floor plans.</p>
-        </div>
-        <div className="flex items-center gap-2">
+      <DashboardHero eyebrow="Facilities Administration" title="Facility Management" subtitle="Configure meeting spaces, capacities, amenities, and floor plans." actions={
+        <div className="flex flex-wrap items-center gap-2">
           <button type="button" onClick={() => void loadFacilities(true)} disabled={refreshing} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-60" aria-label="Refresh facilities">
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />Refresh
           </button>
@@ -204,7 +200,7 @@ export const FacilityManagement: React.FC = () => {
             <Plus className="h-4 w-4" />Add facility
           </button>
         </div>
-      </section>
+      } />
 
       <section className="grid gap-4 sm:grid-cols-3">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Configured facilities</p><p className="mt-2 text-3xl font-bold text-slate-900">{facilities.length}</p><p className="mt-1 text-xs text-slate-400">All facility records</p></div>

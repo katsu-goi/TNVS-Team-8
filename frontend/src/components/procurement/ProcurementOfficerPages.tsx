@@ -8,6 +8,7 @@ import {
 import { safeFetchJson } from '../../api/client';
 import { ContractAiPanel } from '../contracts/ContractAiPanel';
 import { Modal as SharedModal } from '../ui/SharedUI';
+import { DashboardHero } from '../ui/DashboardPrimitives';
 
 // POST/PUT helper that preserves the API envelope and propagates failures.
 const mutate = async (url: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown) => {
@@ -280,16 +281,12 @@ export const PoContractsPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {toastNode}
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Contracts</h2>
-          <p className="text-xs text-slate-500">Draft, review, approve, and manage the full contract lifecycle</p>
-        </div>
-        <div className="flex items-center space-x-2">
+      <DashboardHero title="Contracts" subtitle="Draft, review, approve, and manage the full contract lifecycle" actions={
+        <div className="flex flex-wrap items-center gap-2">
           <ActionButton onClick={openNew} icon={Plus} variant="primary">New Contract</ActionButton>
-          <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
+          <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" aria-label="Refresh contracts"><RefreshCw className="h-4 w-4" /></button>
         </div>
-      </div>
+      } />
 
       <div className="flex items-center space-x-2 flex-wrap gap-y-2">
         <Filter className="w-4 h-4 text-slate-400" />
@@ -627,16 +624,12 @@ export const PoVendorsPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {toastNode}
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Vendors</h2>
-          <p className="text-xs text-slate-500">Supplier registry with performance &amp; SLA tracking</p>
-        </div>
-        <div className="flex items-center space-x-2">
+      <DashboardHero title="Vendors" subtitle="Supplier registry with performance & SLA tracking" actions={
+        <div className="flex flex-wrap items-center gap-2">
           <ActionButton onClick={openNew} icon={Plus} variant="primary">New Vendor</ActionButton>
-          <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
+          <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" aria-label="Refresh vendors"><RefreshCw className="h-4 w-4" /></button>
         </div>
-      </div>
+      } />
 
       <div className="flex items-center space-x-2 flex-wrap gap-y-2">
         <Filter className="w-4 h-4 text-slate-400" />
@@ -1078,13 +1071,9 @@ export const PoNoticesPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {toastNode}
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Alerts &amp; Notices</h2>
-          <p className="text-xs text-slate-500">Renewal, expiry, SLA, performance, and obligation alerts</p>
-        </div>
-        <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
-      </div>
+      <DashboardHero title="Alerts & Notices" subtitle="Renewal, expiry, SLA, performance, and obligation alerts" actions={
+        <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" aria-label="Refresh procurement notices"><RefreshCw className="h-4 w-4" /></button>
+      } />
 
       {notices.length === 0 ? (
         <EmptyState icon={BellRing} title="No Active Notices" desc="You're all caught up — no open or acknowledged procurement notices." />
@@ -1177,13 +1166,9 @@ export const PoDocumentsPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {toastNode}
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Documents</h2>
-          <p className="text-xs text-slate-500">Contract document oversight — review and approve records</p>
-        </div>
-        <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
-      </div>
+      <DashboardHero title="Documents" subtitle="Contract document oversight — review and approve records" actions={
+        <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" aria-label="Refresh contract documents"><RefreshCw className="h-4 w-4" /></button>
+      } />
 
       <div className="flex items-center space-x-2 flex-wrap gap-y-2">
         <Filter className="w-4 h-4 text-slate-400" />
@@ -1274,13 +1259,9 @@ export const PoLegalCasesPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Legal Cases</h2>
-          <p className="text-xs text-slate-500">Read-only visibility into legal matters (limited access)</p>
-        </div>
-        <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
-      </div>
+      <DashboardHero title="Legal Cases" subtitle="Read-only visibility into legal matters (limited access)" actions={
+        <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" aria-label="Refresh legal cases"><RefreshCw className="h-4 w-4" /></button>
+      } />
 
       <div className="flex items-center space-x-2 text-xs text-slate-500 bg-white border border-slate-200 rounded-xl px-4 py-3">
         <Gavel className="w-4 h-4 text-purple-500" />
@@ -1361,13 +1342,9 @@ export const PoAuditLogsPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Audit Trail</h2>
-          <p className="text-xs text-slate-500">Read-only procurement audit events (last 30 days)</p>
-        </div>
-        <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
-      </div>
+      <DashboardHero title="Audit Trail" subtitle="Read-only procurement audit events (last 30 days)" actions={
+        <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" aria-label="Refresh procurement audit trail"><RefreshCw className="h-4 w-4" /></button>
+      } />
 
       <div className="flex items-center space-x-2 text-xs text-slate-500 bg-white border border-slate-200 rounded-xl px-4 py-3">
         <ScrollText className="w-4 h-4 text-amber-500" />

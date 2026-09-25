@@ -9,7 +9,7 @@ type DashboardHeroProps = {
 };
 
 export const DashboardHero: React.FC<DashboardHeroProps> = ({ title, subtitle, eyebrow, actions }) => (
-  <section className="dashboard-hero">
+  <section className="dashboard-hero" data-testid="portal-page-header">
     <div className="min-w-0">
       {eyebrow && <p className="hero-eyebrow text-xs font-bold uppercase tracking-wider">{eyebrow}</p>}
       <h1 className="font-heading text-[34px] font-extrabold leading-tight">{title}</h1>

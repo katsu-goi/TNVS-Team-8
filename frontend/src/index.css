@@ -444,6 +444,50 @@ section {
   background: rgba(255, 255, 255, 0.14);
 }
 
+.dashboard-hero .portal-header-field,
+.dashboard-hero .portal-header-control,
+.dashboard-hero .portal-header-action,
+.dashboard-hero .portal-header-badge {
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.dashboard-hero .portal-header-field {
+  color-scheme: dark;
+}
+
+.dashboard-hero .portal-header-field option {
+  color: #0f172a;
+  background: #fff;
+}
+
+.dashboard-hero .portal-header-action:focus-visible,
+.dashboard-hero .portal-header-field:focus-visible {
+  outline: 2px solid var(--hirna-yellow);
+  outline-offset: 2px;
+}
+
+.dashboard-hero .portal-header-primary {
+  color: #111827;
+  background: var(--hirna-yellow);
+  border-color: var(--hirna-yellow);
+}
+
+.dashboard-hero .portal-header-primary:hover {
+  color: #111827;
+  background: #facc15;
+}
+
+.analytics-chart-card {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.analytics-print-meta {
+  display: none;
+}
+
 .hirna-app .glass-panel:has(> div > h1) {
   flex-wrap: wrap;
   color: #fff;
@@ -600,6 +644,104 @@ section {
 
   .hirna-app table {
     min-width: 40rem;
+  }
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 14mm 12mm 16mm;
+  }
+
+  body {
+    background: #fff !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .hirna-app aside,
+  .hirna-app > div > header,
+  .portal-loading-overlay,
+  .analytics-report .dashboard-hero,
+  .analytics-report .print\:hidden {
+    display: none !important;
+  }
+
+  .analytics-report {
+    position: relative;
+    display: block !important;
+    width: 100%;
+    color: #0f172a;
+  }
+
+  .analytics-print-meta {
+    display: block;
+    padding-bottom: 1rem;
+    margin-bottom: 1rem;
+    border-bottom: 2px solid #111827;
+  }
+
+  .analytics-print-meta > div:first-child {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    color: #475569;
+    font-size: 9pt;
+  }
+
+  .analytics-print-meta > div:first-child strong {
+    color: #047857;
+    font-size: 12pt;
+    letter-spacing: 0.08em;
+  }
+
+  .analytics-print-meta h1 {
+    margin-top: 0.7rem;
+    color: #0f172a;
+    font-size: 20pt;
+  }
+
+  .analytics-print-meta dl {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+    font-size: 8pt;
+  }
+
+  .analytics-print-meta dt {
+    color: #64748b;
+    font-weight: 600;
+  }
+
+  .analytics-print-meta dd {
+    margin: 0.15rem 0 0;
+    color: #0f172a;
+  }
+
+  .analytics-report .card-stat,
+  .analytics-chart-card,
+  .analytics-report table,
+  .analytics-report tr {
+    break-inside: avoid;
+    box-shadow: none !important;
+  }
+
+  .analytics-report .card-stat {
+    margin-bottom: 10pt;
+    border: 1px solid #cbd5e1 !important;
+  }
+
+  .analytics-report::after {
+    position: fixed;
+    right: 0;
+    bottom: -9mm;
+    left: 0;
+    color: #64748b;
+    content: "Hirna Portal · Confidential · Page " counter(page);
+    font-size: 8pt;
+    text-align: center;
   }
 }
 

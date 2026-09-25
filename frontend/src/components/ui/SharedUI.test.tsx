@@ -10,6 +10,7 @@ describe('shared UI primitives', () => {
   it('uses the shared portal hero for consistent headings and actions', () => {
     const { container } = render(<DashboardHero title="Role portal" subtitle="Role-specific summary" actions={<button>Refresh</button>} />);
     expect(container.querySelector('.dashboard-hero')).toBeInTheDocument();
+    expect(screen.getByTestId('portal-page-header')).toHaveClass('dashboard-hero');
     expect(screen.getByRole('heading', { name: 'Role portal' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
   });

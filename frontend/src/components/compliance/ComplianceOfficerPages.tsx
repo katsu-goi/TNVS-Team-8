@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { safeFetchJson } from '../../api/client';
 import { ReasonDialog } from '../ui/SharedUI';
+import { DashboardHero } from '../ui/DashboardPrimitives';
 
 // POST/PUT helper that preserves the API envelope and propagates failures.
 const mutate = async (url: string, method: 'POST' | 'PUT', body?: unknown) => {
@@ -215,13 +216,9 @@ export const CoDocumentsPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {toastNode}
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Documents</h2>
-          <p className="text-xs text-slate-500">Records repository — approve, archive, and request disposal</p>
-        </div>
-        <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
-      </div>
+      <DashboardHero title="Retention Records" subtitle="Records repository — approve, archive, and request disposal" actions={
+        <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" aria-label="Refresh retention records"><RefreshCw className="h-4 w-4" /></button>
+      } />
 
       <div className="flex items-center space-x-2 flex-wrap gap-y-2">
         <Filter className="w-4 h-4 text-slate-400" />
@@ -426,13 +423,9 @@ export const CoContractsPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Contracts</h2>
-          <p className="text-xs text-slate-500">Contract register with AI-assessed risk levels</p>
-        </div>
-        <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
-      </div>
+      <DashboardHero title="Contract Deadlines" subtitle="Contract register with AI-assessed risk levels" actions={
+        <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" aria-label="Refresh contract deadlines"><RefreshCw className="h-4 w-4" /></button>
+      } />
 
       <div className="flex items-center space-x-2 flex-wrap gap-y-2">
         <Filter className="w-4 h-4 text-slate-400" />
@@ -575,16 +568,12 @@ export const CoRetentionPoliciesPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {toastNode}
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Retention Policies</h2>
-          <p className="text-xs text-slate-500">Data retention rules and expiry actions</p>
-        </div>
-        <div className="flex items-center space-x-2">
+      <DashboardHero title="Retention Policies" subtitle="Data retention rules and expiry actions" actions={
+        <div className="flex flex-wrap items-center gap-2">
           <ActionButton onClick={openNew} icon={Plus} variant="primary">New Policy</ActionButton>
-          <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
+          <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" aria-label="Refresh retention policies"><RefreshCw className="h-4 w-4" /></button>
         </div>
-      </div>
+      } />
 
       {policies.length === 0 ? (
         <EmptyState icon={Archive} title="No Retention Policies" desc="No retention policies have been defined." />
@@ -737,13 +726,9 @@ export const CoAuditLogsPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Audit Trail</h2>
-          <p className="text-xs text-slate-500">Read-only compliance audit events (last 30 days)</p>
-        </div>
-        <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
-      </div>
+      <DashboardHero title="Audit Logs" subtitle="Read-only compliance audit events (last 30 days)" actions={
+        <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" aria-label="Refresh compliance audit logs"><RefreshCw className="h-4 w-4" /></button>
+      } />
 
       <div className="flex items-center space-x-2 text-xs text-slate-500 bg-white border border-slate-200 rounded-xl px-4 py-3">
         <ScrollText className="w-4 h-4 text-amber-500" />
@@ -850,13 +835,9 @@ export const CoDisposalApprovalsPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {toastNode}
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Disposal Approvals</h2>
-          <p className="text-xs text-slate-500">Review and decide document disposal requests</p>
-        </div>
-        <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
-      </div>
+      <DashboardHero title="Disposal Review" subtitle="Review and decide document disposal requests" actions={
+        <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" aria-label="Refresh disposal review"><RefreshCw className="h-4 w-4" /></button>
+      } />
 
       <div className="flex items-center space-x-2 flex-wrap gap-y-2">
         <Filter className="w-4 h-4 text-slate-400" />
@@ -1011,13 +992,9 @@ export const CoComplianceAlertsPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {toastNode}
-      <div className="glass-panel p-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Compliance Alerts</h2>
-          <p className="text-xs text-slate-500">Actionable alerts across contracts, documents, and disposals</p>
-        </div>
-        <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
-      </div>
+      <DashboardHero title="Compliance Alerts" subtitle="Actionable alerts across contracts, documents, and disposals" actions={
+        <button onClick={() => setRetry(r => r + 1)} className="portal-header-action rounded-lg p-2" aria-label="Refresh compliance alerts"><RefreshCw className="h-4 w-4" /></button>
+      } />
 
       {alerts.length === 0 ? (
         <EmptyState icon={BellRing} title="No Active Alerts" desc="You're all caught up — no open or acknowledged compliance alerts." />

@@ -8,6 +8,7 @@ import {
   Zap, Search, Sparkles, X, InboxIcon,
   Layers, History, ToggleLeft, AlertTriangle, Radio
 } from 'lucide-react';
+import { DashboardHero } from '../ui/DashboardPrimitives';
 
 // --- TYPES ---
 interface Provider {
@@ -546,36 +547,22 @@ export const AiServicesPage: React.FC = () => {
       )}
 
       {/* HEADER SECTION */}
-      <div className="dashboard-hero flex-col md:flex-row md:items-center">
-        <div className="flex items-center space-x-4">
-          <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-100 shadow-inner">
-            <Cpu className="w-7 h-7 text-emerald-600" />
-          </div>
-          <div>
-            <div className="flex items-center space-x-3">
-              <h1 className="text-2xl font-bold font-heading text-slate-900 tracking-tight">AI Services</h1>
-              <span className={`flex items-center space-x-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${analytics ? 'border-emerald-200 bg-emerald-100 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
-                <span className={`h-2 w-2 rounded-full ${analytics ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                <span>{analytics ? (analytics.apiConnectionStatus || 'Telemetry available') : 'Telemetry unavailable'}</span>
-              </span>
-            </div>
-            <p className="text-sm text-slate-500 mt-0.5">
-              Configure AI providers, prompts, and monitor real-time AI telemetries.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center space-x-3 self-end md:self-auto">
+      <DashboardHero title="AI Services" subtitle="Configure AI providers, prompts, and monitor real-time AI telemetries." actions={
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="portal-header-badge flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold">
+            <span className={`h-2 w-2 rounded-full ${analytics ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            <span>{analytics ? (analytics.apiConnectionStatus || 'Telemetry available') : 'Telemetry unavailable'}</span>
+          </span>
           <button
             onClick={() => handleTestConnection()}
             disabled={testingConnection}
-            className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold text-xs hover:bg-emerald-100 transition-colors disabled:opacity-50"
+            className="portal-header-action flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold disabled:opacity-50"
           >
             <RefreshCw className={`w-4 h-4 ${testingConnection ? 'animate-spin' : ''}`} />
             <span>{testingConnection ? 'Testing...' : 'Test Connection'}</span>
           </button>
         </div>
-      </div>
+      } />
 
       {/* SECTION 5 — AI USAGE ANALYTICS */}
       <div className="space-y-6">
