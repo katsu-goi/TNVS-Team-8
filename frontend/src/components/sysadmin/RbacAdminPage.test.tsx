@@ -61,7 +61,7 @@ describe('RbacAdminPage account save', () => {
       password: 'StrongPassword2026!',
     }));
     expect(password).toHaveValue('');
-    expect(screen.getByLabelText('Select user account')).toHaveValue('user-1');
+    expect(screen.getAllByRole('button', { name: 'Selected' }).length).toBeGreaterThan(0);
     expect(screen.getByText('User Role Assignments')).toBeInTheDocument();
   });
 

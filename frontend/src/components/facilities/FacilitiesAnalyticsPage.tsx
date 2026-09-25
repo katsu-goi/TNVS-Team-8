@@ -5,7 +5,8 @@ import { exportAnalyticsCsv, fetchAnalytics } from '../../api/analyticsService';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import type { AnalyticsData, AnalyticsTrend } from '../../types';
 import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
-import { EmptyState, ErrorState, LoadingState, ResponsiveTableContainer } from '../ui/SharedUI';
+import { EmptyState, ErrorState, LoadingState } from '../ui/SharedUI';
+import { DataTable, type DataTableColumn } from '../ui/data-table';
 import {
   AnalyticsChartCard, AnalyticsMetricCard, AnalyticsPageHeader, AnalyticsPrintMeta,
 } from '../analytics/AnalyticsPrimitives';
@@ -83,6 +84,12 @@ export const FacilitiesAnalyticsPage: React.FC<Props> = ({ title, subtitle }) =>
   const metrics = (data.facilities ?? {}) as FacilitiesMetrics;
   const daily = Array.isArray(metrics.dailySubmitted) ? metrics.dailySubmitted.map((row) => ({ ...row, label: formatManilaDate(`${row.date}T00:00:00+08:00`) })) : [];
   const facilities = Array.isArray(metrics.frequentlyUsedFacilities) ? metrics.frequentlyUsedFacilities : [];
+  const facilityColumns: DataTableColumn<FacilityUsage>[] = [
+    { id: 'facility', header: 'Facility', sortable: true, accessor: (row) => <span className="font-semibold text-slate-900">{row.facility}</span>, sortValue: (row) => row.facility },
+    { id: 'reservations', header: 'Reservations', sortable: true, align: 'right', accessor: (row) => row.reservations, sortValue: (row) => row.reservations },
+    { id: 'occupied', header: 'Occupied minutes', sortable: true, align: 'right', accessor: (row) => row.occupiedMinutes, sortValue: (row) => row.occupiedMinutes },
+    { id: 'share', header: 'Share of submitted', align: 'right', accessor: (row) => number(metrics.submitted) ? `${Math.round(row.reservations * 1000 / number(metrics.submitted)) / 10}%` : 'N/A' },
+  ];
   const statusData = [
     { name: 'Approved', value: number(metrics.managerApproved) },
     { name: 'Rejected', value: number(metrics.rejected) },
@@ -132,7 +139,7 @@ export const FacilitiesAnalyticsPage: React.FC<Props> = ({ title, subtitle }) =>
 
       <section className="card-stat overflow-hidden">
         <header className="border-b border-slate-100 p-5"><h2 className="font-heading font-bold text-slate-950">Detailed Facility Data</h2><p className="mt-1 text-xs text-slate-500">Exact authorized totals behind the facility ranking chart.</p></header>
-        {facilities.length ? <ResponsiveTableContainer className="rounded-none border-0"><table className="w-full min-w-[620px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="px-5 py-3">Facility</th><th className="px-5 py-3">Reservations</th><th className="px-5 py-3">Occupied minutes</th><th className="px-5 py-3">Share of submitted</th></tr></thead><tbody className="divide-y divide-slate-100">{facilities.map((row) => <tr key={row.facility}><td className="px-5 py-4 font-semibold text-slate-900">{row.facility}</td><td className="px-5 py-4">{row.reservations}</td><td className="px-5 py-4">{row.occupiedMinutes}</td><td className="px-5 py-4">{number(metrics.submitted) ? `${Math.round(row.reservations * 1000 / number(metrics.submitted)) / 10}%` : 'N/A'}</td></tr>)}</tbody></table></ResponsiveTableContainer> : <EmptyState className="m-5" title="No detailed rows" description="No facility usage rows are available for the selected period." />}
+        <DataTable data={facilities} columns={facilityColumns} rowKey={(row) => row.facility} caption="Facility usage detail" searchableText={(row) => row.facility} searchPlaceholder="Search facilities..." emptyTitle="No detailed rows" emptyDescription="No facility usage rows are available for the selected period." className="rounded-none border-0 shadow-none" />
       </section>
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">

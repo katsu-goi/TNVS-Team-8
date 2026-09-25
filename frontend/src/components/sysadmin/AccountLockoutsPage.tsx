@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { LockKeyhole, RefreshCw, UnlockKeyhole } from 'lucide-react';
+import { RefreshCw, UnlockKeyhole } from 'lucide-react';
 import { extractErrorMessage } from '../../api/client';
 import { rbacService, RbacUser } from '../../api/rbacService';
 import { DashboardHero } from '../ui/DashboardPrimitives';
+import { DataTable, DataTableStatusBadge, type DataTableColumn } from '../ui/data-table';
 
 export const AccountLockoutsPage: React.FC = () => {
   const [users, setUsers] = useState<RbacUser[]>([]);
@@ -51,31 +52,26 @@ export const AccountLockoutsPage: React.FC = () => {
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>}
       {message && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">{message}</div>}
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        {loading ? (
-          <div className="flex items-center gap-2 py-8 text-sm text-slate-500"><RefreshCw className="h-4 w-4 animate-spin" />Loading locked accounts...</div>
-        ) : users.length === 0 ? (
-          <div className="py-10 text-center text-sm text-slate-500">No active account lockouts.</div>
-        ) : (
-          <div className="divide-y divide-slate-100">
-            {users.map((user) => (
-              <div key={user.id} className="flex flex-wrap items-center justify-between gap-4 py-4 first:pt-0 last:pb-0">
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className="rounded-full bg-rose-50 p-2 text-rose-600"><LockKeyhole className="h-4 w-4" /></div>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-slate-900">{user.fullName}</p>
-                    <p className="truncate text-xs text-slate-500">{user.email}</p>
-                    {user.lockedUntil && <p className="text-[11px] text-amber-700">Locked until {new Date(user.lockedUntil).toLocaleString()}</p>}
-                  </div>
-                </div>
-                <button onClick={() => unlock(user)} disabled={busyId === user.id} className="inline-flex items-center gap-2 rounded-lg bg-[#D02F34] px-3 py-2 text-xs font-semibold text-white hover:bg-[#A9252A] disabled:opacity-50">
-                  <UnlockKeyhole className="h-4 w-4" />{busyId === user.id ? 'Unlocking...' : 'Unlock Account'}
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+      <DataTable
+        data={users}
+        rowKey={(row) => row.id}
+        caption="Locked user accounts"
+        loading={loading}
+        error={error || null}
+        onRetry={() => void load()}
+        columns={[
+          { id: 'identity', header: 'User', searchableValue: (row) => `${row.fullName} ${row.email}`, cell: (row) => <><p className="font-semibold text-slate-900">{row.fullName}</p><p className="text-xs text-slate-500">{row.email}</p></>, sortable: true },
+          { id: 'employeeId', header: 'Employee ID', accessor: (row) => row.employeeId || '—', sortable: true, optional: true },
+          { id: 'status', header: 'Status', accessor: () => <DataTableStatusBadge value="LOCKED" />, sortable: false },
+          { id: 'lockedUntil', header: 'Locked until', accessor: (row) => row.lockedUntil ? new Date(row.lockedUntil).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : 'Manual unlock required', sortValue: (row) => row.lockedUntil ? new Date(row.lockedUntil) : null, sortable: true },
+        ] satisfies DataTableColumn<RbacUser>[]}
+        searchableText={(row) => `${row.fullName} ${row.email} ${row.employeeId ?? ''}`}
+        searchPlaceholder="Search locked accounts…"
+        onRefresh={() => void load()}
+        rowActions={(row) => <button type="button" onClick={() => void unlock(row)} disabled={busyId === row.id} className="inline-flex items-center gap-2 rounded-lg bg-[#D02F34] px-3 py-2 text-xs font-semibold text-white hover:bg-[#A9252A] disabled:opacity-50"><UnlockKeyhole className="h-4 w-4" />{busyId === row.id ? 'Unlocking…' : 'Unlock account'}</button>}
+        emptyTitle="No active account lockouts"
+        emptyDescription="Locked accounts will appear here until access is restored."
+      />
     </div>
   );
 };

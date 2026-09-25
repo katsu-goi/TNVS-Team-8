@@ -5,10 +5,11 @@ import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import {
   Cpu, CheckCircle2, RefreshCw,
   Plus, FileText, Settings, Trash2,
-  Zap, Search, Sparkles, X, InboxIcon,
+  Zap, Sparkles, X,
   Layers, History, ToggleLeft, AlertTriangle, Radio
 } from 'lucide-react';
 import { DashboardHero } from '../ui/DashboardPrimitives';
+import { DataTable, DataTableStatusBadge, type DataTableColumn } from '../ui/data-table';
 
 // --- TYPES ---
 interface Provider {
@@ -167,8 +168,7 @@ export const AiServicesPage: React.FC = () => {
   const [savingInstruction, setSavingInstruction] = useState(false);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
 
-  // Filters & Search
-  const [logSearch, setLogSearch] = useState('');
+  // Request-log filter
   const [logStatusFilter, setLogStatusFilter] = useState('ALL');
 
   // Modals & Feedback
@@ -522,16 +522,6 @@ export const AiServicesPage: React.FC = () => {
       showToast('Failed to restore default prompt.');
     }
   };
-
-  const filteredLogs = logs.filter(l => {
-    const matchesSearch =
-      l.module.toLowerCase().includes(logSearch.toLowerCase()) ||
-      l.operation.toLowerCase().includes(logSearch.toLowerCase()) ||
-      l.user.toLowerCase().includes(logSearch.toLowerCase()) ||
-      l.provider.toLowerCase().includes(logSearch.toLowerCase());
-    const matchesStatus = logStatusFilter === 'ALL' || l.status === logStatusFilter;
-    return matchesSearch && matchesStatus;
-  });
 
   return (
     <div className="space-y-8 pb-16 text-slate-800 font-sans">
@@ -1229,16 +1219,6 @@ export const AiServicesPage: React.FC = () => {
           </div>
 
           <div className="flex items-center space-x-3">
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Search logs..."
-                value={logSearch}
-                onChange={e => setLogSearch(e.target.value)}
-                className="bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-500 w-44 sm:w-60"
-              />
-            </div>
             <select
               value={logStatusFilter}
               onChange={e => setLogStatusFilter(e.target.value)}
@@ -1258,58 +1238,29 @@ export const AiServicesPage: React.FC = () => {
           </div>
         </div>
 
-        {filteredLogs.length === 0 ? (
-          <div className="py-10 flex flex-col items-center justify-center text-center">
-            <div className="p-3 rounded-full bg-slate-100 mb-3">
-              <InboxIcon className="w-7 h-7 text-slate-300" />
-            </div>
-            <p className="text-sm font-semibold text-slate-600">No AI Request Logs</p>
-            <p className="text-xs text-slate-400 mt-1">
-              Logs will appear here once AI requests are executed through the system.
-            </p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left">
-              <thead>
-                <tr className="border-b border-slate-200 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
-                  <th className="py-3 px-3">Time</th>
-                  <th className="py-3 px-3">Module</th>
-                  <th className="py-3 px-3">AI Provider</th>
-                  <th className="py-3 px-3">Operation</th>
-                  <th className="py-3 px-3">Status</th>
-                  <th className="py-3 px-3 text-right">Duration</th>
-                  <th className="py-3 px-3 text-right">Tokens Used</th>
-                  <th className="py-3 px-3 text-right">Requested By</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredLogs.map(log => (
-                  <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-3 px-3 font-mono text-slate-500">{log.time}</td>
-                    <td className="py-3 px-3 font-medium text-slate-900">{log.module}</td>
-                    <td className="py-3 px-3 text-slate-600">{log.provider}</td>
-                    <td className="py-3 px-3 text-slate-700 font-mono text-[11px]">{log.operation}</td>
-                    <td className="py-3 px-3">
-                      <span
-                        className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                          log.status === 'SUCCESS'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : 'bg-rose-100 text-rose-800'
-                        }`}
-                      >
-                        {log.status}
-                      </span>
-                    </td>
-                    <td className="py-3 px-3 text-right font-mono text-slate-600">{log.duration}</td>
-                    <td className="py-3 px-3 text-right font-mono text-slate-900 font-semibold">{log.tokens.toLocaleString()}</td>
-                    <td className="py-3 px-3 text-right text-slate-500 font-mono">{log.user}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <DataTable
+          data={logs}
+          rowKey={(row) => row.id}
+          caption="AI request audit logs"
+          columns={[
+            { id: 'time', header: 'Time', accessor: (row) => row.time, sortValue: (row) => new Date(row.time), sortable: true },
+            { id: 'module', header: 'Module', accessor: (row) => row.module, sortable: true },
+            { id: 'provider', header: 'AI provider', accessor: (row) => row.provider, sortable: true },
+            { id: 'operation', header: 'Operation', accessor: (row) => row.operation, sortable: true },
+            { id: 'status', header: 'Status', accessor: (row) => <DataTableStatusBadge value={row.status} />, searchableValue: (row) => row.status, sortable: true },
+            { id: 'duration', header: 'Duration', accessor: (row) => row.duration, sortable: true, align: 'right' },
+            { id: 'tokens', header: 'Tokens used', accessor: (row) => row.tokens.toLocaleString(), sortValue: (row) => row.tokens, sortable: true, align: 'right' },
+            { id: 'user', header: 'Requested by', accessor: (row) => row.user, sortable: true, optional: true },
+          ] satisfies DataTableColumn<RequestLog>[]}
+          searchableText={(row) => `${row.module} ${row.provider} ${row.operation} ${row.status} ${row.user}`}
+          searchPlaceholder="Search AI request logs…"
+          filterRow={(row) => logStatusFilter === 'ALL' || row.status === logStatusFilter}
+          activeFilters={logStatusFilter === 'ALL' ? [] : [{ id: 'status', label: 'Status', value: logStatusFilter, onRemove: () => setLogStatusFilter('ALL') }]}
+          onClearFilters={() => setLogStatusFilter('ALL')}
+          onRefresh={() => void fetchAllData()}
+          emptyTitle="No AI request logs"
+          emptyDescription="Logs will appear once AI requests are executed through the system."
+        />
       </div>
 
       {/* MODAL: CONFIGURE AI MODULE */}

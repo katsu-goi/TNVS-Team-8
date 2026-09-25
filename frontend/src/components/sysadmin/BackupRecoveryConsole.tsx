@@ -36,6 +36,7 @@ import {
   type BackupSchedule,
 } from '../../api/backupRecoveryService';
 import { DashboardHero } from '../ui/DashboardPrimitives';
+import { DataTable, DataTableStatusBadge, type DataTableColumn } from '../ui/data-table';
 
 const DEFAULT_SCHEDULE: BackupSchedule = {
   scheduleKey: 'BACKUP_DAILY',
@@ -50,7 +51,7 @@ const SCHEDULE_OPTIONS = [
 
 function formatDate(value?: string): string {
   if (!value) return 'Not available';
-  return new Date(value).toLocaleString();
+  return new Date(value).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' });
 }
 
 function formatBytes(value?: number): string {
@@ -69,13 +70,6 @@ function displayType(record: BackupRecord): string {
   if (record.backupType === 'FULL_SQL' || record.backupType === 'FULL') return 'Full SQL';
   if (record.backupType === 'GRANULAR_EXPORT') return `Granular ${record.exportFormat ?? 'Export'}`;
   return record.backupType.replaceAll('_', ' ');
-}
-
-function statusClasses(status: string): string {
-  if (status === 'COMPLETED') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
-  if (status === 'FAILED') return 'border-rose-200 bg-rose-50 text-rose-700';
-  if (status === 'RUNNING' || status === 'QUEUED') return 'border-amber-200 bg-amber-50 text-amber-700';
-  return 'border-slate-200 bg-slate-50 text-slate-600';
 }
 
 const Metric: React.FC<{
@@ -425,88 +419,27 @@ export const BackupRecoveryConsole: React.FC = () => {
           </div>
           <span className="text-xs font-semibold text-slate-500">{orderedRecords.length} record{orderedRecords.length === 1 ? '' : 's'}</span>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1260px] text-left text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 text-[10px] uppercase tracking-[0.08em] text-slate-500">
-                <th className="px-3 py-3 font-semibold">Date/Time</th>
-                <th className="px-3 py-3 font-semibold">Type</th>
-                <th className="px-3 py-3 font-semibold">Triggered By</th>
-                <th className="px-3 py-3 font-semibold">File Size</th>
-                <th className="px-3 py-3 font-semibold">SHA-256 Checksum</th>
-                <th className="px-3 py-3 font-semibold">Verification</th>
-                <th className="px-3 py-3 font-semibold">Retention</th>
-                <th className="px-3 py-3 font-semibold">Restore Test</th>
-                <th className="px-3 py-3 text-right font-semibold">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orderedRecords.map((record) => {
-                const hasDownload = record.status === 'COMPLETED'
-                  && ['INTEGRITY_VERIFIED', 'RESTORE_VERIFIED'].includes(record.verificationState ?? '');
-                const downloadBusy = busyAction === `download-${record.id}`;
-                return (
-                  <tr key={record.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                    <td className="whitespace-nowrap px-3 py-3 text-xs text-slate-600">{formatDate(recordDate(record))}</td>
-                    <td className="px-3 py-3">
-                      <div className="font-semibold text-slate-800">{displayType(record)}</div>
-                      <span className={`mt-1 inline-flex border px-2 py-0.5 text-[10px] font-semibold ${statusClasses(record.status)}`}>{record.status}</span>
-                    </td>
-                    <td className="px-3 py-3 text-xs text-slate-600">{record.createdBy ?? record.triggeredBy ?? 'System Scheduler'}</td>
-                    <td className="px-3 py-3 font-mono text-xs text-slate-600">{formatBytes(record.fileSize)}</td>
-                    <td className="px-3 py-3 font-mono text-xs text-slate-500" title={record.checksum ?? 'Checksum pending'}>{record.checksum ? `${record.checksum.slice(0, 18)}...` : 'Pending'}</td>
-                    <td className="px-3 py-3 text-xs text-slate-600">
-                      <div className="font-semibold text-slate-800">{record.verificationState ?? 'NOT_VERIFIED'}</div>
-                      <div className="mt-1">{record.rowCount ?? 0} rows · {record.storageObjectCount ?? 0} files</div>
-                      {record.failureReason && <div className="mt-1 max-w-64 text-rose-700">{record.failureReason}</div>}
-                    </td>
-                    <td className="px-3 py-3 text-xs text-slate-600">
-                      <div>{record.protected ? 'Protected' : formatDate(record.retentionExpiresAt)}</div>
-                      <div className="mt-1">{record.cleanupStatus ?? 'RETAINED'}</div>
-                    </td>
-                    <td className="px-3 py-3 text-xs text-slate-600">
-                      <div className="font-semibold">{record.restoreTestStatus ?? 'NOT_VERIFIED'}</div>
-                      {record.lastRestoreTestAt && <div className="mt-1">{formatDate(record.lastRestoreTestAt)}</div>}
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => void handleProtection(record)}
-                          disabled={busyAction !== null || record.cleanupStatus === 'DELETED'}
-                          title={record.protected ? 'Return to ordinary retention' : 'Protect from retention cleanup'}
-                          className="inline-flex items-center gap-2 border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-red-300 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          <LockKeyhole className="h-3.5 w-3.5" />{record.protected ? 'Unprotect' : 'Protect'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleDownload(record)}
-                          disabled={!hasDownload || busyAction !== null}
-                          title={hasDownload ? 'Authorize a five-minute download after re-verifying its checksum' : 'Only integrity-verified completed artifacts can be downloaded'}
-                          className="inline-flex items-center gap-2 border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-red-300 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {downloadBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                          {hasDownload ? 'Download' : 'Unavailable'}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          {!loading && orderedRecords.length === 0 && (
-            <div className="flex flex-col items-center justify-center gap-2 py-12 text-center text-slate-500">
-              <FileArchive className="h-8 w-8 text-slate-300" />
-              <p className="text-sm font-semibold text-slate-700">No backup records yet</p>
-              <p className="text-xs">Run a full SQL backup or export selected modules to create a record.</p>
-            </div>
-          )}
-          {loading && (
-            <div className="flex items-center justify-center gap-2 py-12 text-xs text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Loading backup history...</div>
-          )}
-        </div>
+        <DataTable
+          data={orderedRecords}
+          rowKey={(row) => row.id}
+          caption="Backup history"
+          loading={loading}
+          columns={[
+            { id: 'date', header: 'Date / time', accessor: (row) => formatDate(recordDate(row)), sortValue: (row) => new Date(recordDate(row)), sortable: true },
+            { id: 'type', header: 'Type', searchableValue: (row) => `${displayType(row)} ${row.status}`, cell: (row) => <><p className="font-semibold text-slate-900">{displayType(row)}</p><div className="mt-1"><DataTableStatusBadge value={row.status} /></div></>, sortable: true },
+            { id: 'triggeredBy', header: 'Triggered by', accessor: (row) => row.createdBy ?? row.triggeredBy ?? 'System Scheduler', sortable: true },
+            { id: 'size', header: 'File size', accessor: (row) => formatBytes(row.fileSize), sortValue: (row) => row.fileSize ?? 0, sortable: true, align: 'right' },
+            { id: 'checksum', header: 'SHA-256 checksum', cell: (row) => <span className="font-mono text-xs" title={row.checksum ?? 'Checksum pending'}>{row.checksum ? `${row.checksum.slice(0, 18)}…` : 'Pending'}</span>, searchableValue: (row) => row.checksum, optional: true },
+            { id: 'verification', header: 'Verification', searchableValue: (row) => `${row.verificationState ?? ''} ${row.failureReason ?? ''}`, cell: (row) => <><DataTableStatusBadge value={row.verificationState ?? 'NOT_VERIFIED'} /><p className="mt-1 text-xs text-slate-500">{row.rowCount ?? 0} rows · {row.storageObjectCount ?? 0} files</p>{row.failureReason && <p className="mt-1 max-w-xs text-xs text-rose-700">{row.failureReason}</p>}</>, sortable: true },
+            { id: 'retention', header: 'Retention', searchableValue: (row) => `${row.cleanupStatus ?? ''} ${row.protected ? 'protected' : ''}`, cell: (row) => <><p>{row.protected ? 'Protected' : formatDate(row.retentionExpiresAt)}</p><p className="mt-1 text-xs text-slate-500">{row.cleanupStatus ?? 'RETAINED'}</p></>, optional: true },
+            { id: 'restore', header: 'Restore test', searchableValue: (row) => row.restoreTestStatus, cell: (row) => <><DataTableStatusBadge value={row.restoreTestStatus ?? 'NOT_VERIFIED'} />{row.lastRestoreTestAt && <p className="mt-1 text-xs text-slate-500">{formatDate(row.lastRestoreTestAt)}</p>}</>, sortable: true, optional: true },
+          ] satisfies DataTableColumn<BackupRecord>[]}
+          searchableText={(row) => `${displayType(row)} ${row.status} ${row.createdBy ?? row.triggeredBy ?? ''} ${row.checksum ?? ''} ${row.verificationState ?? ''} ${row.cleanupStatus ?? ''} ${row.restoreTestStatus ?? ''}`}
+          searchPlaceholder="Search backup history…"
+          rowActions={(row) => { const hasDownload = row.status === 'COMPLETED' && ['INTEGRITY_VERIFIED', 'RESTORE_VERIFIED'].includes(row.verificationState ?? ''); const downloadBusy = busyAction === `download-${row.id}`; return <div className="flex flex-wrap justify-end gap-2"><button type="button" onClick={() => void handleProtection(row)} disabled={busyAction !== null || row.cleanupStatus === 'DELETED'} title={row.protected ? 'Return to ordinary retention' : 'Protect from retention cleanup'} className="inline-flex items-center gap-2 border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-red-300 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"><LockKeyhole className="h-3.5 w-3.5" />{row.protected ? 'Unprotect' : 'Protect'}</button><button type="button" onClick={() => void handleDownload(row)} disabled={!hasDownload || busyAction !== null} title={hasDownload ? 'Authorize a five-minute download after re-verifying its checksum' : 'Only integrity-verified completed artifacts can be downloaded'} className="inline-flex items-center gap-2 border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-red-300 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50">{downloadBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}{hasDownload ? 'Download' : 'Unavailable'}</button></div>; }}
+          emptyTitle="No backup records"
+          emptyDescription="Run a full SQL backup or export selected modules to create a record."
+        />
       </section>
 
       <div className="flex items-center gap-2 border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">

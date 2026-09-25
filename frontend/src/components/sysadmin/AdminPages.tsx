@@ -3,14 +3,15 @@ import {
   Activity, Users, Shield,
   AlertTriangle, AlertCircle,
   FileText, Bell, Settings, Layers,
-  RefreshCw, Wifi, WifiOff,
-  Search, ChevronLeft, ChevronRight,} from 'lucide-react';
+  Wifi, WifiOff,
+} from 'lucide-react';
 import { loadConfigs, updateConfig, loadIntegrations } from '../../api/adminService';
 import { notificationService } from '../../api/notificationService';
 import { securityService } from '../../api/securityService';
 import { SecurityThreatSection } from '../security/SecurityThreatSection';
 import { SubsystemHealthGrid } from './SubsystemHealthGrid';
 import { DashboardHero } from '../ui/DashboardPrimitives';
+import { DataTable, DataTableStatusBadge, type DataTableColumn } from '../ui/data-table';
 import type {
   SystemConfiguration, SecurityLog,
 } from '../../types';
@@ -134,46 +135,43 @@ export const SecurityCenterPage: React.FC = () => {
         <div className="card-stat p-4"><p className="text-xs text-slate-500 uppercase tracking-wide">Open Alerts</p><p className="text-2xl font-bold text-rose-600 mt-1">{metrics.activeAlertsCount}</p></div>
         <div className="card-stat p-4"><p className="text-xs text-slate-500 uppercase tracking-wide">Failed Logins</p><p className="text-2xl font-bold text-amber-600 mt-1">{metrics.failedLoginAttempts}</p></div>
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <div className="card-stat p-5">
-          <h3 className="text-sm font-bold text-slate-900 mb-3">Security Alerts ({alerts.length})</h3>
-          {alerts.length === 0 ? <p className="text-xs text-slate-400">No alerts</p> : (
-            <div className="space-y-2 max-h-80 overflow-y-auto">
-              {alerts.map((a) => (
-                <div key={a.id} className={`p-3 rounded-lg border text-xs ${
-                  a.severity === 'CRITICAL' ? 'bg-rose-50 border-rose-200' :
-                  a.severity === 'HIGH' ? 'bg-orange-50 border-orange-200' :
-                  a.severity === 'MEDIUM' ? 'bg-amber-50 border-amber-200' : 'bg-slate-50'
-                }`}>
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-slate-900">{a.title}</span>
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                      a.severity === 'CRITICAL' ? 'bg-rose-200 text-rose-800' :
-                      a.severity === 'HIGH' ? 'bg-orange-200 text-orange-800' : 'bg-amber-200 text-amber-800'
-                    }`}>{a.severity}</span>
-                  </div>
-                  <p className="text-slate-500 mt-1">{a.description}</p>
-                  <p className="text-slate-400 mt-1 font-mono">{a.targetIp} · {a.createdAt ? new Date(a.createdAt).toLocaleString() : ''}</p>
-                </div>
-              ))}
-            </div>
-          )}
+      <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <div className="space-y-3">
+          <h3 className="text-sm font-bold text-slate-900">Security Alerts ({alerts.length})</h3>
+          <DataTable
+            data={alerts}
+            rowKey={(row) => row.id ?? `${row.createdAt ?? 'undated'}-${row.title}`}
+            caption="Security alerts"
+            columns={[
+              { id: 'alert', header: 'Alert', searchableValue: (row) => `${row.title} ${row.description ?? ''}`, cell: (row) => <><p className="font-semibold text-slate-900">{row.title}</p><p className="mt-1 max-w-sm truncate text-xs text-slate-500" title={row.description}>{row.description || '—'}</p></>, sortable: true },
+              { id: 'severity', header: 'Severity', accessor: (row) => <DataTableStatusBadge value={row.severity} />, searchableValue: (row) => row.severity, sortable: true },
+              { id: 'source', header: 'Source', accessor: (row) => row.targetIp || 'Not provided', sortable: true, optional: true },
+              { id: 'created', header: 'Created', accessor: (row) => row.createdAt ? new Date(row.createdAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : '—', sortValue: (row) => row.createdAt ? new Date(row.createdAt) : null, sortable: true },
+            ] satisfies DataTableColumn<(typeof alerts)[number]>[]}
+            searchableText={(row) => `${row.title} ${row.description ?? ''} ${row.severity} ${row.targetIp ?? ''}`}
+            searchPlaceholder="Search security alerts…"
+            paginationEnabled={false}
+            emptyTitle="No security alerts"
+            emptyDescription="No active alerts are available in the authorized security scope."
+          />
         </div>
-        <div className="card-stat p-5">
-          <h3 className="text-sm font-bold text-slate-900 mb-3">Active Sessions ({sessions.length})</h3>
-          {sessions.length === 0 ? <p className="text-xs text-slate-400">No active sessions</p> : (
-            <div className="space-y-2 max-h-80 overflow-y-auto">
-              {sessions.map((s) => (
-                <div key={s.id} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs">
-                  <div>
-                    <p className="font-medium text-slate-900">{s.fullName || s.username}</p>
-                    <p className="text-slate-500">{s.ipAddress} · {s.browser}</p>
-                  </div>
-                  <span className="text-slate-400">{s.loginTime ? new Date(s.loginTime).toLocaleString() : ''}</span>
-                </div>
-              ))}
-            </div>
-          )}
+        <div className="space-y-3">
+          <h3 className="text-sm font-bold text-slate-900">Active Sessions ({sessions.length})</h3>
+          <DataTable
+            data={sessions}
+            rowKey={(row) => row.id}
+            caption="Active security sessions"
+            columns={[
+              { id: 'user', header: 'User', accessor: (row) => row.fullName || row.username || 'Unknown user', sortable: true },
+              { id: 'source', header: 'Source', searchableValue: (row) => `${row.ipAddress ?? ''} ${row.browser ?? ''}`, cell: (row) => <><p>{row.ipAddress || 'Not provided'}</p><p className="text-xs text-slate-500">{row.browser || 'Unknown browser'}</p></> },
+              { id: 'login', header: 'Login time', accessor: (row) => row.loginTime ? new Date(row.loginTime).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : '—', sortValue: (row) => row.loginTime ? new Date(row.loginTime) : null, sortable: true },
+            ] satisfies DataTableColumn<(typeof sessions)[number]>[]}
+            searchableText={(row) => `${row.fullName ?? row.username ?? ''} ${row.ipAddress ?? ''} ${row.browser ?? ''}`}
+            searchPlaceholder="Search active sessions…"
+            paginationEnabled={false}
+            emptyTitle="No active sessions"
+            emptyDescription="No active sessions are available in the authorized security scope."
+          />
         </div>
       </div>
       <SecurityThreatSection />
@@ -185,91 +183,62 @@ export const AuditLogsPage: React.FC = () => {
   const [logs, setLogs] = useState<SecurityLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState(0);
-  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [total, setTotal] = useState(0);
   const [riskFilter, setRiskFilter] = useState('');
 
   const fetchLogs = async () => {
     setLoading(true);
     setError(null);
     try {
-      const params: Record<string, string> = { page: String(page), size: '20' };
+      const params: Record<string, string> = { page: String(page - 1), size: String(pageSize) };
       if (riskFilter) params.riskLevel = riskFilter;
       const result = await securityService.getAuditLogs(params);
-      setLogs(result);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to load logs');
+      setLogs(result.rows);
+      setTotal(result.total);
+    } catch (reason) {
+      console.error('Unable to load authorized audit logs', reason);
+      setError('Unable to load audit logs. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { fetchLogs(); }, [page, riskFilter]);
+  useEffect(() => { void fetchLogs(); }, [page, pageSize, riskFilter]);
 
-  const filtered = search
-    ? logs.filter(l => l.action?.toLowerCase().includes(search.toLowerCase()) || l.ipAddress?.includes(search) || l.fullName?.toLowerCase().includes(search.toLowerCase()))
-    : logs;
-
-  const riskColors: Record<string, string> = {
-    CRITICAL: 'bg-rose-100 text-rose-700', HIGH: 'bg-orange-100 text-orange-700',
-    MEDIUM: 'bg-amber-100 text-amber-700', LOW: 'bg-slate-100 text-slate-600',
-  };
+  const columns: DataTableColumn<SecurityLog>[] = [
+    { id: 'timestamp', header: 'Timestamp', sortable: true, sortValue: (log) => log.timestamp, accessor: (log) => log.timestamp ? new Date(log.timestamp).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' }) : '—' },
+    { id: 'actor', header: 'Actor', searchableValue: (log) => `${log.fullName ?? ''} ${log.userId ?? ''}`, cell: (log) => <div><p className="font-semibold text-slate-900">{log.fullName || 'Unknown actor'}</p>{log.userId && <p className="mt-1 max-w-44 truncate font-mono text-[10px] text-slate-500" title={log.userId}>{log.userId}</p>}</div> },
+    { id: 'module', header: 'Module', sortable: true, accessor: (log) => log.module || '—', sortValue: (log) => log.module },
+    { id: 'action', header: 'Action', sortable: true, accessor: (log) => log.action || '—', sortValue: (log) => log.action },
+    { id: 'source', header: 'Source', optional: true, accessor: (log) => <span className="font-mono text-xs">{log.ipAddress || 'Not provided'}</span> },
+    { id: 'risk', header: 'Risk', sortable: true, cell: (log) => <DataTableStatusBadge value={log.riskLevel || 'LOW'} />, sortValue: (log) => log.riskLevel },
+    { id: 'status', header: 'Status', sortable: true, cell: (log) => <DataTableStatusBadge value={log.status} />, sortValue: (log) => log.status },
+  ];
 
   return (
     <div>
       <PageHeader icon={FileText} title="Audit Logs" subtitle="Security audit trail from database" />
-      <div className="glass-panel p-5">
-        <div className="flex items-center space-x-3 mb-4">
-          <div className="relative flex-1 max-w-xs">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input type="text" placeholder="Search logs..." value={search} onChange={e => setSearch(e.target.value)}
-              className="w-full bg-white border border-slate-300 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-emerald-500" />
-          </div>
-          <select value={riskFilter} onChange={e => setRiskFilter(e.target.value)}
-            className="bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-600 focus:outline-none focus:border-emerald-500">
-            <option value="">All Risks</option>
-            <option value="CRITICAL">Critical</option>
-            <option value="HIGH">High</option>
-            <option value="MEDIUM">Medium</option>
-            <option value="LOW">Low</option>
-          </select>
-          <button onClick={fetchLogs} className="p-2 rounded-lg bg-slate-100 text-slate-500 hover:bg-slate-200"><RefreshCw className="w-4 h-4" /></button>
-        </div>
-        {loading ? <LoadingSkeleton /> : error ? <ErrorState message={error} onRetry={fetchLogs} /> : (
-          <>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead><tr className="border-b border-slate-200 text-slate-500 uppercase tracking-wider">
-                  <th className="text-left py-3 px-2">Timestamp</th><th className="text-left py-3 px-2">User</th>
-                  <th className="text-left py-3 px-2">Module</th><th className="text-left py-3 px-2">Action</th>
-                  <th className="text-left py-3 px-2">IP</th><th className="text-center py-3 px-2">Risk</th><th className="text-center py-3 px-2">Status</th>
-                </tr></thead>
-                <tbody>
-                  {filtered.map((log, i) => (
-                    <tr key={log.id || i} className="border-b border-slate-100 hover:bg-slate-50">
-                      <td className="py-3 px-2 font-mono text-slate-600">{log.timestamp ? new Date(log.timestamp).toLocaleString() : ''}</td>
-                      <td className="py-3 px-2 font-medium text-slate-900">{log.fullName || log.userId || 'Unknown'}</td>
-                      <td className="py-3 px-2 text-slate-600">{log.module}</td>
-                      <td className="py-3 px-2 text-slate-600">{log.action}</td>
-                      <td className="py-3 px-2 font-mono text-slate-500">{log.ipAddress}</td>
-                      <td className="py-3 px-2 text-center"><span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${riskColors[log.riskLevel] || 'bg-slate-100 text-slate-600'}`}>{log.riskLevel}</span></td>
-                      <td className="py-3 px-2 text-center"><span className={`text-[10px] font-semibold ${log.status === 'SUCCESS' ? 'text-emerald-600' : 'text-rose-600'}`}>{log.status}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="flex items-center justify-between mt-4">
-              <span className="text-xs text-slate-400">{filtered.length} entries</span>
-              <div className="flex items-center space-x-2">
-                <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="p-1 rounded bg-slate-100 text-slate-500 disabled:opacity-40"><ChevronLeft className="w-4 h-4" /></button>
-                <span className="text-xs text-slate-600">Page {page + 1}</span>
-                <button onClick={() => setPage(p => p + 1)} className="p-1 rounded bg-slate-100 text-slate-500"><ChevronRight className="w-4 h-4" /></button>
-              </div>
-            </div>
-          </>
-        )}
-      </div>
+      <DataTable
+        data={logs}
+        columns={columns}
+        rowKey={(log) => log.id}
+        caption="Global audit logs"
+        loading={loading}
+        error={error}
+        onRetry={fetchLogs}
+        onRefresh={fetchLogs}
+        searchableText={(log) => `${log.fullName ?? ''} ${log.userId ?? ''} ${log.module ?? ''} ${log.action ?? ''} ${log.ipAddress ?? ''} ${log.riskLevel ?? ''} ${log.status ?? ''}`}
+        searchPlaceholder="Search this audit page..."
+        filters={<label className="flex items-center gap-2 text-xs font-semibold text-slate-600"><span className="sr-only">Risk level</span><select value={riskFilter} onChange={(event) => { setRiskFilter(event.target.value); setPage(1); }} className="min-h-10 rounded-control border border-slate-300 bg-white px-3 text-sm text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"><option value="">All risks</option><option value="CRITICAL">Critical</option><option value="HIGH">High</option><option value="MEDIUM">Medium</option><option value="LOW">Low</option></select></label>}
+        activeFilters={riskFilter ? [{ id: 'risk', label: 'Risk', value: riskFilter, onRemove: () => { setRiskFilter(''); setPage(1); } }] : []}
+        onClearFilters={() => { setRiskFilter(''); setPage(1); }}
+        pagination={{ page, pageSize, total, onPageChange: setPage, onPageSizeChange: (size) => { setPageSize(size); setPage(1); } }}
+        emptyTitle="No audit events found"
+        emptyDescription="No authorized audit events are available for this page and filter."
+        filteredEmptyTitle="No audit events match your current search or filter"
+      />
     </div>
   );
 };

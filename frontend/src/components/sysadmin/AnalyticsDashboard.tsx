@@ -3,19 +3,14 @@ import { AlertCircle, BellRing, Clock3, Database, Radio, Server, Workflow } from
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { exportAnalyticsCsv, fetchAnalytics } from '../../api/analyticsService';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
-import type { AnalyticsData, RuntimeHealthCheck } from '../../types';
+import type { AnalyticsData } from '../../types';
 import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
-import { EmptyState, ErrorState, LoadingState, ResponsiveTableContainer } from '../ui/SharedUI';
+import { EmptyState, ErrorState, LoadingState } from '../ui/SharedUI';
+import { DataTable, DataTableStatusBadge, type DataTableColumn } from '../ui/data-table';
 import {
   AnalyticsChartCard, AnalyticsMetricCard, AnalyticsPageHeader, AnalyticsPrintMeta,
 } from '../analytics/AnalyticsPrimitives';
 import { type AnalyticsRangeKey, buildAnalyticsQuery, formatManilaDate, formatManilaDateTime, formatManilaInclusiveEnd, printAnalyticsReport, validateAnalyticsRange } from '../analytics/analyticsUtils';
-
-const STATUS_STYLE: Record<RuntimeHealthCheck['status'], string> = {
-  LIVE: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-  EMPTY: 'border-amber-200 bg-amber-50 text-amber-700',
-  DISCONNECTED: 'border-rose-200 bg-rose-50 text-rose-700',
-};
 
 export const AnalyticsPage: React.FC = () => {
   const [range, setRange] = useState<AnalyticsRangeKey>('last_30_days');
@@ -71,6 +66,12 @@ export const AnalyticsPage: React.FC = () => {
   ];
   const deliveryData = [{ name: 'Delivery failures', value: operational?.notificationDeliveryFailures ?? 0 }];
   const checks = data.systemHealth?.checks ?? [];
+  const checkColumns: DataTableColumn<(typeof checks)[number]>[] = [
+    { id: 'dependency', header: 'Dependency', sortable: true, accessor: (check) => <span className="font-semibold text-slate-900">{check.name}</span>, sortValue: (check) => check.name },
+    { id: 'status', header: 'Status', sortable: true, cell: (check) => <DataTableStatusBadge value={check.status} />, sortValue: (check) => check.status },
+    { id: 'latency', header: 'Latency', sortable: true, align: 'right', accessor: (check) => `${check.latencyMs} ms`, sortValue: (check) => check.latencyMs },
+    { id: 'evidence', header: 'Evidence', optional: true, accessor: (check) => <span className="block max-w-xl truncate text-xs text-slate-600" title={check.detail}>{check.detail || '—'}</span> },
+  ];
   const dependencyLatency = checks.map((check) => ({ name: check.name, latency: check.latencyMs }));
   const overall = data.systemHealth?.overallStatus ?? 'DISCONNECTED';
   const hasAutomation = automationData.some((row) => row.value > 0);
@@ -109,8 +110,8 @@ export const AnalyticsPage: React.FC = () => {
       </AnalyticsChartCard>
 
       <section className="card-stat overflow-hidden">
-        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5"><div><h2 className="font-heading font-bold text-slate-950">Live Dependency Checks</h2><p className="mt-1 text-xs text-slate-500">Request-time status and evidence; no fixed labels.</p></div><span className={`rounded-full border px-3 py-1 text-xs font-bold ${STATUS_STYLE[overall]}`}>{overall}</span></header>
-        {checks.length ? <ResponsiveTableContainer className="rounded-none border-0"><table className="w-full min-w-[680px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="px-5 py-3">Dependency</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Latency</th><th className="px-5 py-3">Evidence</th></tr></thead><tbody className="divide-y divide-slate-100">{checks.map((check) => <tr key={check.name}><td className="px-5 py-4 font-semibold text-slate-900">{check.name}</td><td className="px-5 py-4"><span className={`rounded-full border px-2 py-1 text-[11px] font-bold ${STATUS_STYLE[check.status]}`}>{check.status}</span></td><td className="px-5 py-4 font-mono text-xs">{check.latencyMs} ms</td><td className="px-5 py-4 text-xs text-slate-500">{check.detail}</td></tr>)}</tbody></table></ResponsiveTableContainer> : <EmptyState className="m-5" title="No dependency checks" description="No request-time dependency checks were returned." />}
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5"><div><h2 className="font-heading font-bold text-slate-950">Live Dependency Checks</h2><p className="mt-1 text-xs text-slate-500">Request-time status and evidence; no fixed labels.</p></div><DataTableStatusBadge value={overall} /></header>
+        <DataTable data={checks} columns={checkColumns} rowKey={(check) => check.name} caption="Live dependency checks" searchableText={(check) => `${check.name} ${check.status} ${check.detail}`} searchPlaceholder="Search dependencies..." paginationEnabled={false} emptyTitle="No dependency checks" emptyDescription="No request-time dependency checks were returned." className="rounded-none border-0 shadow-none" />
       </section>
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-3">

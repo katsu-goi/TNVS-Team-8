@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, XCircle, CheckCheck, Loader2, FileSignature } from 'lucide-react';
+import { CheckCircle2, XCircle, CheckCheck, Loader2 } from 'lucide-react';
 import { requestReviewService, ReviewableRequest } from '../../api/requestReviewService';
 import { ReasonDialog } from '../ui/SharedUI';
 import { DashboardHero } from '../ui/DashboardPrimitives';
 import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
+import { DataTable, DataTableStatusBadge, type DataTableColumn } from '../ui/data-table';
 
 /**
  * Shared review page for employee contract/legal requests, used by Contract
@@ -16,6 +17,7 @@ export const RequestReviewPage: React.FC = () => {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rejectRequest, setRejectRequest] = useState<ReviewableRequest | null>(null);
+  const [statusFilter, setStatusFilter] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -50,10 +52,6 @@ export const RequestReviewPage: React.FC = () => {
 
   const onReject = (r: ReviewableRequest) => setRejectRequest(r);
 
-  const pending = requests.filter(r => r.status === 'PENDING' || r.status === 'IN_REVIEW');
-  const approved = requests.filter(r => r.status === 'APPROVED');
-  const decided = requests.filter(r => ['REJECTED', 'COMPLETED', 'CANCELLED'].includes(r.status));
-
   return (
     <div className="p-8">
       <div className="mb-6">
@@ -77,44 +75,29 @@ export const RequestReviewPage: React.FC = () => {
       {loading ? (
         <PortalLoadingOverlay message="Loading requests..." />
       ) : (
-        <div className="space-y-6">
-          <section>
-            <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-3">Awaiting decision ({pending.length})</h2>
-            {pending.length === 0 ? (
-              <Empty text="No requests waiting for a decision." />
-            ) : (
-              <div className="space-y-3">
-                {pending.map(r => (
-                  <RequestCard key={r.id} r={r} busy={busy} onApprove={() => run(r.id, 'approve')} onReject={() => onReject(r)} onComplete={() => run(r.id, 'complete')} />
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section>
-            <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-3">Approved — ready to complete ({approved.length})</h2>
-            {approved.length === 0 ? (
-              <Empty text="No approved requests awaiting completion." />
-            ) : (
-              <div className="space-y-3">
-                {approved.map(r => (
-                  <RequestCard key={r.id} r={r} busy={busy} onApprove={() => run(r.id, 'approve')} onReject={() => onReject(r)} onComplete={() => run(r.id, 'complete')} />
-                ))}
-              </div>
-            )}
-          </section>
-
-          {decided.length > 0 && (
-            <section>
-              <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-3">Decided ({decided.length})</h2>
-              <div className="space-y-3">
-                {decided.map(r => (
-                  <RequestCard key={r.id} r={r} busy={busy} onApprove={() => run(r.id, 'approve')} onReject={() => onReject(r)} onComplete={() => run(r.id, 'complete')} />
-                ))}
-              </div>
-            </section>
-          )}
-        </div>
+        <DataTable
+          data={requests}
+          rowKey={(row) => row.id}
+          caption="Employee requests for officer review"
+          columns={[
+            { id: 'request', header: 'Request', searchableValue: (row) => `${row.title} ${row.description ?? ''} ${row.decisionNotes ?? ''}`, cell: (row) => <><p className="font-semibold text-slate-900">{row.title}</p>{row.description && <p className="mt-1 max-w-md truncate text-xs text-slate-500" title={row.description}>{row.description}</p>}{row.decisionNotes && <p className="mt-1 text-xs italic text-slate-500">Note: {row.decisionNotes}</p>}</>, sortable: true },
+            { id: 'type', header: 'Type', accessor: (row) => <DataTableStatusBadge value={row.type} />, searchableValue: (row) => row.type, sortable: true },
+            { id: 'requester', header: 'Requester', accessor: (row) => row.requesterName || 'Not provided', sortable: true },
+            { id: 'created', header: 'Created', accessor: (row) => new Date(row.createdAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }), sortValue: (row) => new Date(row.createdAt), sortable: true },
+            { id: 'status', header: 'Status', accessor: (row) => <DataTableStatusBadge value={row.status} />, searchableValue: (row) => row.status, sortable: true },
+          ] satisfies DataTableColumn<ReviewableRequest>[]}
+          searchableText={(row) => `${row.title} ${row.description ?? ''} ${row.requesterName ?? ''} ${row.type} ${row.status} ${row.decisionNotes ?? ''}`}
+          searchPlaceholder="Search review requests…"
+          filterRow={(row) => !statusFilter || row.status === statusFilter}
+          filters={<select aria-label="Request status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="min-h-10 rounded-control border border-slate-300 bg-white px-3 text-sm text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"><option value="">All statuses</option><option value="PENDING">Pending</option><option value="IN_REVIEW">In review</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option><option value="COMPLETED">Completed</option><option value="CANCELLED">Cancelled</option></select>}
+          activeFilters={statusFilter ? [{ id: 'status', label: 'Status', value: statusFilter, onRemove: () => setStatusFilter('') }] : []}
+          onClearFilters={() => setStatusFilter('')}
+          onRefresh={() => void load()}
+          rowActions={(row) => { const isPending = row.status === 'PENDING' || row.status === 'IN_REVIEW'; const isApproved = row.status === 'APPROVED'; if (!isPending && !isApproved) return null; return <div className="flex flex-wrap justify-end gap-2">{isPending && <><button type="button" onClick={() => void run(row.id, 'approve')} disabled={busy === row.id} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">{busy === row.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}Approve</button><button type="button" onClick={() => onReject(row)} disabled={busy === row.id} className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"><XCircle className="h-3.5 w-3.5" />Reject</button></>}{isApproved && <button type="button" onClick={() => void run(row.id, 'complete')} disabled={busy === row.id} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50">{busy === row.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCheck className="h-3.5 w-3.5" />}Complete</button>}</div>; }}
+          emptyTitle="No review requests"
+          emptyDescription="No employee requests are available in your authorized review scope."
+          filteredEmptyTitle="No requests match the current filters"
+        />
       )}
       <ReasonDialog
         open={Boolean(rejectRequest)}
@@ -132,88 +115,6 @@ export const RequestReviewPage: React.FC = () => {
           else throw new Error('The rejection failed. Your reason has been preserved.');
         }}
       />
-    </div>
-  );
-};
-
-const Empty: React.FC<{ text: string }> = ({ text }) => (
-  <div className="px-6 py-8 rounded-2xl bg-white border border-slate-200 text-center text-sm text-slate-400">{text}</div>
-);
-
-const statusBadge = (status: string) => {
-  switch (status) {
-    case 'PENDING': return 'bg-amber-50 text-amber-700 border-amber-200';
-    case 'IN_REVIEW': return 'bg-blue-50 text-blue-700 border-blue-200';
-    case 'APPROVED': return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-    case 'REJECTED': return 'bg-rose-50 text-rose-700 border-rose-200';
-    case 'COMPLETED': return 'bg-teal-50 text-teal-700 border-teal-200';
-    default: return 'bg-slate-50 text-slate-600 border-slate-200';
-  }
-};
-
-const RequestCard: React.FC<{
-  r: ReviewableRequest;
-  busy: string | null;
-  onApprove: () => void;
-  onReject: () => void;
-  onComplete: () => void;
-}> = ({ r, busy, onApprove, onReject, onComplete }) => {
-  const isPending = r.status === 'PENDING' || r.status === 'IN_REVIEW';
-  const isApproved = r.status === 'APPROVED';
-  return (
-    <div className="rounded-2xl bg-white border border-slate-200 p-5">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <FileSignature className="w-4 h-4 text-slate-400" />
-            <span className="text-[11px] font-mono text-slate-400">{r.type}</span>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${statusBadge(r.status)}`}>{r.status}</span>
-          </div>
-          <h3 className="text-sm font-bold text-slate-900 mt-1.5">{r.title}</h3>
-          {r.description && <p className="text-xs text-slate-500 mt-1 leading-relaxed">{r.description}</p>}
-          <p className="text-[11px] text-slate-400 mt-1.5">
-            {r.requesterName ? `Requested by ${r.requesterName}` : 'Requested'} · {new Date(r.createdAt).toLocaleString()}
-          </p>
-          {r.decisionNotes && <p className="text-xs text-slate-500 mt-1 italic">Note: {r.decisionNotes}</p>}
-        </div>
-        {(isPending || isApproved) && (
-          <div className="flex items-center gap-2 shrink-0">
-            {isPending && (
-              <>
-                <button
-                  type="button"
-                  onClick={onApprove}
-                  disabled={busy === r.id}
-                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors"
-                >
-                  {busy === r.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                  Approve
-                </button>
-                <button
-                  type="button"
-                  onClick={onReject}
-                  disabled={busy === r.id}
-                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 text-white text-xs font-semibold hover:bg-rose-700 disabled:opacity-50 transition-colors"
-                >
-                  <XCircle className="w-3.5 h-3.5" />
-                  Reject
-                </button>
-              </>
-            )}
-            {isApproved && (
-              <button
-                type="button"
-                onClick={onComplete}
-                disabled={busy === r.id}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 disabled:opacity-50 transition-colors"
-              >
-                {busy === r.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />}
-                Complete
-              </button>
-            )}
-          </div>
-        )}
-      </div>
     </div>
   );
 };

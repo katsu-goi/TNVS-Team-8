@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  AlertCircle, RefreshCw, FileText, Bell, User, Eye,
+  AlertCircle, RefreshCw, Bell, User, Eye,
   Settings, ShieldCheck, ShieldAlert, Plus, Loader2,
   ScanLine, XCircle, Camera, UserCheck, CheckCircle2, MapPin, Clock3,
 } from 'lucide-react';
@@ -18,6 +18,7 @@ import { reservationPortalService } from '../../api/reservationPortalService';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
 import { DashboardHero } from '../ui/DashboardPrimitives';
+import { DataTable, DataTableStatusBadge, type DataTableColumn } from '../ui/data-table';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -148,70 +149,26 @@ const VisitorVerificationSection: React.FC = () => {
 
       {error && <p className="text-xs text-rose-600">{error}</p>}
 
-      {loading ? (
-        <p className="text-xs text-slate-400">Loading visitors…</p>
-      ) : rows.length === 0 ? (
-        <p className="text-xs text-slate-400">No registered visitors to verify.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-100 text-left">
-                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Visitor</th>
-                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">ID Type</th>
-                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">ID Number</th>
-                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((v: any) => (
-                <tr key={v.id} className="border-b border-slate-50">
-                  <td className="p-2">
-                    <p className="font-medium text-slate-900">{v.fullName}</p>
-                    <p className="text-[10px] text-slate-400">{v.company || '—'} · {v.status}</p>
-                  </td>
-                  <td className="p-2">
-                    <select
-                      value={idType[v.id] || 'DRIVERS_LICENSE'}
-                      onChange={e => setIdType(s => ({ ...s, [v.id]: e.target.value as IdType }))}
-                      className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white"
-                    >
-                      {ID_TYPES.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
-                    </select>
-                  </td>
-                  <td className="p-2">
-                    <input
-                      value={idNumber[v.id] ?? (v.idNumber || '')}
-                      onChange={e => setIdNumber(s => ({ ...s, [v.id]: e.target.value }))}
-                      placeholder="N02-18-998412"
-                      className="text-xs border border-slate-200 rounded-lg px-2 py-1 w-40 font-mono"
-                    />
-                  </td>
-                  <td className="p-2">
-                    <div className="flex flex-wrap gap-1.5">
-                      <button
-                        onClick={() => void runVerifyAndAllow(v)}
-                        disabled={busyId === v.id || v.status === 'DENIED' || v.status === 'CHECKED_IN'}
-                        className="px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-semibold inline-flex items-center gap-1 disabled:opacity-50"
-                      >
-                        {busyId === v.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />}
-                        <span>Verify &amp; Allow</span>
-                      </button>
-                      <button
-                        onClick={() => setDenyTarget(v)}
-                        disabled={busyId === v.id || v.status === 'DENIED' || v.status === 'CHECKED_OUT'}
-                        className="px-2.5 py-1.5 rounded-lg bg-rose-600 text-white text-[11px] font-semibold inline-flex items-center gap-1 disabled:opacity-50"
-                      >
-                        <ShieldAlert className="w-3 h-3" /><span>Deny / Flag</span>
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+        data={rows}
+        rowKey={(row: any) => row.id}
+        caption="Visitor identity verification queue"
+        loading={loading}
+        error={error}
+        onRetry={() => void load()}
+        columns={[
+          { id: 'visitor', header: 'Visitor', searchableValue: (row: any) => `${row.fullName ?? ''} ${row.company ?? ''}`, cell: (row: any) => <><p className="font-medium text-slate-900">{row.fullName}</p><p className="text-xs text-slate-500">{row.company || '—'}</p></>, sortable: true },
+          { id: 'status', header: 'Status', cell: (row: any) => <DataTableStatusBadge value={row.status} />, searchableValue: (row: any) => row.status, sortable: true },
+          { id: 'idType', header: 'ID type', cell: (row: any) => <select aria-label={`ID type for ${row.fullName}`} value={idType[row.id] || 'DRIVERS_LICENSE'} onChange={event => setIdType(current => ({ ...current, [row.id]: event.target.value as IdType }))} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs">{ID_TYPES.map(type => <option key={type} value={type}>{type.replace(/_/g, ' ')}</option>)}</select> },
+          { id: 'idNumber', header: 'ID number', cell: (row: any) => <input aria-label={`ID number for ${row.fullName}`} value={idNumber[row.id] ?? (row.idNumber || '')} onChange={event => setIdNumber(current => ({ ...current, [row.id]: event.target.value }))} placeholder="N02-18-998412" className="w-40 rounded-lg border border-slate-200 px-2 py-1.5 font-mono text-xs" /> },
+        ] satisfies DataTableColumn<any>[]}
+        searchableText={(row: any) => `${row.fullName ?? ''} ${row.company ?? ''} ${row.status ?? ''} ${row.idNumber ?? ''}`}
+        searchPlaceholder="Search verification queue…"
+        paginationEnabled={false}
+        rowActions={(row: any) => <div className="flex flex-wrap justify-end gap-2"><button type="button" onClick={() => void runVerifyAndAllow(row)} disabled={busyId === row.id || row.status === 'DENIED' || row.status === 'CHECKED_IN'} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50">{busyId === row.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}Verify &amp; allow</button><button type="button" onClick={() => setDenyTarget(row)} disabled={busyId === row.id || row.status === 'DENIED' || row.status === 'CHECKED_OUT'} className="inline-flex items-center gap-1 rounded-lg bg-rose-600 px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"><ShieldAlert className="h-3.5 w-3.5" />Deny / flag</button></div>}
+        emptyTitle="No registered visitors"
+        emptyDescription="There are no visitors waiting for identity verification."
+      />
 
       {result && (
         <div className={`rounded-xl border p-4 space-y-3 ${
@@ -407,49 +364,25 @@ const VisitorWatchlistSection: React.FC = () => {
         </button>
       </div>
 
-      {loading ? (
-        <p className="text-xs text-slate-400">Loading watchlist…</p>
-      ) : entries.length === 0 ? (
-        <p className="text-xs text-slate-400">The watchlist is empty.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-100 text-left">
-                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Name</th>
-                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">ID Number</th>
-                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Reason</th>
-                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Severity</th>
-                <th className="p-2 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
-                <th className="p-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map(e => (
-                <tr key={e.id} className="border-b border-slate-50">
-                  <td className="p-2 font-medium text-slate-900">{e.fullName}</td>
-                  <td className="p-2 text-slate-600 font-mono text-xs">{e.idNumber || '—'}</td>
-                  <td className="p-2 text-slate-600 text-xs">{e.reason || '—'}</td>
-                  <td className="p-2 text-slate-600 text-xs font-mono">{e.severity}</td>
-                  <td className="p-2">
-                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
-                      e.status === 'ACTIVE' ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-500'
-                    }`}>{e.status}</span>
-                  </td>
-                  <td className="p-2 text-right">
-                    <button
-                      onClick={() => toggle(e)}
-                      className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] font-semibold text-slate-600 hover:bg-slate-50"
-                    >
-                      {e.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+        data={entries}
+        rowKey={(row) => row.id}
+        caption="Visitor watchlist"
+        loading={loading}
+        columns={[
+          { id: 'name', header: 'Name', accessor: (row) => row.fullName, sortable: true },
+          { id: 'idNumber', header: 'ID number', accessor: (row) => row.idNumber || '—', sortable: true },
+          { id: 'reason', header: 'Reason', accessor: (row) => row.reason || '—' },
+          { id: 'severity', header: 'Severity', accessor: (row) => <DataTableStatusBadge value={row.severity} />, searchableValue: (row) => row.severity, sortable: true },
+          { id: 'status', header: 'Status', accessor: (row) => <DataTableStatusBadge value={row.status} />, searchableValue: (row) => row.status, sortable: true },
+        ] satisfies DataTableColumn<VisitorWatchlistEntry>[]}
+        searchableText={(row) => `${row.fullName} ${row.idNumber ?? ''} ${row.reason ?? ''} ${row.severity} ${row.status}`}
+        searchPlaceholder="Search watchlist…"
+        paginationEnabled={false}
+        rowActions={(row) => <button type="button" onClick={() => void toggle(row)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">{row.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}</button>}
+        emptyTitle="Watchlist empty"
+        emptyDescription="No visitor watchlist entries are configured."
+      />
     </div>
   );
 };
@@ -507,55 +440,28 @@ export const FoVisitorManagementPage: React.FC = () => {
         <span>Server-validated clearance, entry, departure, and visitor audit workflow</span>
       </div>
 
-      {visitors.length === 0 ? (
-        <EmptyState icon={Eye} title="No Visitors" desc="No facility-linked visitors found." />
-      ) : (
-        <div className="card-stat overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 text-left">
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Visitor</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Company</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Facility</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Check-In</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Status</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Clearance</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visitors.map((v: any) => (
-                  <tr key={v.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                    <td className="p-3 font-medium text-slate-900">{v.fullName || v.name}</td>
-                    <td className="p-3 text-slate-600">{v.company || '-'}</td>
-                    <td className="p-3 text-slate-600">{v.facilityName || v.facility || '-'}</td>
-                    <td className="p-3 text-xs text-slate-400 font-mono">{v.actualArrival || v.expectedArrival ? new Date(v.actualArrival || v.expectedArrival).toLocaleString() : '-'}</td>
-                    <td className="p-3">
-                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
-                        v.status === 'CHECKED_IN' ? 'bg-emerald-50 text-emerald-600' :
-                        v.status === 'EXPECTED' ? 'bg-blue-50 text-blue-600' :
-                        v.status === 'CHECKED_OUT' ? 'bg-slate-100 text-slate-500' :
-                        v.status === 'DENIED' ? 'bg-rose-100 text-rose-700' :
-                        'bg-amber-50 text-amber-600'
-                      }`}>{v.status}</span>
-                      {v.denialReason && <p className="mt-1 max-w-[220px] text-[10px] text-rose-600">{v.denialReason}</p>}
-                    </td>
-                    <td className="p-3">
-                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
-                        v.clearanceState === 'CLEAR' ? 'bg-emerald-50 text-emerald-700' :
-                        v.clearanceState === 'BLOCKED' ? 'bg-rose-50 text-rose-700' :
-                        'bg-amber-50 text-amber-700'
-                      }`}>{v.clearanceState?.replace(/_/g, ' ') || 'VERIFICATION REQUIRED'}</span>
-                    </td>
-                    <td className="p-3"><button type="button" onClick={() => void checkOut(v.id)} disabled={checkOutId === v.id || v.status !== 'CHECKED_IN'} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[10px] font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">{checkOutId === v.id && <Loader2 className="h-3 w-3 animate-spin" />}Log Check-Out</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+      <DataTable
+        data={visitors}
+        rowKey={(row: any) => row.id}
+        caption="Facility visitors"
+        loading={loading}
+        error={error}
+        onRetry={() => setRetry(value => value + 1)}
+        columns={[
+          { id: 'visitor', header: 'Visitor', accessor: (row: any) => row.fullName || row.name, sortable: true },
+          { id: 'company', header: 'Company', accessor: (row: any) => row.company || '—', sortable: true },
+          { id: 'facility', header: 'Facility', accessor: (row: any) => row.facilityName || row.facility || '—', sortable: true },
+          { id: 'arrival', header: 'Check-in', accessor: (row: any) => row.actualArrival || row.expectedArrival ? new Date(row.actualArrival || row.expectedArrival).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : '—', sortValue: (row: any) => row.actualArrival || row.expectedArrival ? new Date(row.actualArrival || row.expectedArrival) : null, sortable: true, optional: true },
+          { id: 'status', header: 'Status', searchableValue: (row: any) => row.status, cell: (row: any) => <><DataTableStatusBadge value={row.status} />{row.denialReason && <p className="mt-1 max-w-xs text-xs text-rose-700">{row.denialReason}</p>}</>, sortable: true },
+          { id: 'clearance', header: 'Clearance', accessor: (row: any) => <DataTableStatusBadge value={row.clearanceState || 'VERIFICATION_REQUIRED'} />, searchableValue: (row: any) => row.clearanceState, sortable: true },
+        ] satisfies DataTableColumn<any>[]}
+        searchableText={(row: any) => `${row.fullName ?? row.name ?? ''} ${row.company ?? ''} ${row.facilityName ?? row.facility ?? ''} ${row.status ?? ''} ${row.clearanceState ?? ''}`}
+        searchPlaceholder="Search visitors…"
+        onRefresh={() => setRetry(value => value + 1)}
+        rowActions={(row: any) => <button type="button" onClick={() => void checkOut(row.id)} disabled={checkOutId === row.id || row.status !== 'CHECKED_IN'} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">{checkOutId === row.id && <Loader2 className="h-3.5 w-3.5 animate-spin" />}Log check-out</button>}
+        emptyTitle="No visitors"
+        emptyDescription="No facility-linked visitors were found."
+      />
 
       {/* Task 4 additions - verification and watchlist screening. */}
       <VisitorVerificationSection />
@@ -619,36 +525,26 @@ export const FoDocumentsPage: React.FC = () => {
         }}
       />
 
-      {documents.length === 0 ? (
-        <EmptyState icon={FileText} title="No Documents" desc="No facility-related documents have been uploaded." />
-      ) : (
-        <div className="card-stat overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 text-left">
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Name</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Type</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Uploaded By</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Date</th>
-                  <th className="p-3 text-[10px] font-semibold text-slate-500 uppercase">Size</th>
-                </tr>
-              </thead>
-              <tbody>
-                {documents.map((d: any) => (
-                  <tr key={d.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                    <td className="p-3 font-medium text-slate-900">{d.title || d.name}</td>
-                    <td className="p-3 text-slate-600">{d.fileType || d.type || '-'}</td>
-                    <td className="p-3 text-slate-600">{d.ownerEmail || d.uploadedBy || '-'}</td>
-                    <td className="p-3 text-xs text-slate-400 font-mono">{d.createdAt || d.uploadedAt ? new Date(d.createdAt || d.uploadedAt).toLocaleDateString() : '-'}</td>
-                    <td className="p-3 text-xs text-slate-400">{d.fileSize || d.size ? `${(d.fileSize ?? d.size ?? 0)} bytes` : '-'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+      <DataTable
+        data={documents}
+        rowKey={(row: any) => row.id}
+        caption="Facility documents"
+        loading={loading}
+        error={error}
+        onRetry={() => setRetry(value => value + 1)}
+        columns={[
+          { id: 'name', header: 'Name', accessor: (row: any) => row.title || row.name, sortable: true },
+          { id: 'type', header: 'Type', accessor: (row: any) => row.fileType || row.type || '—', sortable: true },
+          { id: 'owner', header: 'Uploaded by', accessor: (row: any) => row.ownerEmail || row.uploadedBy || '—', sortable: true },
+          { id: 'date', header: 'Date', accessor: (row: any) => row.createdAt || row.uploadedAt ? new Date(row.createdAt || row.uploadedAt).toLocaleDateString('en-PH', { timeZone: 'Asia/Manila' }) : '—', sortValue: (row: any) => row.createdAt || row.uploadedAt ? new Date(row.createdAt || row.uploadedAt) : null, sortable: true },
+          { id: 'size', header: 'Size', accessor: (row: any) => row.fileSize || row.size ? `${row.fileSize ?? row.size ?? 0} bytes` : '—', sortValue: (row: any) => row.fileSize ?? row.size ?? 0, sortable: true, align: 'right' },
+        ] satisfies DataTableColumn<any>[]}
+        searchableText={(row: any) => `${row.title ?? row.name ?? ''} ${row.fileType ?? row.type ?? ''} ${row.ownerEmail ?? row.uploadedBy ?? ''}`}
+        searchPlaceholder="Search documents…"
+        onRefresh={() => setRetry(value => value + 1)}
+        emptyTitle="No documents"
+        emptyDescription="No facility-related documents have been uploaded."
+      />
     </div>
   );
 };
@@ -854,7 +750,25 @@ export const QrCheckInPage: React.FC = () => {
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">{result ? <><div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800"><CheckCircle2 className="h-5 w-5" />Pass {result.checkedIn ? 'checked in' : 'checked out'}</div><div className="mt-5 space-y-4"><div><p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Invitee</p><p className="mt-1 text-sm font-bold text-slate-900">{result.inviteeEmail}</p></div><div><p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Reservation</p><p className="mt-1 text-sm font-bold text-slate-900">{result.title}</p></div><div className="space-y-2 rounded-xl bg-slate-50 p-4 text-xs text-slate-600"><p className="flex items-center gap-2"><MapPin className="h-3.5 w-3.5 text-red-700" />{result.facilityName}</p><p className="flex items-center gap-2"><Clock3 className="h-3.5 w-3.5 text-red-700" />{qrDateTime(result.startTime)}</p><p className="flex items-center gap-2"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />{result.checkedIn ? `Checked in ${qrDateTime(result.checkedInAt ?? '')}` : `Checked out ${qrDateTime(result.checkedOutAt ?? '')}`}</p></div></div></> : <div className="flex min-h-[260px] flex-col items-center justify-center text-center"><UserCheck className="h-9 w-9 text-slate-300" /><p className="mt-3 text-sm font-semibold text-slate-600">No pass scanned yet</p><p className="mt-1 max-w-xs text-xs leading-5 text-slate-400">A successful scan displays the guest and reservation details here.</p></div>}</section>
       </div>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="mb-4 flex items-center justify-between"><div><h3 className="text-sm font-bold text-slate-900">Recent scans</h3><p className="mt-1 text-xs text-slate-500">This list is kept in the current officer session.</p></div><button type="button" onClick={() => setHistory([])} disabled={history.length === 0} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40"><RefreshCw className="h-3.5 w-3.5" />Clear</button></div>{history.length === 0 ? <p className="py-6 text-center text-xs text-slate-400">No scans in this session.</p> : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b border-slate-100"><th className="p-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Guest</th><th className="p-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Reservation</th><th className="p-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Location</th><th className="p-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Scanned</th></tr></thead><tbody>{history.map((scan) => <tr key={`${scan.inviteeEmail}-${scan.scannedAt}`} className="border-b border-slate-50"><td className="p-2 font-medium text-slate-800">{scan.inviteeEmail}</td><td className="p-2 text-slate-600">{scan.title}</td><td className="p-2 text-slate-600">{scan.facilityName}</td><td className="p-2 text-xs text-slate-400">{qrDateTime(scan.scannedAt)}</td></tr>)}</tbody></table></div>}</section>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-bold text-slate-900">Recent scans</h3><p className="mt-1 text-xs text-slate-500">This list is kept in the current officer session.</p></div><button type="button" onClick={() => setHistory([])} disabled={history.length === 0} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40"><RefreshCw className="h-3.5 w-3.5" />Clear</button></div>
+        <DataTable
+          data={history}
+          rowKey={(row) => `${row.inviteeEmail}-${row.scannedAt}`}
+          caption="Recent QR pass scans"
+          columns={[
+            { id: 'guest', header: 'Guest', accessor: (row) => row.inviteeEmail, sortable: true },
+            { id: 'reservation', header: 'Reservation', accessor: (row) => row.title, sortable: true },
+            { id: 'location', header: 'Location', accessor: (row) => row.facilityName, sortable: true },
+            { id: 'scanned', header: 'Scanned', accessor: (row) => qrDateTime(row.scannedAt), sortValue: (row) => new Date(row.scannedAt), sortable: true },
+          ] satisfies DataTableColumn<QrScanRecord>[]}
+          searchableText={(row) => `${row.inviteeEmail} ${row.title} ${row.facilityName}`}
+          searchPlaceholder="Search recent scans…"
+          paginationEnabled={false}
+          emptyTitle="No recent scans"
+          emptyDescription="No QR passes have been scanned during this officer session."
+        />
+      </div>
     </div>
   );
 };

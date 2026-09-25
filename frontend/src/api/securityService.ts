@@ -19,10 +19,17 @@ export const securityService = {
     }
   },
 
-  async getAuditLogs(params?: Record<string, string>): Promise<SecurityLog[]> {
+  async getAuditLogs(params?: Record<string, string>): Promise<{ rows: SecurityLog[]; total: number; page: number; pageSize: number }> {
     const { data } = await apiClient.get('/security/admin/audit-logs', { params });
     const page = data?.data ?? data;
-    return Array.isArray(page) ? page : page?.content ?? [];
+    if (Array.isArray(page)) return { rows: page, total: page.length, page: 0, pageSize: page.length || 20 };
+    const rows = Array.isArray(page?.content) ? page.content : [];
+    return {
+      rows,
+      total: Number(page?.totalElements ?? rows.length),
+      page: Number(page?.number ?? page?.pageable?.pageNumber ?? 0),
+      pageSize: Number(page?.size ?? page?.pageable?.pageSize ?? params?.size ?? 20),
+    };
   },
 
   async getActiveSessions(): Promise<ActiveSession[]> {
