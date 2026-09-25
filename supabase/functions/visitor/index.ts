@@ -48,6 +48,7 @@ type VisitorRow = {
   actual_arrival: string | null;
   actual_departure: string | null;
   status: string | null;
+  denial_reason: string | null;
   qr_code_token: string | null;
   badge_number: string | null;
   host_id: string | null;
@@ -131,6 +132,7 @@ function toVisitorDto(v: VisitorRow, verification?: VerificationRow | null, incl
     actualArrival: v.actual_arrival,
     actualDeparture: v.actual_departure,
     status: v.status,
+    denialReason: v.denial_reason,
     qrCodeToken: v.qr_code_token,
     badgeNumber: v.badge_number,
     currentVerificationId: v.current_verification_id,
@@ -351,6 +353,62 @@ async function handleCheckOut(ctx: AuthContext | null, _req: Request, _body: unk
   return saved ? jsonResponse(ok(toVisitorDto(saved), "Visitor checked out"), 200) : emptyNotFound();
 }
 
+async function handleVerifyAndAllow(ctx: AuthContext | null, req: Request, body: unknown, p: RouteParams) {
+  const verificationResponse = await handleVerify(ctx, req, body, p);
+  if (!verificationResponse.ok) return verificationResponse;
+  const verification = (await verificationResponse.json()).data;
+  if (verification.clearanceState !== "CLEAR") {
+    return jsonResponse(ok({ visitor: null, verification }, "Verification requires review before entry"), 200);
+  }
+  // The transaction enforces the latest clearance, watchlist, and visit state.
+  const checkInResponse = await handleCheckIn(ctx, req, body, p);
+  if (!checkInResponse.ok) return checkInResponse;
+  const visitor = (await checkInResponse.json()).data;
+  return jsonResponse(ok({ visitor, verification }, "Visitor verified and allowed"), 200);
+}
+
+async function handleDeny(ctx: AuthContext | null, _req: Request, body: unknown, p: RouteParams) {
+  const reason = String((body as Record<string, unknown> | null)?.reason ?? "").trim();
+  if (!reason) return badRequest("A denial reason is required.", "DENIAL_REASON_REQUIRED");
+  const visitor = await loadVisitor(p.id);
+  if (!visitor) return emptyNotFound();
+  const { data: saved, error } = await db.from("visitors").update({
+    status: "DENIED",
+    denial_reason: reason,
+    updated_by: ctx?.email ?? "system",
+    updated_at: naiveIso(),
+  }).eq("id", p.id).select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)").single();
+  if (error) throw new Error(`visitor denial failed: ${error.message}`);
+  await writeAudit(ctx?.user ?? null, "DENY_VISITOR", MODULE, "Visitor", p.id,
+    `Visitor '${visitor.full_name}' denied. Reason: ${reason}`, ctx?.ip ?? null, "HIGH");
+  const { error: securityLogError } = await db.from("security_logs").insert({
+    action: "DENY_VISITOR",
+    module: MODULE,
+    full_name: visitor.full_name,
+    role: ctx?.roles.join(",") ?? "FACILITIES_OFFICER",
+    ip_address: ctx?.ip ?? null,
+    risk_level: "HIGH",
+    status: "SUCCESS",
+    reason,
+  });
+  if (securityLogError) console.error(`visitor denial security log failed: ${securityLogError.message}`);
+  return jsonResponse(ok(toVisitorDto(saved as unknown as VisitorRow), "Visitor denied and flagged"), 200);
+}
+
+async function handleOccupancy() {
+  const [{ count: visitorCount, error: visitorError }, { count: inviteeCount, error: inviteeError }, { data: facilities, error: facilityError }] = await Promise.all([
+    db.from("visitors").select("id", { count: "exact", head: true }).eq("status", "CHECKED_IN").eq("is_deleted", false),
+    db.from("reservation_invitees").select("id", { count: "exact", head: true }).eq("check_in_status", true),
+    db.from("facilities").select("total_capacity").eq("active", true),
+  ]);
+  if (visitorError) throw new Error(`visitor occupancy load failed: ${visitorError.message}`);
+  if (inviteeError) throw new Error(`reservation occupancy load failed: ${inviteeError.message}`);
+  if (facilityError) throw new Error(`facility capacity load failed: ${facilityError.message}`);
+  const maxCapacity = Math.max(1, ((facilities ?? []) as Array<{ total_capacity: number | null }>).reduce((sum, row) => sum + Number(row.total_capacity ?? 0), 0));
+  const current = Number(visitorCount ?? 0) + Number(inviteeCount ?? 0);
+  return jsonResponse(ok({ current, maxCapacity, rate: Math.round((current / maxCapacity) * 1000) / 10 }, "Live hub occupancy calculated"), 200);
+}
+
 async function handleVerify(ctx: AuthContext | null, _req: Request, body: unknown, p: RouteParams) {
   const idType = parseIdType((body as Record<string, unknown> | null)?.idType);
   const rawNumber = (body as Record<string, unknown> | null)?.idNumber;
@@ -556,6 +614,9 @@ const routes = [
   { method: "GET", path: "/visitors/watchlist", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleListWatchlist },
   { method: "POST", path: "/visitors/watchlist", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleAddWatchlist },
   { method: "POST", path: "/visitors/watchlist/:id/status", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleWatchlistStatus },
+  { method: "POST", path: "/visitors/:id/verify-allow", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleVerifyAndAllow },
+  { method: "POST", path: "/visitors/:id/deny", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleDeny },
+  { method: "GET", path: "/visitors/occupancy", guard: { kind: "roles", roles: VISITOR_VIEW_ROLES }, handler: handleOccupancy },
 ] as const;
 
 Deno.serve(createHandler(routes as never, { name: "visitor" }));

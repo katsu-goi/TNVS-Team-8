@@ -1,4 +1,4 @@
-import { createClient } from "../functions/node_modules/@supabase/supabase-js/dist/index.mjs";
+import { createClient } from "@supabase/supabase-js";
 
 export const PRODUCTION_PROJECT_REF = "dunijfrvfozwlykpkfhy";
 export const QA_PREFIX = "QA-STAGING-20260924-";

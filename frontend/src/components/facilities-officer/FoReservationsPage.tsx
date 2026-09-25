@@ -9,6 +9,7 @@ import {
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { safeFetchJson, extractErrorMessage } from '../../api/client';
 import { facilitiesService } from '../../api/facilitiesService';
+import { visitorService } from '../../api/visitorService';
 import { RoomPicker, RoomPickerSelection } from './RoomPicker';
 import { DatePicker } from '../ui/DatePicker';
 import { TimePicker } from '../ui/TimePicker';
@@ -26,7 +27,7 @@ export interface ReservationItem {
   startTime: string;
   endTime: string;
   durationHours: number;
-  status: 'PENDING' | 'PENDING_MANAGER_APPROVAL' | 'APPROVED' | 'CONFIRMED' | 'COMPLETED' | 'REJECTED' | 'CANCELLED';
+  status: 'PENDING' | 'PENDING_MANAGER_APPROVAL' | 'APPROVED' | 'CONFIRMED' | 'ESCALATED' | 'COMPLETED' | 'REJECTED' | 'CANCELLED';
   expectedAttendees: number;
   priorityLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT' | 'UNSPECIFIED';
   description?: string;
@@ -48,6 +49,7 @@ export interface MaintenanceNotice {
 const STATUS_META: Record<ReservationItem['status'], { label: string; badge: string }> = {
   PENDING:   { label: 'Pending',      badge: 'bg-amber-50 text-amber-700 border-amber-200' },
   PENDING_MANAGER_APPROVAL: { label: 'Waiting for Manager', badge: 'bg-purple-50 text-purple-700 border-purple-200' },
+  ESCALATED: { label: 'Under Review', badge: 'bg-purple-50 text-purple-700 border-purple-200' },
   APPROVED:  { label: 'Approved',     badge: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   CONFIRMED: { label: 'Confirmed',    badge: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   COMPLETED: { label: 'Completed',    badge: 'bg-blue-50 text-blue-700 border-blue-200' },
@@ -177,7 +179,7 @@ export const FoReservationsPage: React.FC = () => {
     durationHours: r.startTime && r.endTime
       ? Math.max(0, (new Date(r.endTime).getTime() - new Date(r.startTime).getTime()) / 3600000)
       : 0,
-    status: ['PENDING', 'PENDING_MANAGER_APPROVAL', 'APPROVED', 'CONFIRMED', 'COMPLETED', 'REJECTED', 'CANCELLED'].includes(r.status) ? r.status : 'PENDING',
+    status: ['PENDING', 'PENDING_MANAGER_APPROVAL', 'APPROVED', 'CONFIRMED', 'ESCALATED', 'COMPLETED', 'REJECTED', 'CANCELLED'].includes(r.status) ? r.status : 'PENDING',
     expectedAttendees: r.expectedAttendees ?? 0,
     priorityLevel: ['LOW', 'MEDIUM', 'HIGH', 'URGENT'].includes(r.priorityLevel) ? r.priorityLevel : 'UNSPECIFIED',
     description: r.description,
@@ -220,6 +222,12 @@ export const FoReservationsPage: React.FC = () => {
     );
     setShowReportModal(false);
   };
+  const [occupancy, setOccupancy] = useState({ current: 0, maxCapacity: 1, rate: 0 });
+
+  React.useEffect(() => {
+    visitorService.getOccupancy().then(setOccupancy).catch(() => undefined);
+  }, [reservations.length]);
+  const occupancyRate = occupancy.rate;
 
   // Quick Action Handlers
   const handleCreateReservationSubmit = async (e: React.FormEvent) => {
@@ -409,7 +417,7 @@ export const FoReservationsPage: React.FC = () => {
             <h1 className="text-2xl font-extrabold font-heading text-slate-900">Facilities Reservation Console</h1>
           </div>
           <p className="text-slate-500 text-xs mt-1">
-            Operational coordination, scheduling, creation, and management. <strong className="text-emerald-700 font-semibold">Final approvals escalated to Facilities Manager.</strong>
+             Operational coordination, scheduling, creation, and management. <strong className="text-emerald-700 font-semibold">Tier 1 requests auto-approve; Tier 2 requests escalate to Facilities Manager.</strong>
           </p>
         </div>
 
@@ -483,8 +491,8 @@ export const FoReservationsPage: React.FC = () => {
 
         <div className="card-stat p-4 border-l-4 border-l-teal-500">
           <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Occupancy Rate</p>
-          <p className="text-2xl font-bold text-slate-400 mt-1">Unavailable</p>
-          <p className="text-[10px] text-slate-500 mt-0.5 font-mono">Capacity telemetry not supplied</p>
+          <p className="text-2xl font-bold text-slate-900 mt-1">{occupancyRate}%</p>
+          <p className="text-[10px] text-teal-600 mt-0.5 font-mono">Live Hub Occupancy: {occupancy.current} / {occupancy.maxCapacity}</p>
         </div>
       </div>
 
@@ -839,7 +847,9 @@ export const FoReservationsPage: React.FC = () => {
 
             <form onSubmit={handleCreateReservationSubmit} className="p-5 overflow-y-auto space-y-3.5 text-xs">
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 font-medium">
-                ℹ️ Request creation will be validated and automatically escalated to the Facilities Manager for final approval.
+                 {selectedRoom && (['vehicle', 'bay', 'executive', 'exec', 'restricted', 'secure'].some(term => `${selectedRoom.roomName} ${selectedRoom.type} ${createForm.category}`.toLowerCase().includes(term))
+                   ? 'Tier 2 facility: this request will be submitted for Facilities Manager approval.'
+                   : 'Tier 1 facility: this request will be submitted and auto-approved after validation.')}
               </div>
 
               {/* AI Reservation Assistant */}
@@ -1106,7 +1116,7 @@ export const FoReservationsPage: React.FC = () => {
                 </button>
                 <button type="submit" disabled={submitting} className="inline-flex items-center space-x-1.5 rounded-xl bg-brand-500 px-4 py-2 font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
                   {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>{submitting ? 'Submitting…' : 'Submit & Escalate Request'}</span>
+                   <span>{submitting ? 'Submitting…' : selectedRoom && ['vehicle', 'bay', 'executive', 'exec', 'restricted', 'secure'].some(term => `${selectedRoom.roomName} ${selectedRoom.type} ${createForm.category}`.toLowerCase().includes(term)) ? 'Submit & Escalate Request' : 'Submit & Auto-Approve'}</span>
                 </button>
               </div>
             </form>

@@ -2,6 +2,7 @@ import { createHandler, AuthContext, RouteParams } from "../_shared/guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
 import { ok, fail } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
+import { managementRoutes } from "./management.ts";
 
 const db = adminDb();
 
@@ -260,8 +261,8 @@ async function handleManagerKpi(_ctx: AuthContext | null, _req: Request) {
   const utilizationRate = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
 
   return jsonResponse(ok({
-    activeReservations: statusCounts["APPROVED"] ?? 0,
-    pendingApprovals: statusCounts["PENDING"] ?? 0,
+    activeReservations: (statusCounts["APPROVED"] ?? 0) + (statusCounts["CONFIRMED"] ?? 0),
+    pendingApprovals: (statusCounts["PENDING"] ?? 0) + (statusCounts["PENDING_MANAGER_APPROVAL"] ?? 0),
     availableRooms,
     occupiedRooms,
     maintenanceRooms: 0,
@@ -1127,7 +1128,7 @@ async function handleOfficerDashboard(_ctx: AuthContext | null, _req: Request) {
   return jsonResponse(ok({
     kpi: {
       todaysReservations: todays.length,
-      pendingRequests: statusCounts["PENDING"] ?? 0,
+      pendingRequests: (statusCounts["PENDING"] ?? 0) + (statusCounts["PENDING_MANAGER_APPROVAL"] ?? 0),
       facilitiesUnderMaintenance,
       tasksDueToday,
     },
@@ -1808,7 +1809,7 @@ async function handleAiApprovalSuggest(_ctx: AuthContext | null, _req: Request, 
   const reasons: { kind: string; code: string; message: string; details: Record<string, unknown> }[] = [];
   let score = 50;
 
-  if (row.status !== "PENDING") {
+  if (row.status !== "PENDING" && row.status !== "PENDING_MANAGER_APPROVAL") {
     reasons.push({ kind: "INFO", code: "STATUS", message: `Reservation is ${String(row.status).toLowerCase()}, not pending review.`, details: { status: row.status } });
   }
 
@@ -1906,6 +1907,7 @@ async function handleAiApprovalSuggest(_ctx: AuthContext | null, _req: Request, 
 // ---------------------------------------------------------------------------
 
 const routes = [
+  ...managementRoutes,
   // Facilities Manager
   { method: "GET", path: "/facilities-manager/dashboard/kpi", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleManagerKpi },
   { method: "GET", path: "/facilities-manager/reservations", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleManagerReservations },

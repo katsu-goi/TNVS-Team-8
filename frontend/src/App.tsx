@@ -1,9 +1,10 @@
-import React, { lazy, useEffect } from 'react';
+import React, { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useAuthStore, getDashboardPath, isActorSuperAdmin, isActorSystemAdmin, hasAssignedRole } from './stores/authStore';
 import { OversightBanner } from './components/oversight';
 import { workspaceConfigs } from './components/workspaces/workspaceConfig';
 import type { WorkspaceConfig } from './components/workspaces/workspaceConfig';
+import { isTeam8Email } from './utils/team8Access';
 import { Button, EmptyState } from './components/ui/SharedUI';
 import { PortalInitializationError, SessionBootstrapPlaceholder } from './components/ui/PortalLoadingOverlay';
 import { AppLayout } from './components/layout/AppLayout';
@@ -34,7 +35,7 @@ const RbacAdminPage = lazyNamed(() => import('./components/sysadmin/RbacAdminPag
 const FacilitiesDashboard = lazyNamed(() => import('./components/facilities/FacilitiesDashboard'), 'FacilitiesDashboard');
 const ReservationsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'ReservationsPage');
 const ApprovalPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'ApprovalPage');
-const RoomsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'RoomsPage');
+const FacilityManagementPage = lazyNamed(() => import('./components/facilities/FacilityManagement'), 'FacilityManagement');
 const CalendarPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'CalendarPage');
 const AssetsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'AssetsPage');
 const FacilitiesReportsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'ReportsPage');
@@ -43,6 +44,7 @@ const FacilitiesNotificationsPage = lazyNamed(() => import('./components/facilit
 const FacilitiesOfficerDashboard = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerDashboard'), 'FacilitiesOfficerDashboard');
 const FoReservationsPage = lazyNamed(() => import('./components/facilities-officer/FoReservationsPage'), 'FoReservationsPage');
 const FoVisitorManagementPage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'FoVisitorManagementPage');
+const FoQrCheckInPage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'QrCheckInPage');
 const FoDocumentsPage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'FoDocumentsPage');
 const FoNotificationsPage = lazyNamed(() => import('./components/facilities-officer/FacilitiesOfficerPages'), 'FoNotificationsPage');
 const LegalOfficerDashboard = lazyNamed(() => import('./components/legal/LegalOfficerDashboard'), 'LegalOfficerDashboard');
@@ -67,6 +69,9 @@ const EmpNotificationsPage = lazyNamed(() => import('./components/employee/Emplo
 const EmpProfilePage = lazyNamed(() => import('./components/employee/EmployeePages'), 'EmpProfilePage');
 const RoleWorkspacePage = lazyNamed(() => import('./components/workspaces/RoleWorkspacePage'), 'RoleWorkspacePage');
 const AccountLockoutsPage = lazyNamed(() => import('./components/sysadmin/AccountLockoutsPage'), 'AccountLockoutsPage');
+const Team8LoginPage = lazyNamed(() => import('./components/reservation-portal/Team8LoginPage'), 'Team8LoginPage');
+const ReservationPortalPage = lazyNamed(() => import('./components/reservation-portal/ReservationPortalPage'), 'ReservationPortalPage');
+const ReservationPassPage = lazyNamed(() => import('./components/reservation-portal/ReservationPassPage'), 'ReservationPassPage');
 
 class ErrorBoundary extends React.Component<
   { fallback: React.ReactNode; children: React.ReactNode },
@@ -223,6 +228,14 @@ const EmployeeRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   return <>{children}</>;
 };
 
+const Team8PortalRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const accessToken = useAuthStore((state) => state.accessToken);
+  const user = useAuthStore((state) => state.user);
+  if (!accessToken || !user) return <Navigate to="/reservation-portal/login" replace />;
+  if (!isTeam8Email(user.email)) return <Navigate to="/reservation-portal/login?error=domain" replace />;
+  return <>{children}</>;
+};
+
 export const App: React.FC = () => {
   return (
     <BrowserRouter>
@@ -231,6 +244,10 @@ export const App: React.FC = () => {
         <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/hr-assistance" element={<HRAssistancePage />} />
+        <Route path="/reservation-portal/login" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><Team8LoginPage /></Suspense>} />
+        <Route path="/reservation-portal/pass" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><ReservationPassPage /></Suspense>} />
+        <Route path="/guest-pass/:token" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><ReservationPassPage /></Suspense>} />
+        <Route path="/reservation-portal" element={<Team8PortalRoute><Suspense fallback={<SessionBootstrapPlaceholder />}><ReservationPortalPage /></Suspense></Team8PortalRoute>} />
         <Route element={
           <ProtectedRoute>
             <AdminPortalRoute>
@@ -292,7 +309,7 @@ export const App: React.FC = () => {
           <Route path="facilities" element={<FacilitiesDashboard />} />
           <Route path="facilities/reservations" element={<ReservationsPage />} />
           <Route path="facilities/approval" element={<ApprovalPage />} />
-          <Route path="facilities/rooms" element={<RoomsPage />} />
+          <Route path="facilities/rooms" element={<FacilityManagementPage />} />
           <Route path="facilities/calendar" element={<CalendarPage />} />
           <Route path="facilities/assets" element={<AssetsPage />} />
           <Route path="facilities/reports" element={<FacilitiesReportsPage />} />
@@ -309,6 +326,7 @@ export const App: React.FC = () => {
           <Route path="facilities-officer" element={<FacilitiesOfficerDashboard />} />
           <Route path="facilities-officer/reservations" element={<FoReservationsPage />} />
           <Route path="facilities-officer/visitors" element={<FoVisitorManagementPage />} />
+          <Route path="facilities-officer/qr-check-in" element={<FoQrCheckInPage />} />
           <Route path="facilities-officer/documents" element={<FoDocumentsPage />} />
           <Route path="facilities-officer/notifications" element={<FoNotificationsPage />} />
         </Route>

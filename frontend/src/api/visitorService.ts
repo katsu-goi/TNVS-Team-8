@@ -57,9 +57,24 @@ export const visitorService = {
     return data?.data;
   },
 
+  async verifyAndAllow(id: string, idType: IdType, idNumber?: string): Promise<any> {
+    const { data } = await apiClient.post(`/visitors/${id}/verify-allow`, { idType, idNumber });
+    return data?.data;
+  },
+
+  async denyVisitor(id: string, reason: string): Promise<any> {
+    const { data } = await apiClient.post(`/visitors/${id}/deny`, { reason });
+    return data?.data;
+  },
+
   async checkOut(id: string): Promise<any> {
     const { data } = await apiClient.post(`/visitors/${id}/check-out`);
     return data?.data;
+  },
+
+  async getOccupancy(): Promise<{ current: number; maxCapacity: number; rate: number }> {
+    const { data } = await apiClient.get('/visitors/occupancy');
+    return data?.data ?? { current: 0, maxCapacity: 1, rate: 0 };
   },
 
   async reviewVisitor(

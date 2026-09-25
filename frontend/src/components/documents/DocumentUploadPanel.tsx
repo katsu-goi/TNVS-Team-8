@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import {
-  Upload, Download, Sparkles, FileText, AlertCircle, CheckCircle2, X,
+  Upload, Download, Sparkles, FileText, AlertCircle, CheckCircle2, X, Loader2,
 } from 'lucide-react';
 import { documentService, validateUploadFile } from '../../api/documentService';
 import { extractErrorMessage } from '../../api/client';
@@ -28,6 +28,14 @@ const confidenceTone = (score?: number | null): string => {
   if (value >= 0.6) return 'bg-amber-500';
   return 'bg-slate-400';
 };
+
+function isGenericTitle(title: string, file: File | null): boolean {
+  const value = title.trim();
+  if (!value) return true;
+  const stem = file?.name.replace(/\.[^.]+$/, '') ?? '';
+  if (stem && value.toLowerCase() === stem.toLowerCase()) return true;
+  return /^(img|image|scan|document|file|untitled)[ _-]?\d*$/i.test(value);
+}
 
 interface DocumentUploadPanelProps {
   /** Called after a successful upload, e.g. to refresh a list. */
@@ -62,26 +70,47 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<DocumentSummary | null>(null);
+  const [aiTitleSuggestion, setAiTitleSuggestion] = useState<string | null>(null);
+  const [aiTitleLoading, setAiTitleLoading] = useState(false);
 
   const reset = () => {
     setFile(null);
     setDocTitle('');
     setProgress(0);
     setError(null);
+    setAiTitleSuggestion(null);
+    setAiTitleLoading(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const onFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selected = event.target.files?.[0] ?? null;
-    setError(selected ? validateUploadFile(selected) : null);
+    const validationError = selected ? validateUploadFile(selected) : null;
+    setError(validationError);
     setFile(selected);
     setResult(null);
+    setAiTitleSuggestion(null);
+    if (selected && !validationError) {
+      setAiTitleLoading(true);
+      void documentService.suggestTitle(selected)
+        .then((suggestion) => {
+          setAiTitleSuggestion(suggestion.suggestedTitle);
+          setDocTitle(suggestion.suggestedTitle);
+          setError(null);
+        })
+        .catch((err) => setError(`AI title suggestion unavailable: ${extractErrorMessage(err)} Enter a descriptive title manually.`))
+        .finally(() => setAiTitleLoading(false));
+    }
   };
 
   const submit = async () => {
     const validationError = validateUploadFile(file);
     if (validationError) {
       setError(validationError);
+      return;
+    }
+    if (isGenericTitle(docTitle, file)) {
+      setError('A descriptive document title is required. Accept the AI-generated title or enter a title that identifies the document and its context.');
       return;
     }
 
@@ -146,14 +175,19 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
         </div>
 
         <div className="md:col-span-2">
-          <label className={labelCls}>Title (optional)</label>
+          <label className={labelCls}>Title <span className="text-rose-500">*</span></label>
           <input
             value={docTitle}
-            onChange={(e) => setDocTitle(e.target.value)}
+            onChange={(e) => { setDocTitle(e.target.value); setError(null); }}
             disabled={uploading}
-            placeholder="Defaults to the file name"
+            placeholder={aiTitleLoading ? 'Generating a descriptive title…' : 'e.g. Fire Safety Inspection Report - 2026'}
             className={inputCls}
           />
+          <div className="mt-1 flex items-center gap-2 text-[10px]">
+            {aiTitleLoading && <><Loader2 className="h-3 w-3 animate-spin text-emerald-600" /><span className="text-slate-500">AI is reading the document content...</span></>}
+            {!aiTitleLoading && aiTitleSuggestion && <><Sparkles className="h-3 w-3 text-emerald-600" /><span className="text-emerald-700">AI-generated title applied. Review it before upload.</span></>}
+            {!aiTitleLoading && file && isGenericTitle(docTitle, file) && <span className="text-rose-600">Generic or blank titles are blocked.</span>}
+          </div>
         </div>
 
         <div>

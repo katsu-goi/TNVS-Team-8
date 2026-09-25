@@ -1,6 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { AlertCircle, RefreshCw, Eye, ShieldCheck, ShieldAlert, Plus, Loader2, FileText, Bell } from 'lucide-react';
-import { safeFetchJson } from '../../api/client';
+import {
+  AlertCircle, RefreshCw, FileText, Bell, User, Eye,
+  Settings, ShieldCheck, ShieldAlert, Plus, Loader2,
+  ScanLine, XCircle, Camera, UserCheck, CheckCircle2, MapPin, Clock3,
+} from 'lucide-react';
+import { safeFetchJson, extractErrorMessage } from '../../api/client';
 import { facilitiesService } from '../../api/facilitiesService';
 import { notificationService, type AppNotification } from '../../api/notificationService';
 import { DocumentUploadPanel } from '../documents/DocumentUploadPanel';
@@ -9,6 +13,8 @@ import { ID_TYPES } from '../../types/visitors';
 import type {
   IdType, VisitorVerification, VisitorWatchlistEntry,
 } from '../../types/visitors';
+import { BrowserMultiFormatReader, type IScannerControls } from '@zxing/browser';
+import { reservationPortalService } from '../../api/reservationPortalService';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
 
@@ -58,6 +64,9 @@ const VisitorVerificationSection: React.FC = () => {
   const [idNumber, setIdNumber] = useState<Record<string, string>>({});
   const [result, setResult] = useState<VisitorVerification | null>(null);
   const [history, setHistory] = useState<VisitorVerification[]>([]);
+  const [denyTarget, setDenyTarget] = useState<any | null>(null);
+  const [denialReason, setDenialReason] = useState('');
+  const [denySaving, setDenySaving] = useState(false);
   const [reviewNotes, setReviewNotes] = useState('');
 
   const load = useCallback(async () => {
@@ -74,19 +83,35 @@ const VisitorVerificationSection: React.FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
-  const runVerify = async (id: string) => {
-    setBusyId(id);
+  const runVerifyAndAllow = async (visitor: any) => {
+    setBusyId(visitor.id);
     setError(null);
     try {
-      const verification = await visitorService.verifyVisitor(
-        id, idType[id] || 'DRIVERS_LICENSE', idNumber[id]?.trim() || undefined,
-      );
+      const response = await visitorService.verifyAndAllow(visitor.id, idType[visitor.id] || 'DRIVERS_LICENSE', idNumber[visitor.id]?.trim() || undefined);
+      const verification = response.verification as VisitorVerification;
       setResult(verification);
-      setHistory(await visitorService.listVerifications(id));
+      setRows(current => current.map(row => row.id === visitor.id ? { ...row, ...response.visitor } : row));
+      setHistory(await visitorService.listVerifications(visitor.id));
     } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Verification failed');
+      setError(err?.response?.data?.message || err?.message || 'Visitor could not be allowed');
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const runDeny = async () => {
+    if (!denyTarget || !denialReason.trim()) return;
+    setDenySaving(true);
+    setError(null);
+    try {
+      const denied = await visitorService.denyVisitor(denyTarget.id, denialReason.trim());
+      setRows(current => current.map(row => row.id === denyTarget.id ? { ...row, ...denied } : row));
+      setDenyTarget(null);
+      setDenialReason('');
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Visitor could not be denied');
+    } finally {
+      setDenySaving(false);
     }
   };
 
@@ -98,6 +123,7 @@ const VisitorVerificationSection: React.FC = () => {
       const reviewed = await visitorService.reviewVisitor(result.visitorId, result.id, decision, reviewNotes.trim());
       setResult(reviewed);
       setHistory(await visitorService.listVerifications(result.visitorId));
+      if (decision === 'CLEAR') await visitorService.checkIn(result.visitorId);
       setReviewNotes('');
       await load();
     } catch (err: any) {
@@ -161,16 +187,23 @@ const VisitorVerificationSection: React.FC = () => {
                     />
                   </td>
                   <td className="p-2">
-                    <button
-                      onClick={() => runVerify(v.id)}
-                      disabled={busyId === v.id}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-semibold inline-flex items-center space-x-1 disabled:opacity-50"
-                    >
-                      {busyId === v.id
-                        ? <Loader2 className="w-3 h-3 animate-spin" />
-                        : <ShieldCheck className="w-3 h-3" />}
-                      <span>Verify</span>
-                    </button>
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        onClick={() => void runVerifyAndAllow(v)}
+                        disabled={busyId === v.id || v.status === 'DENIED' || v.status === 'CHECKED_IN'}
+                        className="px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-semibold inline-flex items-center gap-1 disabled:opacity-50"
+                      >
+                        {busyId === v.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />}
+                        <span>Verify &amp; Allow</span>
+                      </button>
+                      <button
+                        onClick={() => setDenyTarget(v)}
+                        disabled={busyId === v.id || v.status === 'DENIED' || v.status === 'CHECKED_OUT'}
+                        className="px-2.5 py-1.5 rounded-lg bg-rose-600 text-white text-[11px] font-semibold inline-flex items-center gap-1 disabled:opacity-50"
+                      >
+                        <ShieldAlert className="w-3 h-3" /><span>Deny / Flag</span>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -254,6 +287,20 @@ const VisitorVerificationSection: React.FC = () => {
               </ul>
             </div>
           )}
+        </div>
+      )}
+
+      {denyTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div><h3 className="text-base font-bold text-slate-900">Deny / Flag Visitor</h3><p className="mt-1 text-xs text-slate-500">{denyTarget.fullName || denyTarget.name}</p></div>
+              <button type="button" onClick={() => setDenyTarget(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100" aria-label="Close denial dialog"><XCircle className="h-5 w-5" /></button>
+            </div>
+            <label className="mt-5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Denial reason</label>
+            <textarea value={denialReason} onChange={event => setDenialReason(event.target.value)} rows={4} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500/10" placeholder="e.g. Mismatched ID or Security Watchlist Match" />
+            <div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setDenyTarget(null)} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">Cancel</button><button type="button" onClick={() => void runDeny()} disabled={denySaving || !denialReason.trim()} className="inline-flex items-center gap-2 rounded-xl bg-rose-700 px-4 py-2 text-xs font-bold text-white hover:bg-rose-800 disabled:opacity-50">{denySaving && <Loader2 className="h-4 w-4 animate-spin" />}Confirm denial</button></div>
+          </div>
         </div>
       )}
     </div>
@@ -411,14 +458,17 @@ export const FoVisitorManagementPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const [occupancy, setOccupancy] = useState({ current: 0, maxCapacity: 1, rate: 0 });
+  const [checkOutId, setCheckOutId] = useState<string | null>(null);
   const revision = useRealtimeSyncStore(s => s.revision);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const json = await safeFetchJson('/api/v1/visitors');
+      const [json, liveOccupancy] = await Promise.all([safeFetchJson('/api/v1/visitors'), visitorService.getOccupancy()]);
       setVisitors(json?.data ?? []);
+      setOccupancy(liveOccupancy);
     } catch (err: any) {
       setError(err?.message || 'Failed to load');
     } finally {
@@ -429,14 +479,16 @@ export const FoVisitorManagementPage: React.FC = () => {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { if (revision > 0) setRetry(r => r + 1); }, [revision]);
 
-  const updateVisit = async (visitor: any, action: 'check-in' | 'check-out') => {
+  const checkOut = async (visitorId: string) => {
+    setCheckOutId(visitorId);
     setError(null);
     try {
-      if (action === 'check-in') await visitorService.checkIn(visitor.id);
-      else await visitorService.checkOut(visitor.id);
-      setRetry(r => r + 1);
+      await visitorService.checkOut(visitorId);
+      await load();
     } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || `Unable to ${action} visitor`);
+      setError(err?.response?.data?.message || err?.message || 'Check-out failed');
+    } finally {
+      setCheckOutId(null);
     }
   };
 
@@ -448,9 +500,9 @@ export const FoVisitorManagementPage: React.FC = () => {
       <div className="glass-panel p-5 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-slate-900">Visitor Management</h2>
-          <p className="text-xs text-slate-500">View facility-linked visitors</p>
-        </div>
-        <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
+            <p className="text-xs text-slate-500">Live visitor screening and occupancy control</p>
+          </div>
+        <div className="flex items-center gap-2"><span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-700">Live Hub Occupancy: {occupancy.current} / {occupancy.maxCapacity}</span><button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button></div>
       </div>
 
       <div className="flex items-center space-x-2 text-xs text-slate-500 bg-white border border-slate-200 rounded-xl px-4 py-3">
@@ -487,8 +539,10 @@ export const FoVisitorManagementPage: React.FC = () => {
                         v.status === 'CHECKED_IN' ? 'bg-emerald-50 text-emerald-600' :
                         v.status === 'EXPECTED' ? 'bg-blue-50 text-blue-600' :
                         v.status === 'CHECKED_OUT' ? 'bg-slate-100 text-slate-500' :
+                        v.status === 'DENIED' ? 'bg-rose-100 text-rose-700' :
                         'bg-amber-50 text-amber-600'
                       }`}>{v.status}</span>
+                      {v.denialReason && <p className="mt-1 max-w-[220px] text-[10px] text-rose-600">{v.denialReason}</p>}
                     </td>
                     <td className="p-3">
                       <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
@@ -497,16 +551,7 @@ export const FoVisitorManagementPage: React.FC = () => {
                         'bg-amber-50 text-amber-700'
                       }`}>{v.clearanceState?.replace(/_/g, ' ') || 'VERIFICATION REQUIRED'}</span>
                     </td>
-                    <td className="p-3">
-                      {v.status === 'REGISTERED' && (
-                        <button onClick={() => updateVisit(v, 'check-in')} disabled={v.clearanceState !== 'CLEAR'}
-                          className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">Check in</button>
-                      )}
-                      {v.status === 'CHECKED_IN' && (
-                        <button onClick={() => updateVisit(v, 'check-out')}
-                          className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-[10px] font-semibold text-white">Check out</button>
-                      )}
-                    </td>
+                    <td className="p-3"><button type="button" onClick={() => void checkOut(v.id)} disabled={checkOutId === v.id || v.status !== 'CHECKED_IN'} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[10px] font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">{checkOutId === v.id && <Loader2 className="h-3 w-3 animate-spin" />}Log Check-Out</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -670,6 +715,158 @@ export const FoNotificationsPage: React.FC = () => {
           ))}
         </div>
       )}
+    </div>
+  );
+};
+
+export const FoProfilePage: React.FC = () => {
+  return (
+    <div className="space-y-6">
+      <div className="glass-panel p-5">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">Profile</h2>
+          <p className="text-xs text-slate-500">Facilities Officer account</p>
+        </div>
+      </div>
+      <EmptyState icon={User} title="Profile Settings" desc="Profile management will be available via TEAM 1 - Human Resource Management integration." />
+    </div>
+  );
+};
+
+export const FoSettingsPage: React.FC = () => {
+  return (
+    <div className="space-y-6">
+      <div className="glass-panel p-5">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">Settings</h2>
+          <p className="text-xs text-slate-500">Facilities Officer account and module preferences</p>
+        </div>
+      </div>
+      <EmptyState icon={Settings} title="Settings" desc="Account and module settings will be available via TEAM 1 - Human Resource Management integration." />
+    </div>
+  );
+};
+
+type QrCheckInResult = {
+  inviteeEmail: string;
+  checkedIn: boolean;
+  checkedInAt?: string;
+  checkedOutAt?: string;
+  title: string;
+  startTime: string;
+  status: string;
+  facilityName: string;
+};
+
+type QrScanRecord = QrCheckInResult & { scannedAt: string };
+
+function qrTokenFromValue(rawValue: string): string {
+  const value = rawValue.trim();
+  if (!value) return '';
+  try {
+    const url = new URL(value);
+    const queryToken = url.searchParams.get('token')?.trim();
+    if (queryToken) return queryToken;
+    const segments = url.pathname.split('/').filter(Boolean);
+    const guestPassIndex = segments.findIndex((segment) => segment.toLowerCase() === 'guest-pass');
+    return guestPassIndex >= 0 ? decodeURIComponent(segments[guestPassIndex + 1] ?? '').trim() : value;
+  } catch {
+    return value;
+  }
+}
+
+function qrDateTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+export const QrCheckInPage: React.FC = () => {
+  const videoRef = React.useRef<HTMLVideoElement>(null);
+  const controlsRef = React.useRef<IScannerControls | null>(null);
+  const scanLockRef = React.useRef(false);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const [manualToken, setManualToken] = useState('');
+  const [processing, setProcessing] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState<QrCheckInResult | null>(null);
+  const [history, setHistory] = useState<QrScanRecord[]>([]);
+  const [scanMode, setScanMode] = useState<'CHECK_IN' | 'CHECK_OUT'>('CHECK_IN');
+
+  const stopCamera = useCallback(() => {
+    controlsRef.current?.stop();
+    controlsRef.current = null;
+    const stream = videoRef.current?.srcObject as MediaStream | null;
+    stream?.getTracks().forEach((track) => track.stop());
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setCameraActive(false);
+  }, []);
+
+  const checkIn = useCallback(async (rawValue: string) => {
+    const token = qrTokenFromValue(rawValue);
+    if (!token || scanLockRef.current) return;
+    scanLockRef.current = true;
+    stopCamera();
+    setProcessing(true);
+    setError('');
+    try {
+      const scanResult = (scanMode === 'CHECK_IN'
+        ? await reservationPortalService.checkInPass(token)
+        : await reservationPortalService.checkOutPass(token)) as QrCheckInResult;
+      setResult(scanResult);
+      setHistory((current) => [{ ...scanResult, scannedAt: new Date().toISOString() }, ...current].slice(0, 8));
+      setManualToken('');
+    } catch (checkInError) {
+      setError(extractErrorMessage(checkInError));
+    } finally {
+      setProcessing(false);
+      scanLockRef.current = false;
+    }
+  }, [scanMode, stopCamera]);
+
+  const startCamera = useCallback(async () => {
+    if (!videoRef.current || cameraActive) return;
+    setCameraError('');
+    setError('');
+    setResult(null);
+    try {
+      const reader = new BrowserMultiFormatReader();
+      controlsRef.current = await reader.decodeFromConstraints(
+        { audio: false, video: { facingMode: { ideal: 'environment' } } },
+        videoRef.current,
+        (scanResult) => { if (scanResult) void checkIn(scanResult.getText()); },
+      );
+      setCameraActive(true);
+    } catch (cameraException) {
+      setCameraError(cameraException instanceof Error ? cameraException.message : 'Camera access was unavailable.');
+      stopCamera();
+    }
+  }, [cameraActive, checkIn, stopCamera]);
+
+  useEffect(() => () => stopCamera(), [stopCamera]);
+
+  return (
+    <div className="space-y-6">
+      <div className="glass-panel flex flex-wrap items-center justify-between gap-4 p-5">
+        <div><div className="flex items-center gap-2"><ScanLine className="h-5 w-5 text-red-700" /><h2 className="text-lg font-bold text-slate-900">QR Guest Check-in</h2></div><p className="mt-1 text-xs text-slate-500">Scan a Team 8 digital pass to record guest arrival or departure.</p></div>
+        <div className="flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-700"><ShieldCheck className="h-3.5 w-3.5" />Facilities Officer control</div>
+      </div>
+
+      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-2 shadow-sm"><span className="px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Scan mode</span><button type="button" onClick={() => setScanMode('CHECK_IN')} className={`rounded-lg px-3 py-2 text-xs font-bold ${scanMode === 'CHECK_IN' ? 'bg-red-700 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Check-In</button><button type="button" onClick={() => setScanMode('CHECK_OUT')} className={`rounded-lg px-3 py-2 text-xs font-bold ${scanMode === 'CHECK_OUT' ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Check-Out</button></div>
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex items-center justify-between gap-3"><div><h3 className="text-sm font-bold text-slate-900">Camera scanner</h3><p className="mt-1 text-xs text-slate-500">Current action: <span className="font-bold text-red-700">{scanMode === 'CHECK_IN' ? 'Check-In' : 'Check-Out'}</span></p></div>{cameraActive ? <button type="button" onClick={stopCamera} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"><XCircle className="h-4 w-4" />Stop camera</button> : <button type="button" onClick={() => void startCamera()} disabled={processing} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-red-800 disabled:opacity-60"><Camera className="h-4 w-4" />Start camera</button>}</div>
+          <div className="relative aspect-video overflow-hidden rounded-xl bg-slate-950"><video ref={videoRef} className={cameraActive ? 'h-full w-full object-cover' : 'hidden'} muted playsInline />{!cameraActive && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center text-white/60"><ScanLine className="h-10 w-10 text-white/40" /><p className="text-sm">Camera is paused</p><p className="max-w-xs text-xs text-white/40">Start the camera or use the secure token fallback below.</p></div>}</div>
+          {cameraError && <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{cameraError} You can still use manual token entry.</span></div>}
+          <form onSubmit={(event) => { event.preventDefault(); void checkIn(manualToken); }} className="mt-5 flex flex-col gap-2 sm:flex-row"><input value={manualToken} onChange={(event) => setManualToken(event.target.value)} placeholder="Paste QR pass URL or token" className="min-w-0 flex-1 rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10" /><button type="submit" disabled={processing || !manualToken.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50">{processing ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4" />}{scanMode === 'CHECK_IN' ? 'Check in pass' : 'Check out pass'}</button></form>
+          {(error || processing) && <div className={`mt-4 flex items-start gap-2 rounded-xl border px-4 py-3 text-sm ${error ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-blue-200 bg-blue-50 text-blue-700'}`}>{error ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> : <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />}<span>{error || `Verifying pass and recording ${scanMode === 'CHECK_IN' ? 'check-in' : 'check-out'}...`}</span></div>}
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">{result ? <><div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800"><CheckCircle2 className="h-5 w-5" />Pass {result.checkedIn ? 'checked in' : 'checked out'}</div><div className="mt-5 space-y-4"><div><p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Invitee</p><p className="mt-1 text-sm font-bold text-slate-900">{result.inviteeEmail}</p></div><div><p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Reservation</p><p className="mt-1 text-sm font-bold text-slate-900">{result.title}</p></div><div className="space-y-2 rounded-xl bg-slate-50 p-4 text-xs text-slate-600"><p className="flex items-center gap-2"><MapPin className="h-3.5 w-3.5 text-red-700" />{result.facilityName}</p><p className="flex items-center gap-2"><Clock3 className="h-3.5 w-3.5 text-red-700" />{qrDateTime(result.startTime)}</p><p className="flex items-center gap-2"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />{result.checkedIn ? `Checked in ${qrDateTime(result.checkedInAt ?? '')}` : `Checked out ${qrDateTime(result.checkedOutAt ?? '')}`}</p></div></div></> : <div className="flex min-h-[260px] flex-col items-center justify-center text-center"><UserCheck className="h-9 w-9 text-slate-300" /><p className="mt-3 text-sm font-semibold text-slate-600">No pass scanned yet</p><p className="mt-1 max-w-xs text-xs leading-5 text-slate-400">A successful scan displays the guest and reservation details here.</p></div>}</section>
+      </div>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="mb-4 flex items-center justify-between"><div><h3 className="text-sm font-bold text-slate-900">Recent scans</h3><p className="mt-1 text-xs text-slate-500">This list is kept in the current officer session.</p></div><button type="button" onClick={() => setHistory([])} disabled={history.length === 0} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40"><RefreshCw className="h-3.5 w-3.5" />Clear</button></div>{history.length === 0 ? <p className="py-6 text-center text-xs text-slate-400">No scans in this session.</p> : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b border-slate-100"><th className="p-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Guest</th><th className="p-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Reservation</th><th className="p-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Location</th><th className="p-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Scanned</th></tr></thead><tbody>{history.map((scan) => <tr key={`${scan.inviteeEmail}-${scan.scannedAt}`} className="border-b border-slate-50"><td className="p-2 font-medium text-slate-800">{scan.inviteeEmail}</td><td className="p-2 text-slate-600">{scan.title}</td><td className="p-2 text-slate-600">{scan.facilityName}</td><td className="p-2 text-xs text-slate-400">{qrDateTime(scan.scannedAt)}</td></tr>)}</tbody></table></div>}</section>
     </div>
   );
 };

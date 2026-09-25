@@ -49,6 +49,8 @@ const SUPABASE_FUNCTION_ALIASES: Record<string, string> = {
   'facilities-manager': 'facilities',
   'facilities-officer': 'facilities',
   facilities: 'facilities',
+  'reservation-portal': 'reservation-portal',
+  'document-title-suggest': 'document-title-suggest',
   governance: 'governance',
   legal: 'legal',
   monitoring: 'monitoring',

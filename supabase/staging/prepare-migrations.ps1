@@ -86,7 +86,8 @@ Get-ChildItem -LiteralPath $resolvedOutput -Filter '*.sql' | ForEach-Object {
 }
 
 $count = (Get-ChildItem -LiteralPath $resolvedOutput -Filter '*.sql').Count
-if ($count -ne 52) { throw "Expected 52 prepared migrations, found $count." }
+$sourceCount = (Get-ChildItem -LiteralPath $source -Filter '*.sql').Count
+if ($count -ne $sourceCount) { throw "Expected $sourceCount prepared migrations, found $count." }
 Write-Host 'Target environment: STAGING'
 Write-Host "Target project: $StagingProjectRef"
 Write-Host "Prepared $count staging-safe migrations at $resolvedOutput"

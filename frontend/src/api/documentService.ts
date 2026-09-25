@@ -31,6 +31,15 @@ export function getDownloadUrl(documentId: string): string {
 }
 
 export const documentService = {
+  async suggestTitle(file: File): Promise<{ suggestedTitle: string; summary: string; confidence: number; extractionMethod: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await apiClient.post('/document-title-suggest/suggest', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data?.data;
+  },
+
   async getDocuments(): Promise<DocumentSummary[]> {
     const { data } = await apiClient.get('/documents');
     return data?.data ?? [];
