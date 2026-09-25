@@ -19,6 +19,7 @@ describe('authoritative session bootstrap', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -52,6 +53,42 @@ describe('authoritative session bootstrap', () => {
 
     expect(user?.assignedRoles).toEqual(['EMPLOYEE']);
     expect(useAuthStore.getState().user?.assignedRoles).toEqual(['EMPLOYEE']);
+  });
+
+  it('commits a complete token pair across tabs without exposing a half-written session', () => {
+    const writes: string[] = [];
+    const originalSetItem = Storage.prototype.setItem;
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      if (key === 'accessToken' || key === 'refreshToken') writes.push(key);
+      originalSetItem.call(this, key, value);
+    });
+
+    useAuthStore.getState().setAuthTokens(
+      { id: 'login-user', email: 'user@example.com', assignedRoles: ['EMPLOYEE'], roles: ['EMPLOYEE'], permissions: [] },
+      'committed-access',
+      'committed-refresh',
+    );
+
+    expect(writes).toEqual(['refreshToken', 'accessToken']);
+    expect(localStorage.getItem('accessToken')).toBe('committed-access');
+    expect(localStorage.getItem('refreshToken')).toBe('committed-refresh');
+    setItem.mockRestore();
+  });
+
+  it('does not clear another tab during a partial token write and accepts the access-token commit', () => {
+    useAuthStore.setState({ accessToken: 'old-access', refreshToken: 'old-refresh' });
+    localStorage.setItem('accessToken', 'rotating-access');
+    localStorage.removeItem('refreshToken');
+
+    window.dispatchEvent(new StorageEvent('storage', { key: 'accessToken', newValue: 'rotating-access' }));
+    expect(useAuthStore.getState()).toMatchObject({ accessToken: 'old-access', refreshToken: 'old-refresh' });
+
+    localStorage.setItem('refreshToken', 'rotating-refresh');
+    window.dispatchEvent(new StorageEvent('storage', { key: 'accessToken', newValue: 'rotating-access' }));
+    expect(useAuthStore.getState()).toMatchObject({
+      accessToken: 'rotating-access',
+      refreshToken: 'rotating-refresh',
+    });
   });
 
   it('clears newly issued tokens when post-login identity verification fails', async () => {

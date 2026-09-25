@@ -1,6 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FacilitiesRoute, ProtectedRoute, WorkspaceSectionRoute } from './App';
 import { workspaceConfigs } from './components/workspaces/workspaceConfig';
 import { useAuthStore } from './stores/authStore';
@@ -10,7 +10,27 @@ describe('route guards', () => {
     useAuthStore.setState({ user: null, accessToken: null, refreshToken: null, sessionStatus: 'ready' });
   });
 
+  afterEach(() => cleanup());
+
   it('redirects an unauthenticated protected route to login', () => {
+    render(
+      <MemoryRouter initialEntries={['/protected']}>
+        <Routes>
+          <Route path="/login" element={<div>Login destination</div>} />
+          <Route path="/protected" element={<ProtectedRoute><div>Protected content</div></ProtectedRoute>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('Login destination')).toBeInTheDocument();
+    expect(screen.queryByText('Protected content')).not.toBeInTheDocument();
+  });
+
+  it('rejects a partial session without the refresh token needed by idle continuation', () => {
+    useAuthStore.setState({
+      accessToken: 'access-only',
+      refreshToken: null,
+      user: { id: 'user-1', email: 'employee@example.com', assignedRoles: ['EMPLOYEE'], roles: ['EMPLOYEE'], permissions: [] },
+    });
     render(
       <MemoryRouter initialEntries={['/protected']}>
         <Routes>

@@ -8,7 +8,9 @@ import {
   SESSION_SIGNAL_STORAGE_KEY,
   SessionEndReason,
   clearIdleSessionState,
+  clearPersistedSessionTokens,
   parseSessionSignal,
+  persistSessionTokens,
   publishSessionSignal,
   setSessionEndReason,
   writeLastActivityAt,
@@ -109,8 +111,7 @@ function isInvalidSession(error: unknown): boolean {
 }
 
 function clearLocalSession() {
-  localStorage.removeItem('accessToken');
-  localStorage.removeItem('refreshToken');
+  clearPersistedSessionTokens();
   localStorage.removeItem('user');
   clearOversightSession();
   clearIdleSessionState();
@@ -130,13 +131,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   sessionStatus: savedToken ? 'loading' : 'ready',
   sessionError: null,
   setAuthTokens: (_user, accessToken, refreshToken) => {
-    localStorage.setItem('accessToken', accessToken);
+    persistSessionTokens(accessToken, refreshToken);
     localStorage.removeItem('user');
-    if (refreshToken) {
-      localStorage.setItem('refreshToken', refreshToken);
-    } else {
-      localStorage.removeItem('refreshToken');
-    }
     setSupabaseRealtimeAuth(accessToken);
     writeLastActivityAt(Date.now());
     setSessionEndReason('manual');
@@ -145,8 +141,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ user: null, accessToken, refreshToken, sessionStatus: 'ready', sessionError: null });
   },
   updateSessionTokens: (accessToken, refreshToken) => {
-    localStorage.setItem('accessToken', accessToken);
-    localStorage.setItem('refreshToken', refreshToken);
+    persistSessionTokens(accessToken, refreshToken);
     setSupabaseRealtimeAuth(accessToken);
     set((state) => ({
       ...state,
@@ -261,10 +256,10 @@ window.addEventListener('storage', (event) => {
     return;
   }
 
-  if (event.key === 'accessToken' || event.key === 'refreshToken') {
+  if (event.key === 'accessToken') {
     const accessToken = localStorage.getItem('accessToken');
     const refreshToken = localStorage.getItem('refreshToken');
-    if (!accessToken || !refreshToken) {
+    if (!accessToken && !refreshToken) {
       clearLocalSession();
       useAuthStore.setState({
         user: null,
@@ -275,6 +270,9 @@ window.addEventListener('storage', (event) => {
       });
       return;
     }
+    // A partial token pair is a transient write state, never evidence that the
+    // user should be logged out. Wait for a complete committed pair.
+    if (!accessToken || !refreshToken) return;
     setSupabaseRealtimeAuth(accessToken);
     useAuthStore.setState({ accessToken, refreshToken, sessionStatus: 'ready', sessionError: null });
   }

@@ -9,6 +9,25 @@ export const SESSION_CHANNEL_NAME = 'tnvs-auth-session';
 export const CONTINUATION_LOCK_STORAGE_KEY = 'tnvs.auth.continuationLock';
 export const MEANINGFUL_ACTIVITY_EVENT = 'auth:meaningful-activity';
 
+export function persistSessionTokens(accessToken: string, refreshToken: string): void {
+  const storage = safeStorage(globalThis.localStorage);
+  if (!storage) return;
+  // The access token is the cross-tab commit marker. Write the refresh token
+  // first so another tab never observes a new access token paired with the
+  // previous (or missing) refresh token.
+  storage.setItem('refreshToken', refreshToken);
+  storage.setItem('accessToken', accessToken);
+}
+
+export function clearPersistedSessionTokens(): void {
+  const storage = safeStorage(globalThis.localStorage);
+  if (!storage) return;
+  // Mirror the commit order above: removing accessToken publishes the final,
+  // complete logged-out state to other tabs.
+  storage.removeItem('refreshToken');
+  storage.removeItem('accessToken');
+}
+
 export type SessionEndReason = 'manual' | 'inactivity' | 'expired';
 export type SessionSignal = {
   type: 'activity' | 'warning' | 'continuing' | 'continued' | 'continue-failed' | 'logout';

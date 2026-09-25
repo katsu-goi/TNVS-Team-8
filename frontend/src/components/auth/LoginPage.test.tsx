@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
   setAuthTokens: vi.fn(),
   verifyLoginSession: vi.fn(),
+  locationSearch: '',
 }));
 
 vi.mock('../../api/authService', async (importOriginal) => {
@@ -26,7 +27,7 @@ vi.mock('react-router-dom', async (importOriginal) => {
   return {
     ...actual,
     useNavigate: () => mocks.navigate,
-    useLocation: () => ({ search: '' }),
+    useLocation: () => ({ search: mocks.locationSearch }),
   };
 });
 
@@ -49,6 +50,7 @@ describe('LoginPage', () => {
     mocks.navigate.mockReset();
     mocks.setAuthTokens.mockReset();
     mocks.verifyLoginSession.mockReset();
+    mocks.locationSearch = '';
   });
 
   afterEach(() => {
@@ -113,6 +115,25 @@ describe('LoginPage', () => {
       roles: ['EMPLOYEE'],
       permissions: [],
     });
+
+    await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/employee', { replace: true }));
+  });
+
+  it('never honors a return target that would send a successful login back to a public login page', async () => {
+    mocks.locationSearch = '?returnTo=%2Flogin';
+    mocks.login.mockResolvedValueOnce({
+      user: { id: 'login-payload', email: 'qa.employee-a@tnvs-staging.invalid', assignedRoles: ['EMPLOYEE'] },
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+    });
+    mocks.verifyLoginSession.mockResolvedValueOnce({
+      id: 'verified-user', email: 'qa.employee-a@tnvs-staging.invalid',
+      assignedRoles: ['EMPLOYEE'], roles: ['EMPLOYEE'], permissions: [],
+    });
+
+    render(<LoginPage />);
+    fillLogin();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
 
     await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/employee', { replace: true }));
   });

@@ -1,5 +1,5 @@
 import React, { lazy, Suspense, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate, useParams } from 'react-router-dom';
 import { useAuthStore, getDashboardPath, isActorSuperAdmin, isActorSystemAdmin, hasAssignedRole } from './stores/authStore';
 import { OversightBanner } from './components/oversight';
 import { workspaceConfigs } from './components/workspaces/workspaceConfig';
@@ -103,11 +103,12 @@ class ErrorBoundary extends React.Component<
 
 export const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const accessToken = useAuthStore((s) => s.accessToken);
+  const refreshToken = useAuthStore((s) => s.refreshToken);
   const user = useAuthStore((s) => s.user);
-  // Fail-closed: both a bearer token AND a rehydrated user session are required.
-  // A token without a user (or vice-versa) means a corrupt/partial session, so we
-  // never render the authenticated layout from half a session.
-  if (!accessToken || !user || !Object.keys(user).length) {
+  // Fail closed unless the complete token pair and the server-verified profile
+  // are present. This also guarantees the idle manager is active everywhere a
+  // protected portal can render.
+  if (!accessToken || !refreshToken || !user || !Object.keys(user).length) {
     return <Navigate to="/login" replace />;
   }
   return <>{children}</>;
@@ -238,18 +239,23 @@ const Team8PortalRoute: React.FC<{ children: React.ReactNode }> = ({ children })
   return <>{children}</>;
 };
 
-export const App: React.FC = () => {
-  return (
-    <BrowserRouter>
-      <SessionBootstrap>
-        <SessionIdleManager>
-          <OversightBanner />
-          <Routes>
+export const AuthenticatedSessionBoundary: React.FC = () => (
+  <ProtectedRoute>
+    <SessionIdleManager>
+      <OversightBanner />
+      <Outlet />
+    </SessionIdleManager>
+  </ProtectedRoute>
+);
+
+export const AppRoutes: React.FC = () => (
+  <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/hr-assistance" element={<HRAssistancePage />} />
         <Route path="/reservation-portal/login" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><Team8LoginPage /></Suspense>} />
         <Route path="/reservation-portal/pass" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><ReservationPassPage /></Suspense>} />
         <Route path="/guest-pass/:token" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><ReservationPassPage /></Suspense>} />
+        <Route element={<AuthenticatedSessionBoundary />}>
         <Route path="/reservation-portal" element={<Team8PortalRoute><Suspense fallback={<SessionBootstrapPlaceholder />}><ReservationPortalPage /></Suspense></Team8PortalRoute>} />
         <Route element={
           <ProtectedRoute>
@@ -380,9 +386,16 @@ export const App: React.FC = () => {
           <Route path="employee/profile" element={<EmpProfilePage />} />
         </Route>
 
+        </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </SessionIdleManager>
+  </Routes>
+);
+
+export const App: React.FC = () => {
+  return (
+    <BrowserRouter>
+      <SessionBootstrap>
+        <AppRoutes />
       </SessionBootstrap>
     </BrowserRouter>
   );

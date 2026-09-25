@@ -1,6 +1,11 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import { clearOversightSession, getOversightSessionId } from '../utils/oversightSession';
-import { publishSessionSignal, setSessionEndReason } from '../session/sessionState';
+import {
+  clearPersistedSessionTokens,
+  persistSessionTokens,
+  publishSessionSignal,
+  setSessionEndReason,
+} from '../session/sessionState';
 
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim();
 
@@ -124,8 +129,7 @@ const AUTH_ROUTES = ['/login'];
 let refreshRequest: Promise<RefreshedSession> | null = null;
 
 function persistRefreshedSession(session: RefreshedSession) {
-  localStorage.setItem('accessToken', session.accessToken);
-  localStorage.setItem('refreshToken', session.refreshToken);
+  persistSessionTokens(session.accessToken, session.refreshToken);
   if (session.user) {
     // The in-memory store may use this response, but authorization state is
     // never restored from localStorage. A reload always verifies /auth/me.
@@ -138,8 +142,7 @@ function clearStoredSession() {
   const endedAt = Date.now();
   setSessionEndReason('expired');
   publishSessionSignal({ type: 'logout', at: endedAt, source: 'api-client', reason: 'expired' });
-  localStorage.removeItem('accessToken');
-  localStorage.removeItem('refreshToken');
+  clearPersistedSessionTokens();
   localStorage.removeItem('user');
   clearOversightSession();
   window.dispatchEvent(new CustomEvent('auth:session-expired', { detail: { reason: 'expired' } }));

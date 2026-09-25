@@ -21,6 +21,26 @@ type FieldErrors = {
   password?: string;
 };
 
+const PUBLIC_LOGIN_PATHS = new Set([
+  '/login',
+  '/hr-assistance',
+  '/reservation-portal/login',
+  '/reservation-portal/pass',
+]);
+
+function safePostLoginPath(value: string | null): string | null {
+  if (!value || !value.startsWith('/') || value.startsWith('//')) return null;
+  try {
+    const url = new URL(value, window.location.origin);
+    if (url.origin !== window.location.origin) return null;
+    const normalizedPath = url.pathname.replace(/\/+$/, '') || '/';
+    if (PUBLIC_LOGIN_PATHS.has(normalizedPath) || normalizedPath.startsWith('/guest-pass/')) return null;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return null;
+  }
+}
+
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -102,7 +122,7 @@ export const LoginPage: React.FC = () => {
       setRetryAt(null);
       try { sessionStorage.removeItem('loginRestriction'); } catch {}
       const returnTo = new URLSearchParams(location.search).get('returnTo');
-      const safeReturnTo = returnTo?.startsWith('/') && !returnTo.startsWith('//') ? returnTo : null;
+      const safeReturnTo = safePostLoginPath(returnTo);
       navigate(safeReturnTo || getDashboardPath(verifiedUser), { replace: true });
     } catch (err) {
       const info = extractLoginLockout(err);
