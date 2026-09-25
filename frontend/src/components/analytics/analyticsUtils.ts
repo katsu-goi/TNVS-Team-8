@@ -42,11 +42,3 @@ export function formatManilaInclusiveEnd(toExclusive: string): string {
   const end = new Date(toExclusive);
   return formatManilaDate(new Date(end.getTime() - 1).toISOString());
 }
-
-export function printAnalyticsReport(title: string): void {
-  const previousTitle = document.title;
-  document.title = `${title} - Hirna Portal`;
-  const restore = () => { document.title = previousTitle; window.removeEventListener('afterprint', restore); };
-  window.addEventListener('afterprint', restore);
-  window.print();
-}

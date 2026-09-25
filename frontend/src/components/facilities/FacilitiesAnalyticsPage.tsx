@@ -2,14 +2,17 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { BarChart3, CalendarCheck, Clock3, Gauge, Wrench } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { exportAnalyticsCsv, fetchAnalytics } from '../../api/analyticsService';
+import { useAuthStore } from '../../stores/authStore';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import type { AnalyticsData, AnalyticsTrend } from '../../types';
+import { downloadPdfReport } from '../../utils/pdfReport';
 import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 import { EmptyState, ErrorState, LoadingState, ResponsiveTableContainer } from '../ui/SharedUI';
 import {
-  AnalyticsChartCard, AnalyticsMetricCard, AnalyticsPageHeader, AnalyticsPrintMeta,
+  AnalyticsChartCard, AnalyticsMetricCard, AnalyticsPageHeader,
 } from '../analytics/AnalyticsPrimitives';
-import { type AnalyticsRangeKey, buildAnalyticsQuery, formatManilaDate, formatManilaInclusiveEnd, printAnalyticsReport, validateAnalyticsRange } from '../analytics/analyticsUtils';
+import { facilitiesAnalyticsPdfReport } from '../analytics/analyticsPdfReports';
+import { type AnalyticsRangeKey, buildAnalyticsQuery, formatManilaDate, formatManilaInclusiveEnd, validateAnalyticsRange } from '../analytics/analyticsUtils';
 
 type DailyValue = { date: string; value: number };
 type FacilityUsage = { facility: string; reservations: number; occupiedMinutes: number };
@@ -43,12 +46,14 @@ function trendText(trend?: AnalyticsTrend): string {
 type Props = { title: string; subtitle: string };
 
 export const FacilitiesAnalyticsPage: React.FC<Props> = ({ title, subtitle }) => {
+  const user = useAuthStore((state) => state.user);
   const [range, setRange] = useState<AnalyticsRangeKey>('last_30_days');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [exportingCsv, setExportingCsv] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const revision = useRealtimeSyncStore((state) => state.revision);
@@ -74,6 +79,17 @@ export const FacilitiesAnalyticsPage: React.FC<Props> = ({ title, subtitle }) =>
     try { await exportAnalyticsCsv(query); }
     catch (requestError: any) { setError(requestError?.response?.data?.message || requestError?.message || 'CSV export failed.'); }
     finally { setExportingCsv(false); }
+  };
+
+  const exportPdf = async () => {
+    if (validationError || !data) return;
+    setExportingPdf(true);
+    setError(null);
+    try { await downloadPdfReport(facilitiesAnalyticsPdfReport(title, data, user)); }
+    catch (requestError) {
+      console.error('Unable to generate the facilities PDF report', requestError);
+      setError('PDF report generation failed. Please try again.');
+    } finally { setExportingPdf(false); }
   };
 
   if (loading && !data) return <PortalLoadingOverlay message="Loading facility analytics..." />;
@@ -103,8 +119,7 @@ export const FacilitiesAnalyticsPage: React.FC<Props> = ({ title, subtitle }) =>
 
   return (
     <main className="analytics-report space-y-6">
-      <AnalyticsPageHeader title={title} subtitle={`${subtitle} · authorized facilities scope · Asia/Manila`} range={range} customFrom={customFrom} customTo={customTo} validationError={validationError} loading={loading} exportingCsv={exportingCsv} onRangeChange={setRange} onCustomFromChange={setCustomFrom} onCustomToChange={setCustomTo} onRefresh={() => setRetry((value) => value + 1)} onExportCsv={() => void exportCsv()} onExportPdf={() => printAnalyticsReport(title)} />
-      <AnalyticsPrintMeta title={title} role="Facilities Manager / Facilities" from={data.period.from} toExclusive={data.period.toExclusive} generatedAt={data.generatedAt} />
+      <AnalyticsPageHeader title={title} subtitle={`${subtitle} · authorized facilities scope · Asia/Manila`} range={range} customFrom={customFrom} customTo={customTo} validationError={validationError} loading={loading} exportingCsv={exportingCsv} exportingPdf={exportingPdf} onRangeChange={setRange} onCustomFromChange={setCustomFrom} onCustomToChange={setCustomTo} onRefresh={() => setRetry((value) => value + 1)} onExportCsv={() => void exportCsv()} onExportPdf={() => void exportPdf()} />
       {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">Refresh failed: {error}. Showing the last successful response.</div>}
       {loading && <LoadingState className="min-h-16" label="Refreshing analytics..." />}
 

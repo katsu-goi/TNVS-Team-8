@@ -2,14 +2,17 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, BellRing, Clock3, Database, Radio, Server, Workflow } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { exportAnalyticsCsv, fetchAnalytics } from '../../api/analyticsService';
+import { useAuthStore } from '../../stores/authStore';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import type { AnalyticsData, RuntimeHealthCheck } from '../../types';
+import { downloadPdfReport } from '../../utils/pdfReport';
 import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 import { EmptyState, ErrorState, LoadingState, ResponsiveTableContainer } from '../ui/SharedUI';
 import {
-  AnalyticsChartCard, AnalyticsMetricCard, AnalyticsPageHeader, AnalyticsPrintMeta,
+  AnalyticsChartCard, AnalyticsMetricCard, AnalyticsPageHeader,
 } from '../analytics/AnalyticsPrimitives';
-import { type AnalyticsRangeKey, buildAnalyticsQuery, formatManilaDate, formatManilaDateTime, formatManilaInclusiveEnd, printAnalyticsReport, validateAnalyticsRange } from '../analytics/analyticsUtils';
+import { systemAnalyticsPdfReport } from '../analytics/analyticsPdfReports';
+import { type AnalyticsRangeKey, buildAnalyticsQuery, formatManilaDate, formatManilaDateTime, formatManilaInclusiveEnd, validateAnalyticsRange } from '../analytics/analyticsUtils';
 
 const STATUS_STYLE: Record<RuntimeHealthCheck['status'], string> = {
   LIVE: 'border-emerald-200 bg-emerald-50 text-emerald-700',
@@ -18,12 +21,14 @@ const STATUS_STYLE: Record<RuntimeHealthCheck['status'], string> = {
 };
 
 export const AnalyticsPage: React.FC = () => {
+  const user = useAuthStore((state) => state.user);
   const [range, setRange] = useState<AnalyticsRangeKey>('last_30_days');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [exportingCsv, setExportingCsv] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const revision = useRealtimeSyncStore((state) => state.revision);
@@ -49,6 +54,17 @@ export const AnalyticsPage: React.FC = () => {
     try { await exportAnalyticsCsv(query); }
     catch (requestError: any) { setError(requestError?.response?.data?.message || requestError?.message || 'CSV export failed.'); }
     finally { setExportingCsv(false); }
+  };
+
+  const exportPdf = async () => {
+    if (validationError || !data) return;
+    setExportingPdf(true);
+    setError(null);
+    try { await downloadPdfReport(systemAnalyticsPdfReport(data, user)); }
+    catch (requestError) {
+      console.error('Unable to generate the operational PDF report', requestError);
+      setError('PDF report generation failed. Please try again.');
+    } finally { setExportingPdf(false); }
   };
 
   if (loading && !data) return <PortalLoadingOverlay message="Loading operational analytics..." />;
@@ -77,8 +93,7 @@ export const AnalyticsPage: React.FC = () => {
 
   return (
     <main className="analytics-report space-y-6">
-      <AnalyticsPageHeader title="System Operational Analytics" subtitle="Technical health only · authorized system scope · Asia/Manila" range={range} customFrom={customFrom} customTo={customTo} validationError={validationError} loading={loading} exportingCsv={exportingCsv} onRangeChange={setRange} onCustomFromChange={setCustomFrom} onCustomToChange={setCustomTo} onRefresh={() => setRetry((value) => value + 1)} onExportCsv={() => void exportCsv()} onExportPdf={() => printAnalyticsReport('System Operational Analytics')} />
-      <AnalyticsPrintMeta title="System Operational Analytics" role="System / Super Admin · Operational analytics" from={data.period.from} toExclusive={data.period.toExclusive} generatedAt={data.generatedAt} />
+      <AnalyticsPageHeader title="System Operational Analytics" subtitle="Technical health only · authorized system scope · Asia/Manila" range={range} customFrom={customFrom} customTo={customTo} validationError={validationError} loading={loading} exportingCsv={exportingCsv} exportingPdf={exportingPdf} onRangeChange={setRange} onCustomFromChange={setCustomFrom} onCustomToChange={setCustomTo} onRefresh={() => setRetry((value) => value + 1)} onExportCsv={() => void exportCsv()} onExportPdf={() => void exportPdf()} />
       {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">Refresh failed: {error}. Showing the last successful response.</div>}
       {loading && <LoadingState className="min-h-16" label="Refreshing operational analytics..." />}
 

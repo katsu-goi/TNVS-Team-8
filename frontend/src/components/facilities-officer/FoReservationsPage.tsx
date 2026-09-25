@@ -7,6 +7,7 @@ import {
   Mail, CalendarClock, Inbox
 } from 'lucide-react';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
+import { useAuthStore } from '../../stores/authStore';
 import { safeFetchJson, extractErrorMessage } from '../../api/client';
 import { facilitiesService } from '../../api/facilitiesService';
 import { visitorService } from '../../api/visitorService';
@@ -14,7 +15,9 @@ import { RoomPicker, RoomPickerSelection } from './RoomPicker';
 import { DatePicker } from '../ui/DatePicker';
 import { TimePicker } from '../ui/TimePicker';
 import { downloadCsv } from '../../utils/csvExport';
+import { downloadPdfReport } from '../../utils/pdfReport';
 import { DashboardHero } from '../ui/DashboardPrimitives';
+import { reservationsPdfReport } from './reservationPdfReport';
 
 export interface ReservationItem {
   id: string;
@@ -113,6 +116,7 @@ const QueueField: React.FC<{
 );
 
 export const FoReservationsPage: React.FC = () => {
+  const user = useAuthStore((state) => state.user);
   const syncData = useRealtimeSyncStore(s => s.syncData);
   const revision = useRealtimeSyncStore(s => s.revision);
   const syncConnected = useRealtimeSyncStore(s => s.connected);
@@ -122,6 +126,7 @@ export const FoReservationsPage: React.FC = () => {
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const [viewDetailModal, setViewDetailModal] = useState<ReservationItem | null>(null);
   const [editModal, setEditModal] = useState<ReservationItem | null>(null);
   const [escalateModal, setEscalateModal] = useState<ReservationItem | null>(null);
@@ -222,6 +227,21 @@ export const FoReservationsPage: React.FC = () => {
       ]),
     );
     setShowReportModal(false);
+  };
+
+  const exportReservationsPdf = async () => {
+    if (!reservations.length) return;
+    setExportingPdf(true);
+    setReservationLoadError('');
+    try {
+      await downloadPdfReport(reservationsPdfReport(reservations, user));
+      setShowReportModal(false);
+    } catch (error) {
+      console.error('Unable to generate the reservations PDF report', error);
+      setReservationLoadError('Unable to generate the PDF report. Please try again.');
+    } finally {
+      setExportingPdf(false);
+    }
   };
   const [occupancy, setOccupancy] = useState({ current: 0, maxCapacity: 1, rate: 0 });
 
@@ -1203,11 +1223,12 @@ export const FoReservationsPage: React.FC = () => {
 
               <div className="space-y-2">
                 <button
-                  disabled
-                  title="PDF export is not configured"
-                  className="w-full p-3 rounded-xl border border-slate-200 flex items-center justify-between font-bold text-slate-400 cursor-not-allowed"
+                  onClick={exportReservationsPdf}
+                  disabled={reservations.length === 0 || exportingPdf}
+                  className="w-full p-3 rounded-xl border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/50 flex items-center justify-between font-bold text-slate-800 transition disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <span className="flex items-center gap-2"><FileText className="w-5 h-5" /> PDF export unavailable</span>
+                  <span className="flex items-center gap-2">{exportingPdf ? <Loader2 className="w-5 h-5 animate-spin text-emerald-600" /> : <FileText className="w-5 h-5 text-rose-600" />} {exportingPdf ? 'Generating PDF report...' : 'Export Formal PDF Report'}</span>
+                  {!exportingPdf && <Download className="w-4 h-4 text-slate-400" />}
                 </button>
 
                 <button

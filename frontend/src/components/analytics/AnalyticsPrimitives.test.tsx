@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AnalyticsPageHeader,
 } from './AnalyticsPrimitives';
-import { ANALYTICS_RANGE_OPTIONS, buildAnalyticsQuery, printAnalyticsReport, validateAnalyticsRange } from './analyticsUtils';
+import { ANALYTICS_RANGE_OPTIONS, buildAnalyticsQuery, validateAnalyticsRange } from './analyticsUtils';
 
 afterEach(() => {
   cleanup();
@@ -32,7 +32,7 @@ describe('analytics UI primitives', () => {
     const onRefresh = vi.fn();
     const onExportCsv = vi.fn();
     const onExportPdf = vi.fn();
-    render(<AnalyticsPageHeader title="Hub Performance Analytics" subtitle="Authorized facility data" range="last_30_days" customFrom="" customTo="" validationError={null} loading={false} exportingCsv={false} onRangeChange={onRangeChange} onCustomFromChange={() => undefined} onCustomToChange={() => undefined} onRefresh={onRefresh} onExportCsv={onExportCsv} onExportPdf={onExportPdf} />);
+    render(<AnalyticsPageHeader title="Hub Performance Analytics" subtitle="Authorized facility data" range="last_30_days" customFrom="" customTo="" validationError={null} loading={false} exportingCsv={false} exportingPdf={false} onRangeChange={onRangeChange} onCustomFromChange={() => undefined} onCustomToChange={() => undefined} onRefresh={onRefresh} onExportCsv={onExportCsv} onExportPdf={onExportPdf} />);
 
     expect(screen.getByTestId('portal-page-header')).toHaveClass('dashboard-hero');
     fireEvent.change(screen.getByLabelText('Analytics date range'), { target: { value: 'last_7_days' } });
@@ -45,13 +45,8 @@ describe('analytics UI primitives', () => {
     expect(onExportCsv).toHaveBeenCalledOnce();
   });
 
-  it('uses structured browser printing for the PDF report', () => {
-    const print = vi.spyOn(window, 'print').mockImplementation(() => undefined);
-    const original = document.title;
-    printAnalyticsReport('System Operational Analytics');
-    expect(document.title).toBe('System Operational Analytics - Hirna Portal');
-    expect(print).toHaveBeenCalledOnce();
-    window.dispatchEvent(new Event('afterprint'));
-    expect(document.title).toBe(original);
+  it('shows a generation state while a structured PDF is being created', () => {
+    render(<AnalyticsPageHeader title="Hub Performance Analytics" subtitle="Authorized facility data" range="last_30_days" customFrom="" customTo="" validationError={null} loading={false} exportingCsv={false} exportingPdf onRangeChange={() => undefined} onCustomFromChange={() => undefined} onCustomToChange={() => undefined} onRefresh={() => undefined} onExportCsv={() => undefined} onExportPdf={() => undefined} />);
+    expect(screen.getByRole('button', { name: 'Generating PDF...' })).toBeDisabled();
   });
 });

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Download, FileText, Loader2, RefreshCw } from 'lucide-react';
 import { DashboardHero, DashboardMetricCard } from '../ui/DashboardPrimitives';
-import { ANALYTICS_RANGE_OPTIONS, formatManilaDate, formatManilaDateTime, formatManilaInclusiveEnd, type AnalyticsRangeKey } from './analyticsUtils';
+import { ANALYTICS_RANGE_OPTIONS, type AnalyticsRangeKey } from './analyticsUtils';
 
 type HeaderProps = {
   title: string;
@@ -12,6 +12,7 @@ type HeaderProps = {
   validationError: string | null;
   loading: boolean;
   exportingCsv: boolean;
+  exportingPdf: boolean;
   onRangeChange: (value: AnalyticsRangeKey) => void;
   onCustomFromChange: (value: string) => void;
   onCustomToChange: (value: string) => void;
@@ -21,7 +22,7 @@ type HeaderProps = {
 };
 
 export const AnalyticsPageHeader: React.FC<HeaderProps> = ({
-  title, subtitle, range, customFrom, customTo, validationError, loading, exportingCsv,
+  title, subtitle, range, customFrom, customTo, validationError, loading, exportingCsv, exportingPdf,
   onRangeChange, onCustomFromChange, onCustomToChange, onRefresh, onExportCsv, onExportPdf,
 }) => {
   const disabled = Boolean(validationError);
@@ -40,7 +41,7 @@ export const AnalyticsPageHeader: React.FC<HeaderProps> = ({
             <label className="text-[11px] font-semibold text-slate-200">End <input aria-label="End date" type="date" min={customFrom || undefined} value={customTo} onChange={(event) => onCustomToChange(event.target.value)} className="portal-header-field ml-1 min-h-10 rounded-xl px-2 py-1.5 text-xs" /></label>
           </>}
           <button type="button" onClick={onRefresh} disabled={disabled || loading} className="portal-header-action min-h-10 rounded-xl p-2.5" aria-label="Refresh analytics"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></button>
-          <button type="button" onClick={onExportPdf} disabled={disabled} className="portal-header-action inline-flex min-h-10 items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold"><FileText className="h-4 w-4" />PDF</button>
+          <button type="button" onClick={onExportPdf} disabled={disabled || exportingPdf} className="portal-header-action inline-flex min-h-10 items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold">{exportingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}{exportingPdf ? 'Generating PDF...' : 'PDF'}</button>
           <button type="button" onClick={onExportCsv} disabled={disabled || exportingCsv} className="portal-header-primary inline-flex min-h-10 items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold">{exportingCsv ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}CSV</button>
         </div>
       } />
@@ -56,13 +57,5 @@ export const AnalyticsChartCard: React.FC<{ title: string; description: string; 
     <header className="mb-4"><h2 className="font-heading text-base font-bold text-slate-950">{title}</h2><p className="mt-1 text-xs text-slate-500">{description}</p></header>
     {children}
     {footer && <div className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-500">{footer}</div>}
-  </section>
-);
-
-export const AnalyticsPrintMeta: React.FC<{ title: string; role: string; from: string; toExclusive: string; generatedAt: string }> = ({ title, role, from, toExclusive, generatedAt }) => (
-  <section className="analytics-print-meta" aria-hidden="true">
-    <div><strong>HIRNA PORTAL</strong><span>TNVS Facilities & Administrative Management System</span></div>
-    <h1>{title}</h1>
-    <dl><div><dt>Role / module</dt><dd>{role}</dd></div><div><dt>Selected period</dt><dd>{formatManilaDate(from)} – {formatManilaInclusiveEnd(toExclusive)}</dd></div><div><dt>Generated</dt><dd>{formatManilaDateTime(generatedAt)} · Asia/Manila</dd></div></dl>
   </section>
 );
