@@ -264,6 +264,7 @@ async function handleListVisitors(ctx: AuthContext | null) {
     .select(
       "*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)",
     )
+    .eq("is_deleted", false)
     .order("created_at", { ascending: false })
     .limit(500);
   if (error) throw new Error(`visitors load failed: ${error.message}`);
@@ -603,6 +604,9 @@ const VISITOR_VIEW_ROLES = ["FACILITIES_OFFICER", "FACILITIES_MANAGER"];
 const VISITOR_OPERATIONS_ROLES = ["FACILITIES_OFFICER"];
 
 const routes = [
+  // Backward compatibility for clients that previously collapsed /visitors
+  // to the deployed singular function path /visitor.
+  { method: "GET", path: "/visitor", guard: { kind: "roles", roles: VISITOR_VIEW_ROLES }, handler: handleListVisitors },
   { method: "GET", path: "/visitors", guard: { kind: "roles", roles: VISITOR_VIEW_ROLES }, handler: handleListVisitors },
   { method: "POST", path: "/visitors/register", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleRegister },
   { method: "POST", path: "/visitors/:id/check-in", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleCheckIn },
