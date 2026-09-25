@@ -29,13 +29,20 @@ describe('facility management application API integration', () => {
     expect(api.post).not.toHaveBeenCalled();
   });
   it('creates a facility without requiring an image and archives through status', async () => {
-    const input = { facilityName: 'Hub', code: 'HUB-1', type: 'OFFICE' as const, capacity: 20, amenities: [], status: 'AVAILABLE', active: true };
+    const input = {
+      facilityName: 'Hub', code: 'HUB-1', type: 'OFFICE' as const, capacity: 20, amenities: ['Wi-Fi'],
+      floorLevel: 'Level 3', maxBookingDurationHours: 6, requiresAdminApproval: true,
+      status: 'AVAILABLE', active: true,
+    };
     api.post
       .mockResolvedValueOnce({ data: { data: { id: 'f1', facility_name: 'Hub', code: 'HUB-1', capacity: 20, active: true } } })
       .mockResolvedValueOnce({ data: { data: { id: 'f1', facility_name: 'Hub', code: 'HUB-1', capacity: 20, active: false, status: 'INACTIVE' } } });
     expect(await service.createFacility(input)).toEqual(expect.objectContaining({ id: 'f1', code: 'HUB-1' }));
     expect(await service.setFacilityActive('f1', false)).toEqual(expect.objectContaining({ active: false, status: 'INACTIVE' }));
-    expect(api.post).toHaveBeenNthCalledWith(1, '/facilities/management', expect.objectContaining({ code: 'HUB-1', capacity: 20 }));
+    expect(api.post).toHaveBeenNthCalledWith(1, '/facilities/management', expect.objectContaining({
+      code: 'HUB-1', capacity: 20, amenities_json: ['Wi-Fi'], floor_level: 'Level 3',
+      max_booking_duration_hours: 6, requires_admin_approval: true,
+    }));
     expect(api.post).toHaveBeenNthCalledWith(2, '/facilities/management/f1/status', { active: false });
   });
   it('maps saved pins and propagates failed writes', async () => {

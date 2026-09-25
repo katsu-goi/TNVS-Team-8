@@ -8,6 +8,11 @@ export const FACILITY_TYPE_OPTIONS = [
   { value: 'CUSTOMER_SUPPORT_CENTER', label: 'Customer Support Center' },
   { value: 'MAINTENANCE_DEPOT', label: 'Maintenance Depot' },
   { value: 'LOGISTICS_CENTER', label: 'Logistics Center' },
+  { value: 'MEETING_ROOM', label: 'Meeting Room' },
+  { value: 'DESK', label: 'Desk' },
+  { value: 'CONFERENCE_HALL', label: 'Conference Hall' },
+  { value: 'TRAINING_ROOM', label: 'Training Room' },
+  { value: 'EVENT_SPACE', label: 'Event Space' },
   { value: 'OTHER', label: 'Other' },
 ] as const;
 

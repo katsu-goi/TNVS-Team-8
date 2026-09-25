@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(resolve(process.cwd(), '../supabase/functions/facilities/management.ts'), 'utf8');
+const migration = readFileSync(resolve(process.cwd(), '../supabase/migrations/20260926000100_facility_creation_rbac.sql'), 'utf8');
 
 describe('facility management Edge route contract', () => {
   it('keeps every management route behind the assigned FACILITIES_MANAGER guard', () => {
@@ -42,5 +43,15 @@ describe('facility management Edge route contract', () => {
     expect(source).toContain('.eq("facility_id", params.id)');
     expect(source).toContain('roomIdsForFacility(params.id)');
     expect(source).toContain('.eq("id", params.spaceId).eq("facility_id", params.id)');
+  });
+
+  it('persists booking policy fields and closes direct browser writes', () => {
+    for (const field of ['floor_level', 'max_booking_duration_hours', 'requires_admin_approval']) {
+      expect(source).toContain(field);
+      expect(migration).toContain(field);
+    }
+    expect(source).toContain('"RESERVED"');
+    expect(migration).toContain('drop policy if exists "Allow all for anon" on public.facilities');
+    expect(migration).toContain('revoke all privileges on table public.facilities from anon, authenticated');
   });
 });

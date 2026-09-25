@@ -12,6 +12,9 @@ export type ManagedFacility = {
   description: string | null;
   capacity: number;
   amenities: string[];
+  floorLevel?: string | null;
+  maxBookingDurationHours?: number;
+  requiresAdminApproval?: boolean;
   status: string;
   active: boolean;
   floorPlanUrl: string | null;
@@ -32,6 +35,9 @@ export type FacilityInput = {
   description?: string;
   capacity: number;
   amenities: string[];
+  floorLevel?: string | null;
+  maxBookingDurationHours?: number;
+  requiresAdminApproval?: boolean;
   status: string;
   active: boolean;
 };
@@ -89,6 +95,9 @@ function mapFacility(row: Record<string, unknown>): ManagedFacility {
     description: typeof row.description === 'string' ? row.description : null,
     capacity: Number(row.capacity ?? row.total_capacity ?? 0),
     amenities: strings(row.amenities_json),
+    floorLevel: typeof row.floor_level === 'string' ? row.floor_level : null,
+    maxBookingDurationHours: Number(row.max_booking_duration_hours ?? 4),
+    requiresAdminApproval: row.requires_admin_approval !== false,
     status: String(row.status ?? (row.active === false ? 'INACTIVE' : 'AVAILABLE')),
     active: row.active !== false,
     floorPlanUrl: typeof row.floor_plan_url === 'string' ? row.floor_plan_url : null,
@@ -111,6 +120,9 @@ function facilityPayload(input: FacilityInput) {
     description: input.description?.trim() || null,
     capacity: input.capacity,
     amenities_json: input.amenities,
+    floor_level: input.floorLevel?.trim() || null,
+    max_booking_duration_hours: input.maxBookingDurationHours ?? 4,
+    requires_admin_approval: input.requiresAdminApproval ?? true,
     status: input.status,
     active: input.active,
   };

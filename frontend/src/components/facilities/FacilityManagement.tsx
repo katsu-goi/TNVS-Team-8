@@ -8,10 +8,14 @@ import { DashboardHero } from '../ui/DashboardPrimitives';
 
 type FormState = {
   facilityName: string; code: string; type: string; description: string; capacity: string;
-  amenities: string; status: string; active: boolean;
+  amenities: string; floorLevel: string; maxBookingDurationHours: string;
+  requiresAdminApproval: boolean; status: string; active: boolean;
 };
 
-const emptyForm: FormState = { facilityName: '', code: '', type: 'HEADQUARTERS', description: '', capacity: '8', amenities: '', status: 'AVAILABLE', active: true };
+const emptyForm: FormState = {
+  facilityName: '', code: '', type: 'HEADQUARTERS', description: '', capacity: '8', amenities: '',
+  floorLevel: '', maxBookingDurationHours: '4', requiresAdminApproval: true, status: 'AVAILABLE', active: true,
+};
 const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-red-700 focus:ring-2 focus:ring-red-700/10';
 
 function safeLoadError(error: unknown) {
@@ -23,10 +27,16 @@ function pretty(value: string | null) {
   return (value || 'Other').toLowerCase().replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function parseAmenities(value: string): string[] {
+  return [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))].slice(0, 50);
+}
+
 function toForm(facility: ManagedFacility): FormState {
   return {
     facilityName: facility.facilityName, code: facility.code ?? '', type: facility.type ?? '',
     description: facility.description ?? '', capacity: String(facility.capacity || 1), amenities: facility.amenities.join(', '),
+    floorLevel: facility.floorLevel ?? '', maxBookingDurationHours: String(facility.maxBookingDurationHours ?? 4),
+    requiresAdminApproval: facility.requiresAdminApproval !== false,
     status: facility.status === 'INACTIVE' ? 'AVAILABLE' : facility.status, active: facility.active,
   };
 }
@@ -100,7 +110,8 @@ export const FacilityManagement: React.FC = () => {
 
   const input = (type: FacilityType): FacilityInput => ({
     facilityName: form.facilityName, code: form.code, type, description: form.description,
-    capacity: Number(form.capacity), amenities: form.amenities.split(',').map((item) => item.trim()).filter(Boolean),
+    capacity: Number(form.capacity), amenities: parseAmenities(form.amenities), floorLevel: form.floorLevel,
+    maxBookingDurationHours: Number(form.maxBookingDurationHours), requiresAdminApproval: form.requiresAdminApproval,
     status: form.status, active: form.active,
   });
 
@@ -108,6 +119,9 @@ export const FacilityManagement: React.FC = () => {
     event.preventDefault(); setFormError('');
     if (!form.facilityName.trim() || !form.code.trim()) { setFormError('Facility name and code are required.'); return; }
     if (!Number.isSafeInteger(Number(form.capacity)) || Number(form.capacity) < 1) { setFormError('Capacity must be a positive whole number.'); return; }
+    if (!Number.isSafeInteger(Number(form.maxBookingDurationHours)) || Number(form.maxBookingDurationHours) < 1 || Number(form.maxBookingDurationHours) > 168) {
+      setFormError('Maximum booking duration must be a whole number between 1 and 168 hours.'); return;
+    }
     if (!isFacilityType(form.type)) { setFormError('Select a valid facility type.'); return; }
     setSaving(true);
     try {
@@ -160,19 +174,52 @@ export const FacilityManagement: React.FC = () => {
         </article>)}
       </section>}
 
-    {modalOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"><div role="dialog" aria-modal="true" aria-labelledby="facility-dialog-title" className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-xl"><div className="flex items-start justify-between border-b border-slate-200 px-5 py-4"><div><h2 id="facility-dialog-title" className="text-lg font-bold text-slate-900">{editing ? 'Edit facility' : 'Add facility'}</h2><p className="mt-1 text-xs text-slate-500">Required fields are validated again by the server.</p></div><button type="button" onClick={closeModal} aria-label="Close" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
-      <form onSubmit={save} className="space-y-5 p-5"><div className="grid gap-4 sm:grid-cols-2">
-        <label className="block sm:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-slate-500">Facility name *</span><input autoFocus value={form.facilityName} onChange={(event) => setForm({ ...form, facilityName: event.target.value })} className={inputClass} maxLength={160} /></label>
-        <label><span className="mb-1.5 block text-xs font-semibold text-slate-500">Facility code *</span><input value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value.toUpperCase() })} className={inputClass} maxLength={32} placeholder="HQ-MNL" /></label>
-        <label><span className="mb-1.5 block text-xs font-semibold text-slate-500">Capacity *</span><input type="number" min="1" max="100000" step="1" value={form.capacity} onChange={(event) => setForm({ ...form, capacity: event.target.value })} className={inputClass} /></label>
-        <label><span className="mb-1.5 block text-xs font-semibold text-slate-500">Facility type *</span><select aria-label="Facility type" value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })} className={inputClass}>{!isFacilityType(form.type) && <option value={form.type} disabled>Legacy: {pretty(form.type)} — select a facility type</option>}{FACILITY_TYPE_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label><span className="mb-1.5 block text-xs font-semibold text-slate-500">Status</span><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })} className={inputClass}><option value="AVAILABLE">Available</option><option value="MAINTENANCE">Maintenance</option></select></label>
-        <label className="sm:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-slate-500">Description</span><textarea rows={3} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} className={inputClass} maxLength={2000} /></label>
-        <label className="sm:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-slate-500">Amenities</span><input value={form.amenities} onChange={(event) => setForm({ ...form, amenities: event.target.value })} className={inputClass} placeholder="Projector, Whiteboard, Wi-Fi" /></label>
+    {modalOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4">
+      <div role="dialog" aria-modal="true" aria-labelledby="facility-dialog-title" className="max-h-[94vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+        <header className="sticky top-0 z-10 flex items-start justify-between border-b border-slate-200 bg-white px-6 py-5">
+          <div><h2 id="facility-dialog-title" className="text-xl font-bold text-slate-900">{editing ? 'Edit Facility' : 'Add New Facility'}</h2><p className="mt-1 text-xs text-slate-500">Facilities Manager access is verified again by the server when this form is submitted.</p></div>
+          <button type="button" onClick={closeModal} aria-label="Close Add New Facility" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X className="h-5 w-5" /></button>
+        </header>
+        <form onSubmit={save} className="space-y-6 p-6">
+          <section aria-labelledby="general-information-heading" className="space-y-4">
+            <div><h3 id="general-information-heading" className="text-sm font-bold text-slate-900">General Information</h3><p className="mt-1 text-xs text-slate-500">Name the facility and define its booking capacity.</p></div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block sm:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-slate-600">Facility Name *</span><input autoFocus required value={form.facilityName} onChange={(event) => setForm({ ...form, facilityName: event.target.value })} className={inputClass} maxLength={160} placeholder="Team 8 Conference Hall" /></label>
+              <label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Facility Code *</span><input required value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value.toUpperCase() })} className={inputClass} maxLength={32} placeholder="T8-CONF" /></label>
+              <label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Facility Type *</span><select aria-label="Facility Type" value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })} className={inputClass}>{!isFacilityType(form.type) && <option value={form.type} disabled>Legacy: {pretty(form.type)} — select a facility type</option>}{FACILITY_TYPE_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</select></label>
+              <label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Capacity *</span><input aria-label="Capacity" required type="number" min="1" max="100000" step="1" value={form.capacity} onChange={(event) => setForm({ ...form, capacity: event.target.value })} className={inputClass} /></label>
+            </div>
+          </section>
+
+          <section aria-labelledby="operations-heading" className="space-y-4 border-t border-slate-100 pt-5">
+            <div><h3 id="operations-heading" className="text-sm font-bold text-slate-900">Location &amp; Operations</h3><p className="mt-1 text-xs text-slate-500">Set the facility’s location and reservation controls.</p></div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Floor / Level</span><input value={form.floorLevel} onChange={(event) => setForm({ ...form, floorLevel: event.target.value })} className={inputClass} maxLength={80} placeholder="e.g. Level 4" /></label>
+              <label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Initial Status</span><select aria-label="Initial Status" value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })} className={inputClass}><option value="AVAILABLE">Available</option><option value="MAINTENANCE">Maintenance</option><option value="RESERVED">Reserved</option></select></label>
+              <label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Max Booking Duration (hours) *</span><input aria-label="Max Booking Duration" required type="number" min="1" max="168" step="1" value={form.maxBookingDurationHours} onChange={(event) => setForm({ ...form, maxBookingDurationHours: event.target.value })} className={inputClass} /></label>
+              <label className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 px-4 py-3"><span><span className="block text-xs font-bold text-slate-700">Requires Admin Approval</span><span className="mt-0.5 block text-[11px] text-slate-500">Hold new reservations for review.</span></span><input aria-label="Requires Admin Approval" type="checkbox" checked={form.requiresAdminApproval} onChange={(event) => setForm({ ...form, requiresAdminApproval: event.target.checked })} className="h-5 w-5 rounded border-slate-300 text-red-700 focus:ring-red-700" /></label>
+            </div>
+          </section>
+
+          <section aria-labelledby="features-heading" className="space-y-4 border-t border-slate-100 pt-5">
+            <div><h3 id="features-heading" className="text-sm font-bold text-slate-900">Features</h3><p className="mt-1 text-xs text-slate-500">Separate amenities with commas.</p></div>
+            <label className="block"><span className="mb-1.5 block text-xs font-semibold text-slate-600">Amenities</span><input value={form.amenities} onChange={(event) => setForm({ ...form, amenities: event.target.value })} className={inputClass} placeholder="Projector, Whiteboard, Wi-Fi" /></label>
+            {parseAmenities(form.amenities).length > 0 && <div aria-label="Amenity tags" className="flex flex-wrap gap-2">{parseAmenities(form.amenities).map((amenity) => <span key={amenity} className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">{amenity}</span>)}</div>}
+          </section>
+
+          <section aria-labelledby="media-heading" className="space-y-4 border-t border-slate-100 pt-5">
+            <div><h3 id="media-heading" className="text-sm font-bold text-slate-900">Media</h3><p className="mt-1 text-xs text-slate-500">Upload a floor plan for the workspace viewer.</p></div>
+            <div className="rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-5">
+              <div className="flex flex-col gap-4 sm:flex-row"><div className="rounded-xl bg-red-50 p-3 text-red-700 self-start"><ImagePlus className="h-6 w-6" /></div><div className="min-w-0 flex-1"><p className="text-sm font-bold text-slate-800">Floor Plan Image</p><p className="mt-1 text-xs text-slate-500">PNG, JPEG, or WebP up to 5 MB. Images are stored privately and displayed through temporary signed URLs.</p><label className="mt-3 inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-red-200 hover:text-red-700"><Upload className="h-4 w-4" />{floorPlanFile || editing?.floorPlanUrl ? 'Replace Image' : 'Choose Image'}<input aria-label="Floor Plan Image" type="file" className="sr-only" accept="image/png,image/jpeg,image/webp" onChange={selectFile} /></label>{(previewUrl || editing?.floorPlanUrl) && <div className="mt-4 rounded-xl border border-slate-200 bg-white p-2"><img src={previewUrl || editing?.floorPlanUrl || ''} alt="Floor plan preview" className="max-h-52 w-full rounded-lg object-contain" /></div>}</div></div>
+            </div>
+          </section>
+
+          <label className="block border-t border-slate-100 pt-5"><span className="mb-1.5 block text-xs font-semibold text-slate-600">Description / Notes</span><textarea rows={3} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} className={inputClass} maxLength={2000} /></label>
+          {formError && <div role="alert" className="flex gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{formError}</div>}
+          <footer className="flex justify-end gap-3 border-t border-slate-100 pt-5"><button type="button" onClick={closeModal} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button><button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-red-800 disabled:opacity-60">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{saving ? 'Creating...' : editing ? 'Save Changes' : 'Create Facility'}</button></footer>
+        </form>
       </div>
-      <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4"><div className="flex gap-3"><div className="rounded-xl bg-red-50 p-2.5 text-red-700"><ImagePlus className="h-5 w-5" /></div><div className="min-w-0 flex-1"><p className="text-sm font-bold text-slate-800">Protected floor plan</p><p className="mt-1 text-xs text-slate-500">PNG, JPEG, or WebP up to 5 MB. Access uses a temporary signed URL.</p><label className="mt-3 inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700"><Upload className="h-4 w-4" />{floorPlanFile ? 'Replace selection' : 'Choose image'}<input type="file" className="sr-only" accept="image/png,image/jpeg,image/webp" onChange={selectFile} /></label>{(previewUrl || editing?.floorPlanUrl) && <img src={previewUrl || editing?.floorPlanUrl || ''} alt="Floor plan preview" className="mt-4 max-h-44 w-full rounded-xl border border-slate-200 bg-white object-contain" />}</div></div></div>
-      {formError && <div className="flex gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{formError}</div>}
-      <div className="flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onClick={closeModal} className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-600">Cancel</button><button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{saving ? 'Saving...' : 'Save facility'}</button></div></form></div></div>}
+    </div>}
   </div>;
 };
 

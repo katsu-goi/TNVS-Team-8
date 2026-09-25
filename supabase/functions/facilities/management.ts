@@ -12,8 +12,8 @@ const reply = (data: unknown, message?: string) => jsonResponse(ok(data, message
 const invalid = (message: string, code = "INVALID_REQUEST") => jsonResponse(fail(message, code), 400);
 const conflict = (message: string, code: string) => jsonResponse(fail(message, code), 409);
 const missing = () => jsonResponse(fail("Facility not found.", "FACILITY_NOT_FOUND"), 404);
-const columns = "id,name,facility_name,code,type,description,capacity,total_capacity,amenities_json,status,active,floor_plan_path,floor_plan_file_name,floor_plan_mime_type,floor_plan_size,created_at,updated_at";
-const facilityStatuses = new Set(["AVAILABLE", "MAINTENANCE", "INACTIVE"]);
+const columns = "id,name,facility_name,code,type,description,capacity,total_capacity,amenities_json,floor_level,max_booking_duration_hours,requires_admin_approval,status,active,floor_plan_path,floor_plan_file_name,floor_plan_mime_type,floor_plan_size,created_at,updated_at";
+const facilityStatuses = new Set(["AVAILABLE", "MAINTENANCE", "RESERVED", "INACTIVE"]);
 const roomStatuses = new Set(["AVAILABLE", "VACANT", "OCCUPIED", "RESERVED", "MAINTENANCE", "OUT_OF_SERVICE", "INACTIVE"]);
 
 type Row = Record<string, unknown>;
@@ -84,6 +84,9 @@ function normalizedFacility(body: unknown) {
   const code = String(b.code ?? "").trim().toUpperCase();
   const type = parseFacilityType(b.type);
   const capacity = Number(b.capacity ?? b.total_capacity);
+  const floorLevel = String(b.floor_level ?? "").trim().slice(0, 80) || null;
+  const maxBookingDurationHours = Number(b.max_booking_duration_hours ?? 4);
+  const requiresAdminApproval = b.requires_admin_approval !== false;
   const active = b.active !== false;
   const status = active ? String(b.status ?? "AVAILABLE").trim().toUpperCase() : "INACTIVE";
   if (!name) return { error: invalid("Facility name is required.") };
@@ -91,6 +94,9 @@ function normalizedFacility(body: unknown) {
   if (!type) return { error: invalid("Select a valid facility type.") };
   if (!facilityStatuses.has(status)) return { error: invalid("Select a supported facility status.") };
   if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 100000) return { error: invalid("Capacity must be a whole number between 1 and 100,000.") };
+  if (!Number.isSafeInteger(maxBookingDurationHours) || maxBookingDurationHours < 1 || maxBookingDurationHours > 168) {
+    return { error: invalid("Maximum booking duration must be a whole number between 1 and 168 hours.") };
+  }
   const amenities = Array.isArray(b.amenities_json)
     ? [...new Set(b.amenities_json.filter((value): value is string => typeof value === "string").map((value) => value.trim()).filter(Boolean))].slice(0, 50)
     : [];
@@ -103,6 +109,9 @@ function normalizedFacility(body: unknown) {
     capacity,
     total_capacity: capacity,
     amenities_json: amenities,
+    floor_level: floorLevel,
+    max_booking_duration_hours: maxBookingDurationHours,
+    requires_admin_approval: requiresAdminApproval,
     active,
     status,
   } };
