@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { extractLoginLockout } from './authService';
+import { apiClient } from './client';
+import { extractLoginLockout, logout } from './authService';
 
 describe('extractLoginLockout', () => {
   beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   it('parses server-authoritative lock metadata without exposing account counters', () => {
     vi.setSystemTime(new Date('2026-09-24T08:00:00.000Z'));
@@ -34,5 +38,17 @@ describe('extractLoginLockout', () => {
         data: { errorCode: 'INVALID_CREDENTIALS', message: 'Invalid email or password.' },
       },
     })).toBeNull();
+  });
+
+  it('sends the explicit inactivity reason through the secure logout endpoint', async () => {
+    localStorage.setItem('refreshToken', 'refresh-token');
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({ data: { data: 'Logged out successfully' } });
+
+    await logout('INACTIVITY');
+
+    expect(post).toHaveBeenCalledWith('/auth/logout', {
+      refreshToken: 'refresh-token',
+      reason: 'INACTIVITY',
+    });
   });
 });

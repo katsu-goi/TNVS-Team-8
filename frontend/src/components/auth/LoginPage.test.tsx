@@ -31,6 +31,7 @@ vi.mock('react-router-dom', async (importOriginal) => {
 });
 
 import { LoginPage } from './LoginPage';
+import { SESSION_END_REASON_STORAGE_KEY } from '../../session/sessionState';
 
 const fillLogin = () => {
   fireEvent.change(screen.getByLabelText('Email / Corporate ID'), {
@@ -157,5 +158,17 @@ describe('LoginPage', () => {
     render(<LoginPage />);
     expect(screen.getByRole('button', { name: 'Try again in 00:30' })).toBeDisabled();
     expect(mocks.login).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['inactivity', 'Your session ended due to inactivity. Please sign in again.'],
+    ['expired', 'Your session has expired. Please sign in again.'],
+  ])('shows and consumes the transient %s session reason', (reason, message) => {
+    sessionStorage.setItem(SESSION_END_REASON_STORAGE_KEY, reason);
+
+    render(<LoginPage />);
+
+    expect(screen.getByRole('status')).toHaveTextContent(message);
+    expect(sessionStorage.getItem(SESSION_END_REASON_STORAGE_KEY)).toBeNull();
   });
 });

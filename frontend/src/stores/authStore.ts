@@ -4,6 +4,15 @@ import { setSupabaseRealtimeAuth } from '../lib/supabase';
 import { clearOversightSession, getOversightTargetUser } from '../utils/oversightSession';
 import { getDashboardPathForRoles } from '../config/roleRegistry';
 import { getCurrentUser } from '../api/authService';
+import {
+  SESSION_SIGNAL_STORAGE_KEY,
+  SessionEndReason,
+  clearIdleSessionState,
+  parseSessionSignal,
+  publishSessionSignal,
+  setSessionEndReason,
+  writeLastActivityAt,
+} from '../session/sessionState';
 
 export type SessionStatus = 'loading' | 'ready' | 'error';
 
@@ -16,10 +25,12 @@ interface AuthState {
   sessionStatus: SessionStatus;
   sessionError: string | null;
   setAuthTokens: (user: User, accessToken: string, refreshToken: string) => void;
+  updateSessionTokens: (accessToken: string, refreshToken: string) => void;
+  acceptVerifiedUser: (user: User) => void;
   verifyLoginSession: () => Promise<User | null>;
   bootstrapSession: () => Promise<User | null>;
   retryBootstrap: () => Promise<User | null>;
-  logout: () => void;
+  logout: (reason?: SessionEndReason, broadcast?: boolean) => void;
 }
 
 export function getDashboardPath(user: User | null): string {
@@ -102,7 +113,12 @@ function clearLocalSession() {
   localStorage.removeItem('refreshToken');
   localStorage.removeItem('user');
   clearOversightSession();
+  clearIdleSessionState();
   setSupabaseRealtimeAuth(null);
+}
+
+function applySessionEndReason(reason: SessionEndReason) {
+  setSessionEndReason(reason);
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -122,9 +138,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       localStorage.removeItem('refreshToken');
     }
     setSupabaseRealtimeAuth(accessToken);
+    writeLastActivityAt(Date.now());
+    setSessionEndReason('manual');
     // The login payload establishes token ownership only. Keep the login page
     // mounted while /auth/me verifies roles and permissions in the submit flow.
     set({ user: null, accessToken, refreshToken, sessionStatus: 'ready', sessionError: null });
+  },
+  updateSessionTokens: (accessToken, refreshToken) => {
+    localStorage.setItem('accessToken', accessToken);
+    localStorage.setItem('refreshToken', refreshToken);
+    setSupabaseRealtimeAuth(accessToken);
+    set((state) => ({
+      ...state,
+      accessToken,
+      refreshToken,
+      sessionStatus: 'ready',
+      sessionError: null,
+    }));
+  },
+  acceptVerifiedUser: (user) => {
+    set({ user, sessionStatus: 'ready', sessionError: null });
   },
   verifyLoginSession: async () => {
     if (!get().accessToken) return null;
@@ -148,6 +181,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         })
         .catch((error: unknown) => {
           if (isInvalidSession(error) || !get().accessToken) {
+            if (isInvalidSession(error)) {
+              applySessionEndReason('expired');
+              publishSessionSignal({ type: 'logout', at: Date.now(), source: 'session-bootstrap', reason: 'expired' });
+            }
             clearLocalSession();
             set({ user: null, accessToken: null, refreshToken: null, sessionStatus: 'ready', sessionError: null });
             return null;
@@ -171,7 +208,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ user: null, sessionStatus: 'loading', sessionError: null });
     return get().bootstrapSession();
   },
-  logout: () => {
+  logout: (reason = 'manual', broadcast = true) => {
+    applySessionEndReason(reason);
+    if (broadcast) {
+      publishSessionSignal({ type: 'logout', at: Date.now(), source: 'auth-store', reason });
+    }
     clearLocalSession();
     set({ user: null, accessToken: null, refreshToken: null, sessionStatus: 'ready', sessionError: null });
   },
@@ -194,10 +235,49 @@ window.addEventListener('auth:session-refreshed', (event) => {
   }));
 });
 
-window.addEventListener('auth:session-expired', () => {
+window.addEventListener('auth:session-expired', (event) => {
+  const reason = (event as CustomEvent<{ reason?: SessionEndReason }>).detail?.reason ?? 'expired';
+  applySessionEndReason(reason);
   clearOversightSession();
+  clearIdleSessionState();
   setSupabaseRealtimeAuth(null);
   useAuthStore.setState({ user: null, accessToken: null, refreshToken: null, sessionStatus: 'ready', sessionError: null });
+});
+
+window.addEventListener('storage', (event) => {
+  if (event.key === SESSION_SIGNAL_STORAGE_KEY) {
+    const signal = parseSessionSignal(event.newValue);
+    if (signal?.type === 'logout') {
+      applySessionEndReason(signal.reason ?? 'expired');
+      clearLocalSession();
+      useAuthStore.setState({
+        user: null,
+        accessToken: null,
+        refreshToken: null,
+        sessionStatus: 'ready',
+        sessionError: null,
+      });
+    }
+    return;
+  }
+
+  if (event.key === 'accessToken' || event.key === 'refreshToken') {
+    const accessToken = localStorage.getItem('accessToken');
+    const refreshToken = localStorage.getItem('refreshToken');
+    if (!accessToken || !refreshToken) {
+      clearLocalSession();
+      useAuthStore.setState({
+        user: null,
+        accessToken: null,
+        refreshToken: null,
+        sessionStatus: 'ready',
+        sessionError: null,
+      });
+      return;
+    }
+    setSupabaseRealtimeAuth(accessToken);
+    useAuthStore.setState({ accessToken, refreshToken, sessionStatus: 'ready', sessionError: null });
+  }
 });
 
 setSupabaseRealtimeAuth(savedToken);

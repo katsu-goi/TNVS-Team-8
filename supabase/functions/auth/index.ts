@@ -206,8 +206,14 @@ async function handleRefresh(_ctx: AuthContext | null, req: Request, body: unkno
   return jsonResponse(ok(auth, "Token refreshed"), 200);
 }
 
-async function handleLogout(ctx: AuthContext | null, _req: Request, _body: unknown) {
+async function handleLogout(ctx: AuthContext | null, _req: Request, body: unknown) {
   if (ctx) {
+    const requestedReason = (body as Record<string, unknown> | null)?.reason;
+    const idleLogout = requestedReason === "INACTIVITY";
+    const auditAction = idleLogout ? "SESSION_IDLE_LOGOUT" : "LOGOUT";
+    const auditDescription = idleLogout
+      ? "User session ended due to inactivity"
+      : "User logged out";
     const { error: versionError } = await adminDb().from("users")
       .update({ auth_version: ctx.user.row.auth_version + 1 })
       .eq("id", ctx.userId)
@@ -218,12 +224,13 @@ async function handleLogout(ctx: AuthContext | null, _req: Request, _body: unkno
     await insertActivityEvent({
       type: "USER_OFFLINE", userId: ctx.userId, username: ctx.email,
       fullName: `${ctx.user.row.first_name} ${ctx.user.row.last_name}`, email: ctx.email,
-      role: ctx.user.assignedRoles[0] ?? ctx.roles[0] ?? "EMPLOYEE", action: "Signed out", ip: "",
+      role: ctx.user.assignedRoles[0] ?? ctx.roles[0] ?? "EMPLOYEE",
+      action: idleLogout ? "Signed out due to inactivity" : "Signed out", ip: "",
       device: "", browser: "",
     });
     await removeOnlineUser(ctx.email);
-    await writeAudit(ctx.user, "LOGOUT", "AUTH", "User", ctx.userId, "User logged out", null);
-    await writeSecurityLog(ctx.user, "LOGOUT", "SUCCESS", "LOW", null, null, "User logged out");
+    await writeAudit(ctx.user, auditAction, "AUTH", "User", ctx.userId, auditDescription, null);
+    await writeSecurityLog(ctx.user, auditAction, "SUCCESS", "LOW", null, null, auditDescription);
   }
   return jsonResponse(ok("Logged out successfully"), 200);
 }

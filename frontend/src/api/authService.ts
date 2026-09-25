@@ -57,10 +57,11 @@ export async function getCurrentUser(): Promise<User> {
   return user;
 }
 
-export async function logout(): Promise<void> {
+export async function logout(reason: 'MANUAL' | 'INACTIVITY' = 'MANUAL'): Promise<void> {
   try {
     await apiClient.post('/auth/logout', {
       refreshToken: localStorage.getItem('refreshToken'),
+      reason,
     });
   } catch {}
 }

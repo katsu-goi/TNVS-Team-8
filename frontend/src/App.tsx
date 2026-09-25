@@ -9,6 +9,7 @@ import { Button, EmptyState } from './components/ui/SharedUI';
 import { PortalInitializationError, SessionBootstrapPlaceholder } from './components/ui/PortalLoadingOverlay';
 import { AppLayout } from './components/layout/AppLayout';
 import { LoginPage } from './components/auth/LoginPage';
+import { SessionIdleManager } from './components/auth/SessionIdleManager';
 import { HRAssistancePage } from './components/auth/HRAssistancePage';
 import { FacilitiesManagerLayout } from './components/facilities/FacilitiesManagerLayout';
 import { FacilitiesOfficerLayout } from './components/facilities-officer/FacilitiesOfficerLayout';
@@ -240,8 +241,9 @@ export const App: React.FC = () => {
   return (
     <BrowserRouter>
       <SessionBootstrap>
-       <OversightBanner />
-        <Routes>
+        <SessionIdleManager>
+          <OversightBanner />
+          <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/hr-assistance" element={<HRAssistancePage />} />
         <Route path="/reservation-portal/login" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><Team8LoginPage /></Suspense>} />
@@ -377,7 +379,8 @@ export const App: React.FC = () => {
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+          </Routes>
+        </SessionIdleManager>
       </SessionBootstrap>
     </BrowserRouter>
   );

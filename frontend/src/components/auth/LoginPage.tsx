@@ -5,6 +5,7 @@ import { login, extractLoginLockout } from '../../api/authService';
 import { extractErrorMessage } from '../../api/client';
 import { Eye, EyeOff } from 'lucide-react';
 import { validateCorporateEmail } from '../../utils/emailValidation';
+import { consumeSessionEndReason } from '../../session/sessionState';
 
 const savedRestriction = (): { email: string; retryAt: string } | null => {
   try {
@@ -33,6 +34,12 @@ export const LoginPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [sessionNotice] = useState(() => {
+    const reason = consumeSessionEndReason();
+    if (reason === 'inactivity') return 'Your session ended due to inactivity. Please sign in again.';
+    if (reason === 'expired') return 'Your session has expired. Please sign in again.';
+    return '';
+  });
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
 
@@ -132,6 +139,12 @@ export const LoginPage: React.FC = () => {
               <h2 className="text-3xl font-bold text-white tracking-tight mt-3 leading-tight">Welcome back</h2>
               <p className="text-sm text-white/70 leading-relaxed mt-2 max-w-xs">Sign in to your account to continue.</p>
             </div>
+
+            {sessionNotice ? (
+              <div role="status" className="mb-5 rounded-xl border border-amber-300/30 bg-amber-400/15 px-4 py-3 text-sm text-amber-100">
+                {sessionNotice}
+              </div>
+            ) : null}
 
             {locked ? (
               <div role="status" aria-live="polite" aria-atomic="true" className="mb-5 px-4 py-3 rounded-xl bg-rose-500/15 border border-rose-400/30 text-rose-200 text-sm">

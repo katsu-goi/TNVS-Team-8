@@ -1,5 +1,6 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import { clearOversightSession, getOversightSessionId } from '../utils/oversightSession';
+import { publishSessionSignal, setSessionEndReason } from '../session/sessionState';
 
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim();
 
@@ -134,11 +135,14 @@ function persistRefreshedSession(session: RefreshedSession) {
 }
 
 function clearStoredSession() {
+  const endedAt = Date.now();
+  setSessionEndReason('expired');
+  publishSessionSignal({ type: 'logout', at: endedAt, source: 'api-client', reason: 'expired' });
   localStorage.removeItem('accessToken');
   localStorage.removeItem('refreshToken');
   localStorage.removeItem('user');
   clearOversightSession();
-  window.dispatchEvent(new Event('auth:session-expired'));
+  window.dispatchEvent(new CustomEvent('auth:session-expired', { detail: { reason: 'expired' } }));
 }
 
 function redirectToLogin() {
