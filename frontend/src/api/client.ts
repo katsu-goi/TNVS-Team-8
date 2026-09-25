@@ -92,9 +92,13 @@ function routeSupabaseFunction(url: string): string {
   const functionName = firstSegment ? SUPABASE_FUNCTION_ALIASES[firstSegment] : undefined;
   if (!functionName) return normalized;
 
+  // Supabase uses the first segment to select the Edge Function. Preserve a
+  // different logical route prefix after it so the function router can still
+  // distinguish facilities-manager from facilities-officer (and visitors
+  // from the singular visitor function name).
   const targetPath = firstSegment === functionName
     ? pathname
-    : `/${functionName}${pathname.slice(firstSegment.length + 1)}`;
+    : `/${functionName}${pathname}`;
   const queryString = query ? `?${query}` : '';
 
   const edgeBaseUrl = getSupabaseFunctionBaseUrl();

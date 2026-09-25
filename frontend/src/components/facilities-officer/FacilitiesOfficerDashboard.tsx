@@ -41,7 +41,7 @@ export const FacilitiesOfficerDashboard: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const json = await safeFetchJson('/api/v1/facilities-officer/dashboard/summary');
+      const json = await safeFetchJson('/api/v1/facilities/dashboard/summary');
       setData(json?.data ?? {});
     } catch (err: any) {
       setError(err?.message || 'Failed to load dashboard');
@@ -97,10 +97,10 @@ export const FacilitiesOfficerDashboard: React.FC = () => {
       } />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <KpiCard label="Today's Reservations" value={kpi.todaysReservations ?? 0} icon={Calendar} color={(kpi.todaysReservations ?? 0) > 0 ? 'text-emerald-600' : 'text-slate-400'} sub="Scheduled today" onClick={() => navigate('/facilities-officer/reservations')} />
+        <KpiCard label="Active Bookings" value={kpi.activeBookings ?? 0} icon={Calendar} color={(kpi.activeBookings ?? 0) > 0 ? 'text-emerald-600' : 'text-slate-400'} sub="Approved or in progress" onClick={() => navigate('/facilities-officer/reservations')} />
         <KpiCard label="Pending Requests" value={kpi.pendingRequests ?? 0} icon={CheckSquare} color={(kpi.pendingRequests ?? 0) > 0 ? 'text-amber-500' : 'text-slate-400'} sub="Awaiting processing" onClick={() => navigate('/facilities-officer/reservations')} />
-        <KpiCard label="Facilities Under Maintenance" value={kpi.facilitiesUnderMaintenance ?? 0} icon={Wrench} color={(kpi.facilitiesUnderMaintenance ?? 0) > 0 ? 'text-rose-500' : 'text-slate-400'} sub="Out of service" />
-        <KpiCard label="Tasks Due Today" value={kpi.tasksDueToday ?? 0} icon={ClipboardList} color={(kpi.tasksDueToday ?? 0) > 0 ? 'text-blue-500' : 'text-slate-400'} sub="Pending completion" />
+        <KpiCard label="Active Facilities" value={kpi.activeFacilities ?? 0} icon={Building2} color={(kpi.activeFacilities ?? 0) > 0 ? 'text-emerald-600' : 'text-slate-400'} sub="Available locations" />
+        <KpiCard label="Today's Visitors" value={kpi.todaysVisitors ?? 0} icon={Eye} color={(kpi.todaysVisitors ?? 0) > 0 ? 'text-blue-500' : 'text-slate-400'} sub="Expected arrivals" onClick={() => navigate('/facilities-officer/visitors')} />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

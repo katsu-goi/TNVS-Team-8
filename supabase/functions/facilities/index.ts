@@ -1060,6 +1060,15 @@ async function handleOfficerDashboard(_ctx: AuthContext | null, _req: Request) {
   const statusCounts = await countReservationsByStatus();
   const rooms = await loadAllRooms();
   const facilitiesUnderMaintenance = rooms.filter((r) => r.status === "MAINTENANCE" || r.status === "OUT_OF_SERVICE").length;
+  const [activeFacilitiesResult, todaysVisitorsResult] = await Promise.all([
+    db.from("facilities").select("id", { count: "exact", head: true }).eq("active", true).eq("is_deleted", false),
+    db.from("visitors").select("id", { count: "exact", head: true })
+      .eq("is_deleted", false)
+      .gte("expected_arrival", dayStartIso(today))
+      .lte("expected_arrival", dayEndIso(today)),
+  ]);
+  if (activeFacilitiesResult.error) throw new Error(`active facilities load failed: ${activeFacilitiesResult.error.message}`);
+  if (todaysVisitorsResult.error) throw new Error(`today's visitors load failed: ${todaysVisitorsResult.error.message}`);
 
   const { data: maint, error: me } = await db
     .from("maintenance_schedules")
@@ -1127,8 +1136,11 @@ async function handleOfficerDashboard(_ctx: AuthContext | null, _req: Request) {
 
   return jsonResponse(ok({
     kpi: {
+      activeBookings: (statusCounts["APPROVED"] ?? 0) + (statusCounts["CONFIRMED"] ?? 0) + (statusCounts["CHECKED_IN"] ?? 0),
       todaysReservations: todays.length,
       pendingRequests: (statusCounts["PENDING"] ?? 0) + (statusCounts["PENDING_MANAGER_APPROVAL"] ?? 0),
+      activeFacilities: activeFacilitiesResult.count ?? 0,
+      todaysVisitors: todaysVisitorsResult.count ?? 0,
       facilitiesUnderMaintenance,
       tasksDueToday,
     },
@@ -1928,6 +1940,7 @@ const routes = [
   { method: "GET", path: "/facilities-manager/calendar", guard: { kind: "roles", roles: ["FACILITIES_MANAGER"] }, handler: handleCalendar },
 
   // Facilities Officer
+  { method: "GET", path: "/facilities/dashboard/summary", guard: { kind: "roles", roles: ["FACILITIES_OFFICER", "FACILITIES_MANAGER"] }, handler: handleOfficerDashboard },
   { method: "POST", path: "/facilities-officer/rooms/available", guard: { kind: "roles", roles: ["FACILITIES_OFFICER"] }, handler: handleOfficerRoomsAvailable },
   { method: "GET", path: "/facilities-officer/rooms/filters", guard: { kind: "roles", roles: ["FACILITIES_OFFICER"] }, handler: handleOfficerRoomFilters },
   { method: "GET", path: "/facilities-officer/dashboard/summary", guard: { kind: "roles", roles: ["FACILITIES_OFFICER"] }, handler: handleOfficerDashboard },

@@ -18,6 +18,7 @@ import { reservationPortalService } from '../../api/reservationPortalService';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
 import { DashboardHero } from '../ui/DashboardPrimitives';
+import { cameraFailureMessage } from './qrCamera';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -53,8 +54,8 @@ const scoreTone = (score: number | null) => {
 
 /**
  * Per-visitor ID verification. Reads the real visitor list from
- * `/v1/visitors` (the endpoint the read-only table above targets does not
- * exist yet) so each row carries the UUID `POST /v1/visitors/{id}/verify` needs.
+ * `/v1/visitors` so each row carries the UUID required by the verification
+ * and visitor workflow endpoints.
  */
 const VisitorVerificationSection: React.FC = () => {
   const [rows, setRows] = useState<any[]>([]);
@@ -467,8 +468,8 @@ export const FoVisitorManagementPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [json, liveOccupancy] = await Promise.all([safeFetchJson('/api/v1/visitors'), visitorService.getOccupancy()]);
-      setVisitors(json?.data ?? []);
+      const [visitorLogs, liveOccupancy] = await Promise.all([visitorService.listVisitors(), visitorService.getOccupancy()]);
+      setVisitors(visitorLogs);
       setOccupancy(liveOccupancy);
     } catch (err: any) {
       setError(err?.message || 'Failed to load');
@@ -769,19 +770,11 @@ function qrDateTime(value: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-function cameraFailureMessage(error: unknown): string {
-  const name = error instanceof DOMException ? error.name : '';
-  if (name === 'NotAllowedError' || name === 'SecurityError') return 'Camera permission was denied. Allow camera access in the browser site settings, then try again.';
-  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') return 'No camera was detected on this device.';
-  if (name === 'NotReadableError' || name === 'TrackStartError') return 'The camera is already in use by another application or browser tab.';
-  if (name === 'OverconstrainedError' || name === 'ConstraintNotSatisfiedError') return 'The selected camera does not support the requested scan mode.';
-  return error instanceof Error && error.message ? error.message : 'Camera access was unavailable.';
-}
-
 export const QrCheckInPage: React.FC = () => {
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const controlsRef = React.useRef<IScannerControls | null>(null);
   const scanLockRef = React.useRef(false);
+  const manualTokenRef = React.useRef<HTMLInputElement>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
   const [cameraError, setCameraError] = useState('');
@@ -858,6 +851,7 @@ export const QrCheckInPage: React.FC = () => {
     } catch (cameraException) {
       stopCamera();
       setCameraError(cameraFailureMessage(cameraException));
+      manualTokenRef.current?.focus();
     } finally {
       setCameraStarting(false);
     }
@@ -877,8 +871,14 @@ export const QrCheckInPage: React.FC = () => {
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between gap-3"><div><h3 className="text-sm font-bold text-slate-900">Camera scanner</h3><p className="mt-1 text-xs text-slate-500">Current action: <span className="font-bold text-red-700">{scanMode === 'CHECK_IN' ? 'Check-In' : 'Check-Out'}</span></p></div>{cameraActive ? <button type="button" onClick={stopCamera} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"><XCircle className="h-4 w-4" />Stop camera</button> : <button type="button" onClick={() => void startCamera()} disabled={processing || cameraStarting} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-red-800 disabled:opacity-60">{cameraStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}{cameraStarting ? 'Starting camera...' : 'Start camera'}</button>}</div>
           <div className="relative aspect-video overflow-hidden rounded-xl bg-slate-950"><video ref={videoRef} className={cameraActive ? 'h-full w-full object-cover' : 'hidden'} autoPlay muted playsInline />{!cameraActive && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center text-white/60"><ScanLine className="h-10 w-10 text-white/40" /><p className="text-sm">{cameraStarting ? 'Starting camera...' : 'Camera is paused'}</p><p className="max-w-xs text-xs text-white/40">Start the camera or use the secure token fallback below.</p></div>}</div>
-          {cameraError && <div aria-live="polite" className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{cameraError} You can still use manual token entry.</span></div>}
-          <form onSubmit={(event) => { event.preventDefault(); void checkIn(manualToken); }} className="mt-5 flex flex-col gap-2 sm:flex-row"><input value={manualToken} onChange={(event) => setManualToken(event.target.value)} placeholder="Paste QR pass URL or token" className="min-w-0 flex-1 rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10" /><button type="submit" disabled={processing || !manualToken.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50">{processing ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4" />}{scanMode === 'CHECK_IN' ? 'Check in pass' : 'Check out pass'}</button></form>
+          {cameraError && <div role="alert" aria-live="assertive" className="mt-4 flex flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 sm:flex-row sm:items-center"><div className="flex min-w-0 flex-1 items-start gap-2"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{cameraError}</span></div><button type="button" onClick={() => manualTokenRef.current?.focus()} className="shrink-0 rounded-lg bg-amber-900 px-3 py-2 text-xs font-bold text-white hover:bg-amber-950">Enter token manually</button></div>}
+          <section id="manual-token-entry" aria-labelledby="manual-token-heading" className={`mt-5 rounded-2xl border-2 p-4 ${cameraError ? 'border-amber-300 bg-amber-50/60' : 'border-red-200 bg-red-50/40'}`}>
+            <div className="flex items-start gap-3"><div className="rounded-xl bg-white p-2 text-red-700 shadow-sm"><UserCheck className="h-5 w-5" /></div><div><h4 id="manual-token-heading" className="text-sm font-extrabold text-slate-900">Manual Token Entry</h4><p className="mt-1 text-xs leading-5 text-slate-600">Camera unavailable? Paste the guest pass URL or token to continue securely.</p></div></div>
+            <form onSubmit={(event) => { event.preventDefault(); void checkIn(manualToken); }} className="mt-4 flex flex-col gap-3 sm:flex-row">
+              <label className="min-w-0 flex-1"><span className="sr-only">Guest pass URL or token</span><input ref={manualTokenRef} value={manualToken} onChange={(event) => setManualToken(event.target.value)} placeholder="Paste QR pass URL or token" autoComplete="off" spellCheck={false} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10" /></label>
+              <button type="submit" disabled={processing || !manualToken.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-xs font-bold text-white shadow-sm hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50">{processing ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4" />}{scanMode === 'CHECK_IN' ? 'Check in pass' : 'Check out pass'}</button>
+            </form>
+          </section>
           {(error || processing) && <div className={`mt-4 flex items-start gap-2 rounded-xl border px-4 py-3 text-sm ${error ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-blue-200 bg-blue-50 text-blue-700'}`}>{error ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> : <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />}<span>{error || `Verifying pass and recording ${scanMode === 'CHECK_IN' ? 'check-in' : 'check-out'}...`}</span></div>}
         </section>
 
