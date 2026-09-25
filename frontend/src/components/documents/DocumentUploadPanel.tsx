@@ -80,7 +80,6 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
   const [result, setResult] = useState<DocumentSummary | null>(null);
   const [aiAnalysis, setAiAnalysis] = useState<AiAnalysisResult | null>(null);
   const [aiTitleLoading, setAiTitleLoading] = useState(false);
-  const [aiFallbackActive, setAiFallbackActive] = useState(false);
 
   const reset = () => {
     setFile(null);
@@ -90,7 +89,6 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
     setError(null);
     setAiAnalysis(null);
     setAiTitleLoading(false);
-    setAiFallbackActive(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -101,14 +99,12 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
     setFile(selected);
     setResult(null);
     setAiAnalysis(null);
-    setAiFallbackActive(false);
 
     if (selected && !validationError) {
       setAiTitleLoading(true);
       void documentService.suggestTitle(selected)
         .then((suggestion: any) => {
           setAiAnalysis(suggestion);
-          setAiFallbackActive(false);
           setError(null);
 
           const suggested = suggestion.suggested_title || suggestion.suggestedTitle;
@@ -119,8 +115,7 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
             setClassification(suggestion.classification as ClassificationLevel);
           }
         })
-        .catch((err) => {
-          setAiFallbackActive(true);
+        .catch(() => {
           setError('AI analysis is temporarily unavailable. You can continue entering the document information manually.');
         })
         .finally(() => setAiTitleLoading(false));
