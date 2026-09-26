@@ -5,7 +5,7 @@ import {
   RefreshCw, AlertCircle, Cpu,
   Download, Bell, Ban,
 } from 'lucide-react';
-import { fetchAnalytics } from '../../api/analyticsService';
+import { dashboardErrorMessage, loadDashboardAnalytics } from '../../api/dashboardData';
 import { securityService } from '../../api/securityService';
 import { loadBackups } from '../../api/adminService';
 import { notificationService, type AppNotification } from '../../api/notificationService';
@@ -14,8 +14,9 @@ import { OversightPanel } from '../oversight';
 import { useLiveActivities } from './useLiveActivities';
 import { SubsystemHealthGrid } from './SubsystemHealthGrid';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
-import type { DashboardMetrics, SecurityLog, BackupRecord } from '../../types';
+import type { AnalyticsData, DashboardMetrics, SecurityLog, BackupRecord } from '../../types';
 import { DashboardHero, DashboardMetricCard } from '../ui/DashboardPrimitives';
+import { EnterpriseOverview } from '../analytics/EnterpriseOverview';
 import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 
 export const SysAdminDashboard: React.FC = () => {
@@ -23,6 +24,7 @@ export const SysAdminDashboard: React.FC = () => {
   const user = useAuthStore((state) => state.user);
   const superAdministrator = isActorSuperAdmin(user);
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
+  const [overview, setOverview] = useState<NonNullable<AnalyticsData['enterprise']>['overview'] | null>(null);
   const [logs, setLogs] = useState<SecurityLog[]>([]);
   const [backups, setBackups] = useState<BackupRecord[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -37,29 +39,29 @@ export const SysAdminDashboard: React.FC = () => {
     setError(null);
     try {
       const [analytics, l, b, n] = await Promise.all([
-        fetchAnalytics({ preset: 'today' }),
+        loadDashboardAnalytics(superAdministrator),
         superAdministrator ? securityService.getLogs() : Promise.resolve([]),
         superAdministrator ? Promise.resolve([]) : loadBackups(),
         notificationService.getNotifications(),
       ]);
-      if (!analytics.operational) throw new Error('Operational analytics are unavailable for this role');
       const m: DashboardMetrics = {
         totalDocuments: 0,
         totalContracts: 0,
-        activeSessions: analytics.operational.activeSessions,
-        failedLoginAttempts: analytics.operational.failedEvents,
-        blockedIpsCount: analytics.operational.blockedIps,
-        activeAlertsCount: analytics.operational.activeSecurityAlerts,
+        activeSessions: analytics.security.activeSessions,
+        failedLoginAttempts: analytics.security.failedLoginAttempts,
+        blockedIpsCount: analytics.security.blockedIpsCount,
+        activeAlertsCount: analytics.security.activeAlertsCount,
         totalBackups: b.length,
         totalNotifications: n.length,
       };
       setMetrics(m);
+      setOverview(analytics.overview);
       setLogs(l);
       setBackups(b);
       setNotifications(n);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.warn('Dashboard backend request failed; response details were withheld.');
-      setError(err?.message || 'Failed to load system data');
+      setError(dashboardErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -75,7 +77,7 @@ export const SysAdminDashboard: React.FC = () => {
     return (
       <div className="card-stat p-6 text-center space-y-4">
         <AlertCircle className="w-12 h-12 text-rose-400 mx-auto" />
-        <h3 className="text-lg font-bold text-slate-900">Database Connection Error</h3>
+        <h3 className="text-lg font-bold text-slate-900">Dashboard unavailable</h3>
         <p className="text-sm text-slate-500">{error}</p>
         <button onClick={() => setRetry(r => r + 1)} className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold inline-flex items-center space-x-2">
           <RefreshCw className="w-4 h-4" /><span>Retry</span>
@@ -101,15 +103,15 @@ export const SysAdminDashboard: React.FC = () => {
     : 'Infrastructure, Integration & Platform Monitoring';
   const dashboardCards = superAdministrator
     ? [
-        { label: 'Active Users', value: onlineCount, icon: Users, color: onlineCount > 0 ? 'text-emerald-600' : 'text-slate-400', sub: `${onlineCount} users online · Peak today: ${peakToday}`, path: '/security', pulse: true },
+        { label: 'Online Users', value: onlineCount, icon: Users, color: onlineCount > 0 ? 'text-emerald-600' : 'text-slate-400', sub: `${onlineCount} users online · Peak today: ${peakToday}`, path: '/security', pulse: true },
         { label: 'Active Sessions', value: metrics.activeSessions, icon: Activity, color: 'text-emerald-600', sub: 'Authenticated sessions', path: '/security/audit-logs' },
         { label: 'Security Alerts', value: metrics.activeAlertsCount, icon: Shield, color: metrics.activeAlertsCount > 0 ? 'text-rose-500' : 'text-emerald-600', sub: 'Open security alerts', path: '/security' },
-        { label: 'Failed Logins', value: metrics.failedLoginAttempts, icon: Shield, color: metrics.failedLoginAttempts > 0 ? 'text-amber-500' : 'text-emerald-600', sub: 'Failed authentication attempts', path: '/security' },
+        { label: 'Failed Logins', value: metrics.failedLoginAttempts, icon: Shield, color: metrics.failedLoginAttempts > 0 ? 'text-amber-500' : 'text-emerald-600', sub: 'Failed attempts for admin/user accounts', path: '/security' },
         { label: 'Blocked IPs', value: metrics.blockedIpsCount, icon: Ban, color: metrics.blockedIpsCount > 0 ? 'text-amber-500' : 'text-emerald-600', sub: 'Active network blocks', path: '/security' },
         { label: 'Notifications', value: unreadNotifs, icon: Bell, color: unreadNotifs > 0 ? 'text-rose-500' : 'text-slate-400', sub: `${notifications.length} recipient-scoped`, path: '/admin/notifications' },
       ]
     : [
-        { label: 'Active Users', value: onlineCount, icon: Users, color: onlineCount > 0 ? 'text-emerald-600' : 'text-slate-400', sub: `${onlineCount} users online · Peak today: ${peakToday}`, path: '/admin/sessions', pulse: true },
+        { label: 'Online Users', value: onlineCount, icon: Users, color: onlineCount > 0 ? 'text-emerald-600' : 'text-slate-400', sub: `${onlineCount} users online · Peak today: ${peakToday}`, path: '/admin/sessions', pulse: true },
         { label: 'Active Sessions', value: metrics.activeSessions, icon: Cpu, color: metrics.activeSessions > 0 ? 'text-emerald-600' : 'text-slate-400', sub: 'Authenticated platform sessions', path: '/admin/sessions' },
         { label: 'Backup Status', value: backupStatus, icon: Download, color: backupVerified ? 'text-emerald-600' : 'text-amber-500', sub: `Last: ${lastBackupTime}`, path: '/admin/backup' },
         { label: 'Security Alerts', value: metrics.activeAlertsCount, icon: Shield, color: metrics.activeAlertsCount > 0 ? 'text-rose-500' : 'text-emerald-600', sub: 'Open security alerts', path: '/admin/system-health' },
@@ -120,6 +122,7 @@ export const SysAdminDashboard: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {error && <p role="alert" className="card-stat p-4 text-rose-600">{error} Displaying the last successful update.</p>}
       <DashboardHero title={dashboardTitle} subtitle={dashboardSubtitle} actions={
           <button onClick={() => setRetry(r => r + 1)} className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition text-slate-400 hover:text-slate-700" title="Refresh from database">
             <RefreshCw className="w-4 h-4" />
@@ -140,6 +143,8 @@ export const SysAdminDashboard: React.FC = () => {
           />
         ))}
       </div>
+
+      {overview && <EnterpriseOverview overview={overview} periodLabel="Today (Asia/Manila)" />}
 
       {superAdministrator && <OversightPanel />}
 

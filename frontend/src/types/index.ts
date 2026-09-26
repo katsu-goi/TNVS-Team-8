@@ -262,6 +262,25 @@ export interface RuntimeHealthCheck {
 }
 
 export interface AnalyticsData {
+  enterprise?: {
+    overview: {
+      currentState: {
+        activeUsers: number;
+        openRequests: number;
+        facilities: number;
+        documents: number;
+        activeContracts: number;
+        openLegalMatters: number;
+        openComplianceIssues: number;
+      };
+      selectedPeriod: {
+        recordedActivity: number;
+        auditEvents: number;
+        visitors: number;
+        documentsUploaded: number;
+      };
+    };
+  };
   scope: string;
   timezone: 'Asia/Manila';
   generatedAt: string;

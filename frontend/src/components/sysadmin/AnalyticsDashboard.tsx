@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, BellRing, Clock3, Database, Radio, Server, Workflow } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { exportAnalyticsCsv, fetchAnalytics } from '../../api/analyticsService';
+import { dashboardErrorMessage } from '../../api/dashboardData';
+import { EnterpriseOverview } from '../analytics/EnterpriseOverview';
 import { useAuthStore } from '../../stores/authStore';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import type { AnalyticsData, RuntimeHealthCheck } from '../../types';
@@ -39,8 +41,14 @@ export const AnalyticsPage: React.FC = () => {
     if (validationError) { setLoading(false); return; }
     setLoading(true);
     setError(null);
-    try { setData(await fetchAnalytics(query)); }
-    catch (requestError: any) { setError(requestError?.response?.data?.message || requestError?.message || 'Unable to load operational analytics.'); }
+    try {
+      const result = await fetchAnalytics(query);
+      if (result.scope === 'SUPER_ADMIN' ? !result.enterprise?.overview : !result.operational) {
+        throw new Error('Invalid analytics response');
+      }
+      setData(result);
+    }
+    catch (requestError: unknown) { setError(dashboardErrorMessage(requestError)); }
     finally { setLoading(false); }
   }, [query, validationError]);
 
@@ -93,10 +101,11 @@ export const AnalyticsPage: React.FC = () => {
 
   return (
     <main className="analytics-report space-y-6">
-      <AnalyticsPageHeader title="System Operational Analytics" subtitle="Technical health only · authorized system scope · Asia/Manila" range={range} customFrom={customFrom} customTo={customTo} validationError={validationError} loading={loading} exportingCsv={exportingCsv} exportingPdf={exportingPdf} onRangeChange={setRange} onCustomFromChange={setCustomFrom} onCustomToChange={setCustomTo} onRefresh={() => setRetry((value) => value + 1)} onExportCsv={() => void exportCsv()} onExportPdf={() => void exportPdf()} />
+      <AnalyticsPageHeader title={data.enterprise ? 'Enterprise Analytics' : 'System Operational Analytics'} subtitle="Authorized analytics · Asia/Manila" range={range} customFrom={customFrom} customTo={customTo} validationError={validationError} loading={loading} exportingCsv={exportingCsv} exportingPdf={exportingPdf} onRangeChange={setRange} onCustomFromChange={setCustomFrom} onCustomToChange={setCustomTo} onRefresh={() => setRetry((value) => value + 1)} onExportCsv={() => void exportCsv()} onExportPdf={() => void exportPdf()} />
       {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">Refresh failed: {error}. Showing the last successful response.</div>}
       {loading && <LoadingState className="min-h-16" label="Refreshing operational analytics..." />}
 
+      {data.enterprise ? <EnterpriseOverview overview={data.enterprise.overview} periodLabel={`${formatManilaDate(data.period.from)} – ${formatManilaInclusiveEnd(data.period.toExclusive)} (Asia/Manila)`} /> : <>
       <section aria-label="Operational KPI summary" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <AnalyticsMetricCard label="Failed operational events" value={operational?.failedEvents ?? 0} sub={trendText} icon={AlertCircle} color={(operational?.failedEvents ?? 0) > 0 ? 'text-rose-600' : 'text-emerald-600'} />
         <AnalyticsMetricCard label="Active sessions" value={operational?.activeSessions ?? 0} sub="Current authoritative session state" icon={Clock3} color="text-blue-600" />
@@ -135,6 +144,7 @@ export const AnalyticsPage: React.FC = () => {
       </section>
 
       <section className="card-stat p-5"><h2 className="font-heading font-bold text-slate-950">Operational Data Summary</h2><p className="mt-1 text-xs text-slate-500">Exact authorized totals returned for this range.</p><dl className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4"><div><dt className="text-slate-500">Blocked IPs</dt><dd className="font-bold">{operational?.blockedIps ?? 0}</dd></div><div><dt className="text-slate-500">Active security alerts</dt><dd className="font-bold">{operational?.activeSecurityAlerts ?? 0}</dd></div><div><dt className="text-slate-500">Unread notifications</dt><dd className="font-bold">{operational?.unreadNotifications ?? 0}</dd></div><div><dt className="text-slate-500">Generated</dt><dd className="font-bold">{formatManilaDateTime(data.generatedAt)}</dd></div></dl></section>
+      </>}
     </main>
   );
 };

@@ -1,5 +1,6 @@
 import type { AnalyticsData, AnalyticsTrend, RuntimeHealthCheck, User } from '../../types';
 import type { PdfReportDefinition } from '../../utils/pdfReport';
+import { enterpriseMetrics } from './EnterpriseOverview';
 import { formatManilaDate, formatManilaDateTime, formatManilaInclusiveEnd } from './analyticsUtils';
 
 type DailyValue = { date: string; value: number };
@@ -146,6 +147,25 @@ export function facilitiesAnalyticsPdfReport(
 }
 
 export function systemAnalyticsPdfReport(data: AnalyticsData, user: User | null): PdfReportDefinition {
+  if (data.scope === 'SUPER_ADMIN') {
+    if (!data.enterprise?.overview) throw new Error('Enterprise analytics are missing');
+    const metrics = enterpriseMetrics(data.enterprise.overview);
+    return {
+      fileName: `enterprise-analytics-${periodFilePart(data)}.pdf`,
+      title: 'Enterprise Analytics',
+      reportType: 'ENTERPRISE_ANALYTICS_GOVERNANCE',
+      generatedAt: data.generatedAt,
+      generatedBy: actorName(user),
+      generatedByRole: data.scope,
+      periodLabel: periodLabel(data),
+      summary: metrics.current.map((metric) => ({ ...metric, detail: 'Current state' })),
+      tables: [{
+        title: 'Selected Period (Asia/Manila)',
+        columns: [{ label: 'Metric' }, { label: 'Value', align: 'right' }],
+        rows: metrics.period.map((metric) => [metric.label, metric.value]),
+      }],
+    };
+  }
   const operational = data.operational;
   const checks: RuntimeHealthCheck[] = data.systemHealth?.checks ?? [];
   const trend = operational?.failedEventsTrend;
