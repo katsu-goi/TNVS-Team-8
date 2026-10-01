@@ -118,6 +118,23 @@ describe('DocumentUploadPanel Verification', () => {
     expect(screen.getByText('No existing authorized document matched this upload.')).toBeInTheDocument();
   });
 
+  it('confirms storage and manual review when upload succeeds while the AI circuit is open', async () => {
+    vi.mocked(documentService.suggestTitle).mockRejectedValueOnce(new Error('AI unavailable'));
+    vi.mocked(documentService.uploadDocument).mockResolvedValueOnce({
+      id: 'stored-document', title: 'Facilities Continuity Record 2026', fileName: 'continuity.pdf',
+      status: 'PENDING_REVIEW', classificationLevel: 'INTERNAL', aiReviewRequired: true,
+      aiProcessing: { status: 'TEMPORARILY_UNAVAILABLE', circuitState: 'OPEN', retryAfterSeconds: 42 },
+      duplicateDetection: { confidence: 'UNAVAILABLE', status: 'UNAVAILABLE', checkedAt: '2026-10-01T00:00:00Z', detectorVersion: 'v1', contentCheck: 'NOT_RUN_OCR_UNAVAILABLE', message: 'No duplicate conclusion was made.', matches: [] },
+    } as any);
+    render(<DocumentUploadPanel />);
+    fireEvent.change(screen.getByLabelText(/File/i, { selector: 'input' }), { target: { files: [new File(['content'], 'continuity.pdf', { type: 'application/pdf' })] } });
+    const titleInput = screen.getByLabelText(/Title/i);
+    fireEvent.change(titleInput, { target: { value: 'Facilities Continuity Record 2026' } });
+    fireEvent.click(screen.getByRole('button', { name: /Upload & Analyze/i }));
+    expect(await screen.findByText('Document Stored for Manual Review')).toBeInTheDocument();
+    expect(screen.getByText(/retry AI processing in about 42 seconds/i)).toBeInTheDocument();
+  });
+
   it('renders ranked matches, comparison, and records Continue as New without deleting anything', async () => {
     vi.mocked(documentService.suggestTitle).mockResolvedValueOnce({ suggestedTitle: 'Maintenance Memorandum 2026' } as any);
     vi.mocked(documentService.reviewDuplicate).mockResolvedValueOnce({ documentId: 'source', decision: 'CONTINUE_AS_NEW', reviewedAt: '2026-10-01', reviewedMatches: 2 });

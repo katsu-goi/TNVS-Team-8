@@ -7,6 +7,7 @@ import { writeAudit } from "../_shared/lockout.ts";
 import { resolveClientIp } from "../_shared/ip.ts";
 import { extractDocumentContent, DocumentExtractionError, SUPPORTED_DOCUMENT_EXTENSIONS } from "../_shared/document-content.ts";
 import { analyzeContractContent, ContractAiError } from "../_shared/contract-ai.ts";
+import { AiCircuitOpenError, circuitRetryHeaders } from "../_shared/ai-circuit-breaker.ts";
 
 const db = adminDb();
 const BUCKET = "documents";
@@ -99,9 +100,19 @@ function analysisDto(row: Row) {
 }
 
 function errorResponse(error: unknown): Response {
+  if (error instanceof AiCircuitOpenError) {
+    return jsonResponse({
+      ...fail(error.message, error.code),
+      data: { circuitState: error.circuitState, retryAfterSeconds: error.retryAfterSeconds },
+    }, 503, circuitRetryHeaders(error));
+  }
   if (error instanceof ContractAiError || error instanceof DocumentExtractionError) {
+    const unavailable = error instanceof ContractAiError && [
+      "AI_PROVIDER_OFFLINE", "AI_PROVIDER_UNAVAILABLE", "AI_CREDENTIAL_UNAVAILABLE",
+      "AI_PROVIDER_REQUEST_FAILED", "CONTRACT_AI_DISABLED",
+    ].includes(error.code);
     const status = ["CONTRACT_FILE_NOT_FOUND", "FILE_NOT_FOUND"].includes(error.code) ? 404
-      : error.code === "AI_RESPONSE_INVALID" || error.code === "AI_PROVIDER_REQUEST_FAILED" ? 502 : 422;
+      : unavailable ? 503 : error.code === "AI_RESPONSE_INVALID" ? 502 : 422;
     return jsonResponse(fail(error.message, error.code), status);
   }
   throw error;

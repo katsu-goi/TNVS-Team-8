@@ -427,12 +427,38 @@ This is the single largest realtime change but it is well-scoped and partially b
 
 # Phase 8 - AI Provider
 
-## Current reality (important)
+## Historical JVM baseline
 - **OCR is a stub** (`OcrService` returns a canned string). **Classification is
   keyword matching. Contract analysis is hardcoded mocks.** Only `/v1/ai/chat` and the
   reservation AI endpoints make real LLM calls (blocking, no timeout).
 - AI provider keys are AES-256-GCM encrypted at rest (`ai_providers.encrypted_api_key`,
   master key = `AI_API_KEY_ENCRYPTION_KEY` env), never serialized to the frontend.
+
+## Current Edge implementation addendum (October 2026)
+
+The migrated Edge implementation now performs real configured-provider document
+classification and contract analysis. External calls use one shared, persistent
+provider/capability circuit breaker:
+
+- states are `CLOSED`, `OPEN`, and `HALF_OPEN`;
+- defaults are 3 consecutive failed operations, a 60-second open cooldown, a
+  20-second request timeout, and 2 retries with exponential backoff and jitter;
+- configuration is stored with `ai_providers` and bounded server-side;
+- current state is stored in `ai_provider_circuit_breakers`; service-role-only
+  PostgreSQL RPCs lock each row and grant exactly one half-open probe;
+- network errors, timeouts, HTTP 429, transient HTTP statuses, and upstream 5xx
+  contribute; validation, authentication/authorization, unsupported-input, and
+  business-rule failures do not;
+- circuits are isolated by provider and capability. An explicitly configured
+  default provider remains the only cross-provider fallback and is checked through
+  its own circuit;
+- an open circuit returns HTTP 503 plus `Retry-After`, without calling the provider;
+- AI failure does not delete an uploaded document. Storage, embedded-text
+  extraction, and deterministic duplicate checks continue, while the document is
+  queued for manual classification. An unavailable duplicate check is reported as
+  `UNAVAILABLE`, never as `NO_DUPLICATE`;
+- provider credentials, prompts, OCR text, document contents, and raw upstream
+  responses are excluded from circuit state and operational audit entries.
 
 ## Serverless placement
 

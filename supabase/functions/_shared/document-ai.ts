@@ -1,4 +1,10 @@
 import { assertSafeProviderUrl } from "./provider-url.ts";
+import {
+  AiCircuitOpenError,
+  AiProviderRequestError,
+  executeAiProviderCall,
+  normalizeAiCircuitConfig,
+} from "./ai-circuit-breaker.ts";
 
 type DatabaseClient = any;
 
@@ -58,7 +64,7 @@ async function decryptCredential(ciphertext: string): Promise<string> {
     rawKey.fill(0);
     return new TextDecoder().decode(plaintext);
   } catch {
-    throw new DocumentAiError("AI_CREDENTIAL_UNAVAILABLE", "The configured AI provider credential cannot be decrypted server-side.");
+    throw new DocumentAiError("CREDENTIAL_DECRYPTION_FAILED", "AI analysis is temporarily unavailable. You can continue entering the document information manually.");
   }
 }
 
@@ -67,14 +73,14 @@ async function loadCategories(db: DatabaseClient): Promise<BusinessCategory[]> {
     .select("id,name,description")
     .eq("is_deleted", false)
     .order("name");
-  if (error) throw new DocumentAiError("CATEGORY_LOOKUP_FAILED", "Document categories could not be loaded.");
+  if (error) throw new DocumentAiError("CATEGORY_LOOKUP_FAILED", "AI analysis is temporarily unavailable. You can continue entering the document information manually.");
   const categories = ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
     id: String(row.id),
     name: String(row.name),
     description: row.description == null ? null : String(row.description),
   }));
   if (categories.length < 2) {
-    throw new DocumentAiError("DOCUMENT_CATEGORIES_REQUIRED", "At least two active document categories are required for AI classification.");
+    throw new DocumentAiError("DOCUMENT_CATEGORIES_REQUIRED", "AI analysis is temporarily unavailable. You can continue entering the document information manually.");
   }
   return categories;
 }
@@ -85,48 +91,55 @@ async function loadConfiguredProvider(db: DatabaseClient) {
     .eq("module_key", "mod-1")
     .eq("is_deleted", false)
     .maybeSingle();
-  if (moduleError) throw new DocumentAiError("AI_CONFIGURATION_FAILED", "Document AI configuration could not be loaded.");
+  if (moduleError) throw new DocumentAiError("AI_CONFIGURATION_FAILED", "AI analysis is temporarily unavailable. You can continue entering the document information manually.");
   if (!moduleConfig) {
     throw new DocumentAiError(
       "DOCUMENT_AI_NOT_CONFIGURED",
-      "Document Classification & OCR requires an explicit module configuration.",
+      "AI analysis is temporarily unavailable. You can continue entering the document information manually.",
     );
   }
   if (moduleConfig.enabled === false) {
-    throw new DocumentAiError("DOCUMENT_AI_DISABLED", "Document Classification & OCR is disabled in AI Services.");
+    throw new DocumentAiError("PROVIDER_DISABLED", "AI analysis is temporarily unavailable. You can continue entering the document information manually.");
   }
   const providerId = String(moduleConfig.provider_id ?? "").trim();
   const model = String(moduleConfig.model ?? "").trim();
   if (!providerId || !model) {
     throw new DocumentAiError(
       "DOCUMENT_AI_NOT_CONFIGURED",
-      "Document Classification & OCR requires an explicitly assigned provider and model.",
+      "AI analysis is temporarily unavailable. You can continue entering the document information manually.",
     );
   }
 
   const { data: provider, error } = await db.from("ai_providers")
-    .select("id,name,provider_type,default_model,encrypted_api_key,base_url,endpoint,status,enabled,is_default")
+    .select("id,name,provider_type,default_model,encrypted_api_key,base_url,endpoint,status,enabled,is_default,circuit_failure_threshold,circuit_open_cooldown_seconds,request_timeout_ms,max_retries,retry_base_delay_ms")
     .eq("id", providerId)
     .eq("is_deleted", false)
     .maybeSingle();
-  if (error) throw new DocumentAiError("AI_PROVIDER_UNAVAILABLE", "AI provider configuration could not be loaded.");
+  if (error) throw new DocumentAiError("PROVIDER_UNREACHABLE", "AI analysis is temporarily unavailable. You can continue entering the document information manually.");
   if (!provider) {
     throw new DocumentAiError(
       "DOCUMENT_AI_NOT_CONFIGURED",
-      "The provider explicitly assigned to Document Classification & OCR no longer exists.",
+      "AI analysis is temporarily unavailable. You can continue entering the document information manually.",
     );
   }
-  const providerOperational = provider.enabled === true
-    && String(provider.status ?? "").toUpperCase() === "CONNECTED"
-    && String(provider.encrypted_api_key ?? "").trim() !== "";
-  if (!providerOperational) {
-    throw new DocumentAiError(
-      "AI_PROVIDER_OFFLINE",
-      "The provider explicitly assigned to Document Classification & OCR is not operational.",
-    );
+
+  if (provider.enabled === false) {
+    throw new DocumentAiError("PROVIDER_DISABLED", "AI analysis is temporarily unavailable. You can continue entering the document information manually.");
   }
-  const encrypted = String(provider.encrypted_api_key ?? "");
-  if (!encrypted) throw new DocumentAiError("AI_CREDENTIAL_UNAVAILABLE", "The configured AI provider has no encrypted credential.");
+  if (String(provider.status ?? "").toUpperCase() === "OFFLINE") {
+    throw new DocumentAiError("PROVIDER_OFFLINE", "AI analysis is temporarily unavailable. You can continue entering the document information manually.");
+  }
+
+  const encrypted = String(provider.encrypted_api_key ?? "").trim();
+  if (!encrypted) throw new DocumentAiError("CREDENTIAL_MISSING", "AI analysis is temporarily unavailable. You can continue entering the document information manually.");
+
+  let decryptedCredential: string;
+  try {
+    decryptedCredential = await decryptCredential(encrypted);
+  } catch {
+    throw new DocumentAiError("CREDENTIAL_DECRYPTION_FAILED", "AI analysis is temporarily unavailable. You can continue entering the document information manually.");
+  }
+
   return {
     id: String(provider.id),
     name: String(provider.name),
@@ -134,7 +147,14 @@ async function loadConfiguredProvider(db: DatabaseClient) {
     model,
     baseUrl: provider.base_url == null ? null : String(provider.base_url),
     endpoint: provider.endpoint == null ? null : String(provider.endpoint),
-    credential: await decryptCredential(encrypted),
+    credential: decryptedCredential,
+    circuitConfig: normalizeAiCircuitConfig({
+      failureThreshold: provider.circuit_failure_threshold,
+      openCooldownSeconds: provider.circuit_open_cooldown_seconds,
+      requestTimeoutMs: provider.request_timeout_ms,
+      maxRetries: provider.max_retries,
+      retryBaseDelayMs: provider.retry_base_delay_ms,
+    }),
   };
 }
 
@@ -299,58 +319,55 @@ export async function classifyDocumentContent(
   });
 
   let response: Response;
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const controller = new AbortController();
-    timeout = setTimeout(() => controller.abort(), 55_000);
-    const credential = provider.credential.trim();
-    const requestHeaders: Record<string, string> = {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Authorization: `Bearer ${credential}`,
-      "User-Agent": "Photonic-Omega-Document-AI/2.0",
-    };
-    const requestBody: Record<string, unknown> = {
-      model: provider.model,
-      // Category scoring includes every configured category plus grounded
-      // evidence. Longer contracts can legitimately need more than 1,200
-      // output tokens; truncating the JSON must fail closed, but should not be
-      // caused by an unnecessarily small response budget.
-      max_tokens: 2_000,
-      stream: false,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-    };
-    const normalizedModel = provider.model.toLowerCase();
-    if (normalizedModel.includes("nemotron") || normalizedModel.includes("deepseek")) {
-      requestBody.chat_template_kwargs = { enable_thinking: false };
-    } else if (normalizedModel.includes("gpt-oss")) {
-      requestBody.reasoning_effort = "low";
-    }
-    if (isAgentRouterBase(provider.baseUrl)) requestHeaders["x-api-key"] = credential;
-    else requestBody.temperature = 0;
-    const endpoint = endpointFor(provider);
-    await assertSafeProviderUrl(endpoint);
-    response = await fetch(endpoint, {
-      method: "POST",
-      headers: requestHeaders,
-      body: JSON.stringify(requestBody),
-      signal: controller.signal,
-      redirect: "manual",
-    });
-    if (response.status >= 300 && response.status < 400) {
-      throw new Error("Provider redirects are not accepted");
-    }
-  } catch {
-    throw new DocumentAiError("AI_PROVIDER_REQUEST_FAILED", "The configured AI provider could not process the document.");
-  } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
+  const credential = provider.credential.trim();
+  const requestHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    Authorization: `Bearer ${credential}`,
+    "User-Agent": "Photonic-Omega-Document-AI/3.0",
+  };
+  const requestBody: Record<string, unknown> = {
+    model: provider.model,
+    max_tokens: 2_000,
+    stream: false,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+  };
+  const normalizedModel = provider.model.toLowerCase();
+  if (normalizedModel.includes("nemotron") || normalizedModel.includes("deepseek")) {
+    requestBody.chat_template_kwargs = { enable_thinking: false };
+  } else if (normalizedModel.includes("gpt-oss")) {
+    requestBody.reasoning_effort = "low";
   }
-  if (!response.ok) {
-    throw new DocumentAiError("AI_PROVIDER_REQUEST_FAILED", `The configured AI provider rejected document processing (HTTP ${response.status}).`);
+  if (isAgentRouterBase(provider.baseUrl)) requestHeaders["x-api-key"] = credential;
+  else requestBody.temperature = 0;
+  const endpoint = endpointFor(provider);
+  await assertSafeProviderUrl(endpoint);
+  try {
+    response = await executeAiProviderCall({
+      db,
+      providerId: provider.id,
+      capability: "document-classification",
+      config: provider.circuitConfig,
+      operation: async ({ signal }) => {
+        const providerResponse = await fetch(endpoint, {
+          method: "POST", headers: requestHeaders, body: JSON.stringify(requestBody), signal, redirect: "manual",
+        });
+        if (providerResponse.status >= 300 && providerResponse.status < 400) {
+          throw new AiProviderRequestError("PROVIDER_REDIRECT_REJECTED", "Provider redirects are not accepted.", providerResponse.status);
+        }
+        if (!providerResponse.ok) {
+          throw new AiProviderRequestError(`PROVIDER_HTTP_${providerResponse.status}`, "The provider rejected document processing.", providerResponse.status);
+        }
+        return providerResponse;
+      },
+    });
+  } catch (error) {
+    if (error instanceof AiCircuitOpenError) throw error;
+    throw new DocumentAiError("AI_PROVIDER_REQUEST_FAILED", "The configured AI provider could not process the document.");
   }
   const responseBody = await response.json().catch(() => null) as Record<string, unknown> | null;
   const choices = Array.isArray(responseBody?.choices) ? responseBody?.choices as Array<Record<string, unknown>> : [];

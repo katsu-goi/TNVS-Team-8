@@ -2,7 +2,7 @@ export const DOCUMENT_DUPLICATE_DETECTOR_VERSION = "hirna-document-duplicate-v1"
 export const MIN_MEANINGFUL_OCR_CHARACTERS = 80;
 export const MAX_DUPLICATE_MATCHES = 5;
 
-export type DuplicateConfidence = "EXACT" | "HIGH_CONFIDENCE" | "POSSIBLE_DUPLICATE" | "NO_DUPLICATE";
+export type DuplicateConfidence = "EXACT" | "HIGH_CONFIDENCE" | "POSSIBLE_DUPLICATE" | "NO_DUPLICATE" | "UNAVAILABLE";
 export type DuplicateMatchType =
   | "EXACT_FILE_DUPLICATE"
   | "EXACT_OCR_DUPLICATE"
@@ -48,7 +48,7 @@ export type DuplicateMatch = {
   effectiveDate: string | null;
   versionNumber: string | number | null;
   matchType: DuplicateMatchType;
-  confidence: Exclude<DuplicateConfidence, "NO_DUPLICATE">;
+  confidence: Exclude<DuplicateConfidence, "NO_DUPLICATE" | "UNAVAILABLE">;
   textSimilarityPercent: number | null;
   reasons: string[];
   ocrExcerpt: string | null;
@@ -56,7 +56,7 @@ export type DuplicateMatch = {
 
 export type DuplicateDetectionResult = {
   confidence: DuplicateConfidence;
-  status: "EXACT" | "HIGH_CONFIDENCE" | "POSSIBLE_DUPLICATE" | "NO_DUPLICATE";
+  status: DuplicateConfidence;
   checkedAt: string;
   detectorVersion: string;
   contentCheck: "COMPLETE" | "NOT_RUN_OCR_UNAVAILABLE" | "NOT_RUN_INSUFFICIENT_TEXT";
@@ -218,7 +218,7 @@ function classifyCandidate(source: DuplicateDocumentSignal, candidate: Duplicate
   const titleScore = titleSimilarity(source.title, candidate.title);
   const reasons: string[] = [];
   let matchType: DuplicateMatchType;
-  let confidence: Exclude<DuplicateConfidence, "NO_DUPLICATE">;
+  let confidence: Exclude<DuplicateConfidence, "NO_DUPLICATE" | "UNAVAILABLE">;
 
   if (sameFile) {
     matchType = "EXACT_FILE_DUPLICATE";

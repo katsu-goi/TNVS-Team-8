@@ -1,4 +1,11 @@
 import { assertSafeProviderUrl } from "./provider-url.ts";
+import {
+  AiCircuitOpenError,
+  AiProviderRequestError,
+  executeAiProviderCall,
+  normalizeAiCircuitConfig,
+  type AiCircuitConfig,
+} from "./ai-circuit-breaker.ts";
 
 type DatabaseClient = any;
 
@@ -46,6 +53,7 @@ type ConfiguredProvider = {
   baseUrl: string | null;
   endpoint: string | null;
   credential: string;
+  circuitConfig: AiCircuitConfig;
 };
 
 const ALLOWED_CLAUSE_TYPES = new Set([
@@ -107,13 +115,13 @@ async function loadConfiguredProvider(db: DatabaseClient): Promise<ConfiguredPro
   }
 
   const { data: provider, error } = await db.from("ai_providers")
-    .select("id,name,provider_type,encrypted_api_key,base_url,endpoint,status,enabled")
+    .select("id,name,provider_type,encrypted_api_key,base_url,endpoint,status,enabled,circuit_failure_threshold,circuit_open_cooldown_seconds,request_timeout_ms,max_retries,retry_base_delay_ms")
     .eq("id", providerId).eq("is_deleted", false).maybeSingle();
   if (error) throw new ContractAiError("AI_PROVIDER_UNAVAILABLE", "Contract AI provider configuration could not be loaded.");
   if (!provider) {
     throw new ContractAiError("CONTRACT_AI_NOT_CONFIGURED", "The provider assigned to Contract AI no longer exists.");
   }
-  if (provider.enabled !== true || String(provider.status ?? "").toUpperCase() !== "CONNECTED"
+  if (provider.enabled !== true || String(provider.status ?? "").toUpperCase() === "OFFLINE"
     || String(provider.encrypted_api_key ?? "").trim() === "") {
     throw new ContractAiError("AI_PROVIDER_OFFLINE", "The provider assigned to Contract AI is not operational.");
   }
@@ -125,6 +133,13 @@ async function loadConfiguredProvider(db: DatabaseClient): Promise<ConfiguredPro
     baseUrl: provider.base_url == null ? null : String(provider.base_url),
     endpoint: provider.endpoint == null ? null : String(provider.endpoint),
     credential: await decryptCredential(String(provider.encrypted_api_key)),
+    circuitConfig: normalizeAiCircuitConfig({
+      failureThreshold: provider.circuit_failure_threshold,
+      openCooldownSeconds: provider.circuit_open_cooldown_seconds,
+      requestTimeoutMs: provider.request_timeout_ms,
+      maxRetries: provider.max_retries,
+      retryBaseDelayMs: provider.retry_base_delay_ms,
+    }),
   };
 }
 
@@ -402,7 +417,7 @@ export async function analyzeContractContent(
   const input = content.slice(0, 60_000);
   const selectedModel = options?.modelOverride?.trim() || provider.model;
   const maxAttempts = Math.max(1, Math.min(2, Math.trunc(options?.maxAttempts ?? 2)));
-  const timeoutMs = Math.max(10_000, Math.min(120_000, Math.trunc(options?.timeoutMs ?? 55_000)));
+  const timeoutMs = Math.max(1_000, Math.min(120_000, Math.trunc(options?.timeoutMs ?? provider.circuitConfig.requestTimeoutMs)));
   const maxOutputTokens = Math.max(800, Math.min(3_200, Math.trunc(options?.maxOutputTokens ?? 2_000)));
   const systemPrompt = [
     "/no_think",
@@ -444,8 +459,6 @@ export async function analyzeContractContent(
   let lastError: ContractAiError | null = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let response: Response;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
     const headers: Record<string, string> = {
       "Content-Type": "application/json", Accept: "application/json",
       Authorization: `Bearer ${provider.credential}`, "User-Agent": "Photonic-Omega-Contract-AI/3.0",
@@ -469,40 +482,33 @@ export async function analyzeContractContent(
     try {
       const endpoint = endpointFor(provider);
       await assertSafeProviderUrl(endpoint);
-      response = await fetch(endpoint, {
-        method: "POST", headers, body: JSON.stringify(body), signal: controller.signal, redirect: "manual",
+      response = await executeAiProviderCall({
+        db,
+        providerId: provider.id,
+        capability: "contract-analysis",
+        config: { ...provider.circuitConfig, requestTimeoutMs: timeoutMs },
+        operation: async ({ signal }) => {
+          const providerResponse = await fetch(endpoint, {
+            method: "POST", headers, body: JSON.stringify(body), signal, redirect: "manual",
+          });
+          if (providerResponse.status >= 300 && providerResponse.status < 400) {
+            throw new AiProviderRequestError("PROVIDER_REDIRECT_REJECTED", "Provider redirects are not accepted.", providerResponse.status);
+          }
+          if (!providerResponse.ok) {
+            throw new AiProviderRequestError(`PROVIDER_HTTP_${providerResponse.status}`, "The provider rejected contract analysis.", providerResponse.status);
+          }
+          return providerResponse;
+        },
       });
-      if (response.status >= 300 && response.status < 400) {
-        throw new Error("Provider redirects are not accepted");
-      }
     } catch (error) {
+      if (error instanceof AiCircuitOpenError) throw error;
       const timedOut = error instanceof DOMException && error.name === "AbortError";
       lastError = new ContractAiError(
         "AI_PROVIDER_REQUEST_FAILED",
         timedOut ? "The configured provider timed out during contract analysis." : "The configured provider network request failed.",
         "NETWORK_TIMEOUT",
-        true,
+        false,
       );
-      if (attempt < maxAttempts) continue;
-      throw lastError;
-    } finally {
-      clearTimeout(timer);
-    }
-
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => "");
-      const providerDetail = cleanText(errorBody, 400).replace(/(?:sk|key|token)[-_ ]?[A-Za-z0-9._-]{8,}/gi, "[REDACTED]");
-      const failureClass: ContractAiFailureClass = response.status === 429 ? "RATE_LIMIT"
-        : response.status >= 500 ? "PROVIDER_5XX"
-        : [400, 404, 422].includes(response.status) ? "MODEL_UNSUITABLE" : "OTHER";
-      lastError = new ContractAiError(
-        "AI_PROVIDER_REQUEST_FAILED",
-        `The provider rejected contract analysis (HTTP ${response.status}).`,
-        failureClass,
-        failureClass === "RATE_LIMIT" || failureClass === "PROVIDER_5XX",
-        providerDetail || null,
-      );
-      if (attempt < maxAttempts && lastError.retryable) continue;
       throw lastError;
     }
 

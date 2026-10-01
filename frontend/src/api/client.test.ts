@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { apiClient, getApiUrl, safeFetchJson } from './client';
+import { apiClient, extractErrorMessage, getApiUrl, safeFetchJson } from './client';
 
 describe('safeFetchJson', () => {
   it('throws a normalized error instead of converting failures to null', async () => {
@@ -23,5 +23,16 @@ describe('Supabase Edge Function routing', () => {
     const url = getApiUrl('/facilities/management');
     expect(url).toMatch(/\/facilities\/management$/);
     expect(url).not.toMatch(/\/facilities\/facilities\/management$/);
+  });
+});
+
+describe('extractErrorMessage', () => {
+  it('includes the server-authoritative circuit retry time', () => {
+    expect(extractErrorMessage({
+      response: {
+        data: { message: 'AI processing is temporarily unavailable.', data: { retryAfterSeconds: 42 } },
+        headers: { 'retry-after': '42' },
+      },
+    })).toBe('AI processing is temporarily unavailable. Try again in 42 seconds.');
   });
 });

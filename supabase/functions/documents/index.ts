@@ -28,6 +28,7 @@ import {
   type DuplicateCandidate,
   type DuplicateDetectionResult,
 } from "../_shared/document-duplicates.ts";
+import { AiCircuitOpenError, circuitRetryHeaders } from "../_shared/ai-circuit-breaker.ts";
 
 const db = adminDb();
 
@@ -644,7 +645,29 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
     }
 
     const extraction = await extractDocumentContent(extension, bytes);
-    const { result: analysis } = await classifyDocumentContent(db, extraction.text, extraction.method);
+    let analysis: Awaited<ReturnType<typeof classifyDocumentContent>>["result"] | null = null;
+    let aiProcessing: Record<string, unknown> = { status: "COMPLETED" };
+    try {
+      analysis = (await classifyDocumentContent(db, extraction.text, extraction.method)).result;
+    } catch (aiError) {
+      if (aiError instanceof AiCircuitOpenError) {
+        aiProcessing = {
+          status: "TEMPORARILY_UNAVAILABLE",
+          errorCode: aiError.code,
+          circuitState: aiError.circuitState,
+          retryAfterSeconds: aiError.retryAfterSeconds,
+          message: "The document was stored and duplicate-checked, but AI classification is temporarily unavailable.",
+        };
+      } else if (aiError instanceof DocumentAiError) {
+        aiProcessing = {
+          status: "UNAVAILABLE",
+          errorCode: aiError.code,
+          message: "The document was stored and duplicate-checked, but AI classification could not be completed.",
+        };
+      } else {
+        throw aiError;
+      }
+    }
     const extractedOcrSha256 = await normalizedOcrSha256(extraction.text);
     const now = naiveIso();
     const { data: saved, error: insError } = await db.from("documents").insert({
@@ -660,21 +683,21 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
       classification_level: classificationLevel,
       status: "PENDING_REVIEW",
       ocr_extracted_text: extraction.text,
-      ai_summary: analysis.summary,
-      ai_predicted_category: analysis.predictedCategoryName,
-      confidence_score: analysis.confidence,
-      extracted_keywords: analysis.metadataSuggestions.keywords ?? [],
-      ai_detected_document_type: analysis.detectedDocumentType,
-      ai_metadata_suggestions: analysis.metadataSuggestions,
-      ai_classification_reason: analysis.reason,
-      ai_provider_name: analysis.providerName,
-      ai_model: analysis.model,
-      ai_processed_at: analysis.processedAt,
+      ai_summary: analysis?.summary ?? null,
+      ai_predicted_category: analysis?.predictedCategoryName ?? null,
+      confidence_score: analysis?.confidence ?? null,
+      extracted_keywords: analysis?.metadataSuggestions.keywords ?? [],
+      ai_detected_document_type: analysis?.detectedDocumentType ?? null,
+      ai_metadata_suggestions: analysis?.metadataSuggestions ?? {},
+      ai_classification_reason: analysis?.reason ?? null,
+      ai_provider_name: analysis?.providerName ?? null,
+      ai_model: analysis?.model ?? null,
+      ai_processed_at: analysis?.processedAt ?? null,
       ai_extraction_method: extraction.method,
       file_sha256: uploadedFileSha256,
       ocr_normalized_sha256: extractedOcrSha256,
       duplicate_check_status: "NOT_CHECKED",
-      ai_review_required: analysis.reviewRequired,
+      ai_review_required: true,
       classification_review_status: "PENDING",
       final_classification: null,
       version_number: 1,
@@ -687,34 +710,36 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
 
     const row = (saved as unknown as Record<string, unknown>) ?? {};
     docId = String(row.id);
-    const { error: provenanceError } = await db.from("document_ai_classifications").insert({
-      document_id: docId,
-      content_sha256: extraction.contentSha256,
-      extraction_method: extraction.method,
-      extracted_character_count: extraction.text.length,
-      provider_id: analysis.providerId,
-      provider_name: analysis.providerName,
-      model: analysis.model,
-      processed_at: analysis.processedAt,
-      predicted_category_id: analysis.predictedCategoryId,
-      predicted_category_name: analysis.predictedCategoryName,
-      category_scores: analysis.categoryScores,
-      confidence: analysis.confidence,
-      confidence_method: analysis.confidenceMethod,
-      detected_document_type: analysis.detectedDocumentType,
-      summary: analysis.summary,
-      metadata_suggestions: analysis.metadataSuggestions,
-      classification_reason: analysis.reason,
-      grounded_evidence: analysis.groundedEvidence,
-      review_required: analysis.reviewRequired,
-      review_status: "PENDING",
-    });
-    if (provenanceError) throw new Error(`document AI provenance insert failed: ${provenanceError.message}`);
+    if (analysis) {
+      const { error: provenanceError } = await db.from("document_ai_classifications").insert({
+        document_id: docId,
+        content_sha256: extraction.contentSha256,
+        extraction_method: extraction.method,
+        extracted_character_count: extraction.text.length,
+        provider_id: analysis.providerId,
+        provider_name: analysis.providerName,
+        model: analysis.model,
+        processed_at: analysis.processedAt,
+        predicted_category_id: analysis.predictedCategoryId,
+        predicted_category_name: analysis.predictedCategoryName,
+        category_scores: analysis.categoryScores,
+        confidence: analysis.confidence,
+        confidence_method: analysis.confidenceMethod,
+        detected_document_type: analysis.detectedDocumentType,
+        summary: analysis.summary,
+        metadata_suggestions: analysis.metadataSuggestions,
+        classification_reason: analysis.reason,
+        grounded_evidence: analysis.groundedEvidence,
+        review_required: analysis.reviewRequired,
+        review_status: "PENDING",
+      });
+      if (provenanceError) throw new Error(`document AI provenance insert failed: ${provenanceError.message}`);
+    }
 
-    const tagNames = [analysis.predictedCategoryName.toLowerCase().replace(/_/g, "-"), "ai-classified"]
+    const tagNames = analysis ? [analysis.predictedCategoryName.toLowerCase().replace(/_/g, "-"), "ai-classified"]
       .map((name) => String(name).trim().toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").slice(0, 80))
       .filter((name, index, all) => name.length >= 2 && all.indexOf(name) === index)
-      .slice(0, MAX_AUTO_TAGS);
+      .slice(0, MAX_AUTO_TAGS) : [];
     const tagIds: string[] = [];
     for (const name of tagNames) {
       let existing = (
@@ -745,8 +770,8 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
     } catch (duplicateError) {
       const checkedAt = new Date().toISOString();
       duplicateDetection = {
-        confidence: "NO_DUPLICATE",
-        status: "NO_DUPLICATE",
+        confidence: "UNAVAILABLE",
+        status: "UNAVAILABLE",
         checkedAt,
         detectorVersion: DOCUMENT_DUPLICATE_DETECTOR_VERSION,
         contentCheck: "NOT_RUN_OCR_UNAVAILABLE",
@@ -759,13 +784,20 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
       console.error("document duplicate detection failed", duplicateError);
     }
 
-    await writeAudit(ctx?.user ?? null, "UPLOAD_AND_CLASSIFY_DOCUMENT", MODULE, "Document", docId,
-      `Uploaded and content-classified document '${str(row.title)}' as ${analysis.predictedCategoryName}`
-        + ` (confidence=${analysis.confidence}, reviewRequired=${analysis.reviewRequired}, provider=${analysis.providerName}, model=${analysis.model}, duplicateResult=${duplicateDetection.confidence})`,
+    await writeAudit(ctx?.user ?? null, analysis ? "UPLOAD_AND_CLASSIFY_DOCUMENT" : "UPLOAD_DOCUMENT_AI_UNAVAILABLE", MODULE, "Document", docId,
+      analysis
+        ? `Uploaded and content-classified document '${str(row.title)}' as ${analysis.predictedCategoryName}`
+          + ` (confidence=${analysis.confidence}, reviewRequired=${analysis.reviewRequired}, provider=${analysis.providerName}, model=${analysis.model}, duplicateResult=${duplicateDetection.confidence})`
+        : `Uploaded and content-extracted document '${str(row.title)}'; AI classification unavailable; duplicateResult=${duplicateDetection.confidence}`,
       ctx ? resolveClientIp(req).ip : null, "INFO");
 
     const tags = await loadTags(docId);
-    return jsonResponse(ok({ ...toDocumentDto({ ...row, tags }), duplicateDetection }, "Document securely stored, content-extracted, AI-classified, duplicate-checked, and queued for human review"), 200);
+    return jsonResponse(ok(
+      { ...toDocumentDto({ ...row, tags }), duplicateDetection, aiProcessing },
+      analysis
+        ? "Document securely stored, content-extracted, AI-classified, duplicate-checked, and queued for human review"
+        : "Document securely stored, content-extracted, duplicate-checked, and queued for manual classification",
+    ), 200);
   } catch (error) {
     if (docId) {
       await db.from("document_tags").delete().eq("document_id", docId);
@@ -806,9 +838,16 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
       }, 422);
     }
     if (error instanceof DocumentAiError) {
-      const unavailable = ["AI_PROVIDER_UNAVAILABLE", "AI_PROVIDER_OFFLINE", "AI_CREDENTIAL_UNAVAILABLE", "DOCUMENT_AI_DISABLED"]
+      const unavailable = ["AI_PROVIDER_UNAVAILABLE", "AI_PROVIDER_OFFLINE", "AI_CREDENTIAL_UNAVAILABLE", "DOCUMENT_AI_DISABLED",
+        "PROVIDER_OFFLINE", "PROVIDER_DISABLED", "PROVIDER_UNREACHABLE", "CREDENTIAL_MISSING", "CREDENTIAL_DECRYPTION_FAILED"]
         .includes(error.code);
       return jsonResponse(fail(error.message, error.code), unavailable ? 503 : 422);
+    }
+    if (error instanceof AiCircuitOpenError) {
+      return jsonResponse({
+        ...fail(error.message, error.code),
+        data: { circuitState: error.circuitState, retryAfterSeconds: error.retryAfterSeconds },
+      }, 503, circuitRetryHeaders(error));
     }
     throw error;
   }

@@ -22,7 +22,7 @@ export interface DocumentTag {
   name: string;
 }
 
-export type DuplicateConfidence = 'EXACT' | 'HIGH_CONFIDENCE' | 'POSSIBLE_DUPLICATE' | 'NO_DUPLICATE';
+export type DuplicateConfidence = 'EXACT' | 'HIGH_CONFIDENCE' | 'POSSIBLE_DUPLICATE' | 'NO_DUPLICATE' | 'UNAVAILABLE';
 export type DuplicateMatchType =
   | 'EXACT_FILE_DUPLICATE'
   | 'EXACT_OCR_DUPLICATE'
@@ -46,7 +46,7 @@ export interface DocumentDuplicateMatch {
   effectiveDate?: string | null;
   versionNumber?: string | number | null;
   matchType: DuplicateMatchType;
-  confidence: Exclude<DuplicateConfidence, 'NO_DUPLICATE'>;
+  confidence: Exclude<DuplicateConfidence, 'NO_DUPLICATE' | 'UNAVAILABLE'>;
   textSimilarityPercent?: number | null;
   reasons: string[];
   ocrExcerpt?: string | null;
@@ -75,6 +75,13 @@ export interface DocumentSummary {
   duplicateCheckStatus?: 'NOT_CHECKED' | 'NO_DUPLICATE' | 'REVIEW_REQUIRED' | 'UNAVAILABLE' | null;
   duplicateCheckedAt?: string | null;
   duplicateDetection?: DocumentDuplicateDetection;
+  aiProcessing?: {
+    status: 'COMPLETED' | 'TEMPORARILY_UNAVAILABLE' | 'UNAVAILABLE';
+    errorCode?: string;
+    circuitState?: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+    retryAfterSeconds?: number;
+    message?: string;
+  };
 
   /** AI pipeline output */
   ocrExtractedText?: string | null;

@@ -228,7 +228,14 @@ export function extractErrorMessage(error: unknown): string {
   }
   if (typeof error === 'object' && error !== null) {
     const errObj = error as Record<string, any>;
-    if (errObj.response?.data?.message) return errObj.response.data.message;
+    if (errObj.response?.data?.message) {
+      const message = String(errObj.response.data.message);
+      const retryAfter = Number(errObj.response.data?.data?.retryAfterSeconds ?? errObj.response.headers?.['retry-after']);
+      if (Number.isFinite(retryAfter) && retryAfter > 0 && !/\d+\s+seconds?/i.test(message)) {
+        return `${message} Try again in ${Math.ceil(retryAfter)} seconds.`;
+      }
+      return message;
+    }
     if (errObj.response?.data?.error) return errObj.response.data.error;
     if (errObj.message) return errObj.message;
   }

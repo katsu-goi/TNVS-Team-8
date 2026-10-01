@@ -17,6 +17,9 @@ export interface ProviderFormData {
   maxTokens: number;
   timeout: number;
   retryAttempts: number;
+  failureThreshold: number;
+  openCooldownSeconds: number;
+  retryBaseDelayMs: number;
   capabilities: {
     documentClassification: boolean;
     ocrExtraction: boolean;
@@ -39,6 +42,13 @@ export interface ProviderInitialData {
   endpoint?: string;
   isDefault: boolean;
   capabilities?: string[];
+  circuitConfig?: {
+    failureThreshold: number;
+    openCooldownSeconds: number;
+    requestTimeoutMs: number;
+    maxRetries: number;
+    retryBaseDelayMs: number;
+  };
 }
 
 interface AddAiProviderModalProps {
@@ -119,8 +129,11 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
   // Advanced Settings
   const [temperature, setTemperature] = useState(0.3);
   const [maxTokens, setMaxTokens] = useState(4096);
-  const [timeout, setTimeoutVal] = useState(120);
+  const [timeout, setTimeoutVal] = useState(20);
   const [retryAttempts, setRetryAttempts] = useState(3);
+  const [failureThreshold, setFailureThreshold] = useState(3);
+  const [openCooldownSeconds, setOpenCooldownSeconds] = useState(60);
+  const [retryBaseDelayMs, setRetryBaseDelayMs] = useState(250);
 
   // Capabilities
   const [capabilities, setCapabilities] = useState(defaultCapabilities);
@@ -149,6 +162,11 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
     verifiedCredentialRef.current = null;
     setShowApiKey(false);
     setAvailableModels([]);
+    setTimeoutVal(Math.round((initialProvider?.circuitConfig?.requestTimeoutMs ?? 20000) / 1000));
+    setRetryAttempts((initialProvider?.circuitConfig?.maxRetries ?? 2) + 1);
+    setFailureThreshold(initialProvider?.circuitConfig?.failureThreshold ?? 3);
+    setOpenCooldownSeconds(initialProvider?.circuitConfig?.openCooldownSeconds ?? 60);
+    setRetryBaseDelayMs(initialProvider?.circuitConfig?.retryBaseDelayMs ?? 250);
     setCapabilities(initialProvider?.capabilities
       ? Object.fromEntries(Object.keys(defaultCapabilities).map((key) => [key, initialProvider.capabilities!.includes(key)])) as typeof defaultCapabilities
       : defaultCapabilities);
@@ -327,6 +345,9 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
         maxTokens,
         timeout,
         retryAttempts,
+        failureThreshold,
+        openCooldownSeconds,
+        retryBaseDelayMs,
         capabilities,
         isDefault,
       });
@@ -618,8 +639,10 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
                 <label className="block font-semibold text-slate-700 mb-1">Timeout (s)</label>
                 <input
                   type="number"
+                  min="1"
+                  max="120"
                   value={timeout}
-                  onChange={e => setTimeoutVal(parseInt(e.target.value, 10) || 120)}
+                  onChange={e => setTimeoutVal(parseInt(e.target.value, 10) || 20)}
                   className="w-full border border-slate-300 rounded-xl p-2 text-xs font-mono text-slate-800 focus:border-emerald-500 focus:outline-none"
                 />
               </div>
@@ -628,10 +651,32 @@ export const AddAiProviderModal: React.FC<AddAiProviderModalProps> = ({ isOpen, 
                 <label className="block font-semibold text-slate-700 mb-1">Retry Attempts</label>
                 <input
                   type="number"
+                  min="1"
+                  max="6"
                   value={retryAttempts}
                   onChange={e => setRetryAttempts(parseInt(e.target.value, 10) || 3)}
                   className="w-full border border-slate-300 rounded-xl p-2 text-xs font-mono text-slate-800 focus:border-emerald-500 focus:outline-none"
                 />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Failure Threshold</label>
+                <input type="number" min="1" max="20" value={failureThreshold}
+                  onChange={e => setFailureThreshold(parseInt(e.target.value, 10) || 3)}
+                  className="w-full border border-slate-300 rounded-xl p-2 text-xs font-mono text-slate-800 focus:border-emerald-500 focus:outline-none" />
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Open Cooldown (s)</label>
+                <input type="number" min="5" max="3600" value={openCooldownSeconds}
+                  onChange={e => setOpenCooldownSeconds(parseInt(e.target.value, 10) || 60)}
+                  className="w-full border border-slate-300 rounded-xl p-2 text-xs font-mono text-slate-800 focus:border-emerald-500 focus:outline-none" />
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Retry Base Delay (ms)</label>
+                <input type="number" min="50" max="5000" step="50" value={retryBaseDelayMs}
+                  onChange={e => setRetryBaseDelayMs(parseInt(e.target.value, 10) || 250)}
+                  className="w-full border border-slate-300 rounded-xl p-2 text-xs font-mono text-slate-800 focus:border-emerald-500 focus:outline-none" />
               </div>
             </div>
           </div>

@@ -15,7 +15,7 @@ interface Provider {
   id: string;
   name: string;
   model: string;
-  status: 'CONNECTED' | 'OFFLINE';
+  status: 'CONNECTED' | 'DEGRADED' | 'OFFLINE';
   lastSync: string;
   responseTime: string | null;
   isDefault: boolean;
@@ -25,6 +25,23 @@ interface Provider {
   capabilities?: string[];
   lastVerifiedAt?: string | null;
   requiresCredentialReconfiguration?: boolean;
+  circuitConfig: {
+    failureThreshold: number;
+    openCooldownSeconds: number;
+    requestTimeoutMs: number;
+    maxRetries: number;
+    retryBaseDelayMs: number;
+  };
+  circuits: Array<{
+    capability: string;
+    state: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+    failureCount: number;
+    lastFailureAt: string | null;
+    lastSuccessAt: string | null;
+    openedAt: string | null;
+    nextAttemptAt: string | null;
+    lastLatencyMs: number | null;
+  }>;
 }
 
 interface AIModule {
@@ -177,6 +194,7 @@ export const AiServicesPage: React.FC = () => {
   const [showConfigModuleModal, setShowConfigModuleModal] = useState<AIModule | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
+  const [clock, setClock] = useState(() => Date.now());
 
   // Configure-modal state (per-module AI model selection)
   const [configProviderId, setConfigProviderId] = useState('');
@@ -194,6 +212,11 @@ export const AiServicesPage: React.FC = () => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
   };
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   // Fetch all initial data from backend API
   const fetchAllData = async () => {
@@ -454,6 +477,16 @@ export const AiServicesPage: React.FC = () => {
     }
   };
 
+  const handleResetCircuit = async (providerId: string, capability?: string) => {
+    try {
+      await apiClient.post(`/ai/providers/${providerId}/circuit/reset`, capability ? { capability } : {});
+      showToast(`Circuit reset${capability ? ` for ${capability}` : ''}. The next request will perform normal provider execution.`);
+      await fetchAllData();
+    } catch (err) {
+      showToast(extractErrorMessage(err));
+    }
+  };
+
   const handleSaveProviderFromModal = async (data: ProviderFormData): Promise<boolean> => {
     let pType = 'openai';
     if (data.providerType.includes('Gemini')) pType = 'gemini';
@@ -477,6 +510,11 @@ export const AiServicesPage: React.FC = () => {
         endpoint: data.endpoint,
         apiKey: data.apiKey,
         capabilities: capabilityList,
+        timeout: data.timeout,
+        retryAttempts: data.retryAttempts,
+        failureThreshold: data.failureThreshold,
+        openCooldownSeconds: data.openCooldownSeconds,
+        retryBaseDelayMs: data.retryBaseDelayMs,
       };
       const res = editingProvider
         ? await apiClient.put(`/ai/providers/${editingProvider.id}`, payload)
@@ -749,11 +787,13 @@ export const AiServicesPage: React.FC = () => {
                         className={`inline-flex items-center space-x-1 font-semibold px-2 py-0.5 rounded-full text-[10px] ${
                           p.status === 'CONNECTED'
                             ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                            : 'bg-rose-100 text-rose-800 border border-rose-200'
+                            : p.status === 'DEGRADED'
+                              ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                              : 'bg-rose-100 text-rose-800 border border-rose-200'
                         }`}
                       >
-                        <span className={`w-1.5 h-1.5 rounded-full ${p.status === 'CONNECTED' ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
-                        <span>{p.status === 'CONNECTED' ? 'ONLINE' : 'OFFLINE'}</span>
+                        <span className={`w-1.5 h-1.5 rounded-full ${p.status === 'CONNECTED' ? 'bg-emerald-500 animate-pulse' : p.status === 'DEGRADED' ? 'bg-amber-500' : 'bg-rose-500'}`} />
+                        <span>{p.status === 'CONNECTED' ? 'ONLINE' : p.status}</span>
                       </span>
                     </div>
 
@@ -772,6 +812,36 @@ export const AiServicesPage: React.FC = () => {
                       Provider requires credential reconfiguration.
                     </div>
                   )}
+                  <div className="mt-3 space-y-2">
+                    {p.circuits.length === 0 ? (
+                      <div className="flex items-center justify-between rounded-lg bg-slate-50 px-2.5 py-2 text-[11px] text-slate-600">
+                        <span>Circuit</span><span className="font-bold text-emerald-700">CLOSED · no failures</span>
+                      </div>
+                    ) : p.circuits.map(circuit => {
+                      const retrySeconds = circuit.nextAttemptAt
+                        ? Math.max(0, Math.ceil((new Date(circuit.nextAttemptAt).getTime() - clock) / 1000))
+                        : 0;
+                      return (
+                        <div key={circuit.capability} className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-[11px]">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate font-medium text-slate-700">{circuit.capability.replace(/-/g, ' ')}</span>
+                            <span className={`font-bold ${circuit.state === 'CLOSED' ? 'text-emerald-700' : circuit.state === 'OPEN' ? 'text-rose-700' : 'text-amber-700'}`}>{circuit.state}</span>
+                          </div>
+                          <div className="mt-1 flex items-center justify-between text-slate-500">
+                            <span>{circuit.failureCount} consecutive failure{circuit.failureCount === 1 ? '' : 's'}</span>
+                            {circuit.state !== 'CLOSED' && (
+                              <button type="button" onClick={() => void handleResetCircuit(p.id, circuit.capability)} className="font-semibold text-rose-700 hover:underline">Reset</button>
+                            )}
+                          </div>
+                          {circuit.state === 'OPEN' && <p className="mt-1 text-rose-700">{retrySeconds > 0 ? `Retry probe in ${retrySeconds}s` : 'Ready for one recovery probe'}</p>}
+                          {circuit.state === 'HALF_OPEN' && <p className="mt-1 text-amber-700">Recovery probe in progress</p>}
+                          {circuit.lastLatencyMs != null && <p className="mt-1 text-slate-500">Last latency: {circuit.lastLatencyMs} ms</p>}
+                          {circuit.lastSuccessAt && <p className="mt-1 text-slate-500">Last success: {new Date(circuit.lastSuccessAt).toLocaleString()}</p>}
+                          {circuit.lastFailureAt && <p className="mt-1 text-slate-500">Last failure: {new Date(circuit.lastFailureAt).toLocaleString()}</p>}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">

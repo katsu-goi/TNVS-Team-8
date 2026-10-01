@@ -4,6 +4,16 @@ import { fail, ok } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
 import { classifyDocumentContent, DocumentAiError } from "../_shared/document-ai.ts";
 import { assertSafeProviderUrl } from "../_shared/provider-url.ts";
+import { writeAudit } from "../_shared/lockout.ts";
+import {
+  AiCircuitOpenError,
+  AiProviderRequestError,
+  circuitRetryHeaders,
+  classifyProviderFailure,
+  executeAiProviderCall,
+  normalizeAiCircuitConfig,
+  type AiCircuitConfig,
+} from "../_shared/ai-circuit-breaker.ts";
 
 const db = adminDb();
 const PLACEHOLDER_KEY = "sk-proj-default";
@@ -399,6 +409,17 @@ type ProviderDto = {
   capabilities: string[];
   lastVerifiedAt: string | null;
   requiresCredentialReconfiguration: boolean;
+  circuitConfig: AiCircuitConfig;
+  circuits: Array<{
+    capability: string;
+    state: "CLOSED" | "OPEN" | "HALF_OPEN";
+    failureCount: number;
+    lastFailureAt: string | null;
+    lastSuccessAt: string | null;
+    openedAt: string | null;
+    nextAttemptAt: string | null;
+    lastLatencyMs: number | null;
+  }>;
 };
 
 function parseCapabilities(serialized: string | null): string[] {
@@ -412,11 +433,14 @@ function parseCapabilities(serialized: string | null): string[] {
 }
 
 async function loadProviders(): Promise<ProviderDto[]> {
-  const { data, error } = await db.from("ai_providers")
-    .select("*")
-    .eq("is_deleted", false)
-    .order("id");
+  const [providerResult, circuitResult] = await Promise.all([
+    db.from("ai_providers").select("*").eq("is_deleted", false).order("id"),
+    db.from("ai_provider_circuit_breakers").select("provider_id,capability,state,consecutive_failure_count,last_failure_at,last_success_at,opened_at,next_attempt_at,last_latency_ms"),
+  ]);
+  const { data, error } = providerResult;
   if (error) throw new Error(`ai_providers query failed: ${error.message}`);
+  if (circuitResult.error) throw new Error(`ai provider circuit query failed: ${circuitResult.error.message}`);
+  const circuitRows = (circuitResult.data ?? []) as Array<Record<string, unknown>>;
   const out: ProviderDto[] = [];
   for (const row of (data as Array<Record<string, unknown>>) ?? []) {
     const sealedKey = String(row.encrypted_api_key ?? "");
@@ -444,6 +468,23 @@ async function loadProviders(): Promise<ProviderDto[]> {
       capabilities: parseCapabilities(row.capabilities ? String(row.capabilities) : null),
       lastVerifiedAt: row.last_verified_at != null ? String(row.last_verified_at) : null,
       requiresCredentialReconfiguration: credentialUnavailable,
+      circuitConfig: normalizeAiCircuitConfig({
+        failureThreshold: row.circuit_failure_threshold,
+        openCooldownSeconds: row.circuit_open_cooldown_seconds,
+        requestTimeoutMs: row.request_timeout_ms,
+        maxRetries: row.max_retries,
+        retryBaseDelayMs: row.retry_base_delay_ms,
+      }),
+      circuits: circuitRows.filter((circuit) => String(circuit.provider_id) === String(row.id)).map((circuit) => ({
+        capability: String(circuit.capability),
+        state: String(circuit.state) as "CLOSED" | "OPEN" | "HALF_OPEN",
+        failureCount: Number(circuit.consecutive_failure_count ?? 0),
+        lastFailureAt: circuit.last_failure_at == null ? null : String(circuit.last_failure_at),
+        lastSuccessAt: circuit.last_success_at == null ? null : String(circuit.last_success_at),
+        openedAt: circuit.opened_at == null ? null : String(circuit.opened_at),
+        nextAttemptAt: circuit.next_attempt_at == null ? null : String(circuit.next_attempt_at),
+        lastLatencyMs: circuit.last_latency_ms == null ? null : Number(circuit.last_latency_ms),
+      })),
     });
   }
   return out;
@@ -451,6 +492,50 @@ async function loadProviders(): Promise<ProviderDto[]> {
 
 function providerToDto(apiKey: string | null, p: ProviderDto): ProviderDto {
   return { ...p, apiKey };
+}
+
+function circuitConfigFromRequest(body: Record<string, any>, existing?: Record<string, unknown>): AiCircuitConfig {
+  const timeoutSeconds = body.timeout == null
+    ? Number(existing?.request_timeout_ms ?? 20_000) / 1000
+    : Number(body.timeout);
+  const retryAttempts = body.retryAttempts == null
+    ? Number(existing?.max_retries ?? 2) + 1
+    : Number(body.retryAttempts);
+  return normalizeAiCircuitConfig({
+    failureThreshold: body.failureThreshold ?? existing?.circuit_failure_threshold,
+    openCooldownSeconds: body.openCooldownSeconds ?? existing?.circuit_open_cooldown_seconds,
+    requestTimeoutMs: timeoutSeconds * 1000,
+    maxRetries: retryAttempts - 1,
+    retryBaseDelayMs: body.retryBaseDelayMs ?? existing?.retry_base_delay_ms,
+  });
+}
+
+function circuitConfigValidationErrors(body: Record<string, any>): string[] {
+  const checks: Array<[string, number, number, string]> = [
+    ["failureThreshold", 1, 20, "Failure threshold"],
+    ["openCooldownSeconds", 5, 3600, "Open cooldown"],
+    ["timeout", 1, 120, "Request timeout"],
+    ["retryAttempts", 1, 6, "Retry attempts"],
+    ["retryBaseDelayMs", 50, 5000, "Retry base delay"],
+  ];
+  return checks.flatMap(([key, min, max, label]) => {
+    if (body[key] == null) return [];
+    const value = Number(body[key]);
+    return Number.isInteger(value) && value >= min && value <= max
+      ? [] : [`${label} must be an integer between ${min} and ${max}`];
+  });
+}
+
+function circuitUnavailableResponse(error: AiCircuitOpenError): Response {
+  return jsonResponse({
+    success: false,
+    message: error.retryAfterSeconds > 0
+      ? `AI processing is temporarily unavailable. Please try again in ${error.retryAfterSeconds} seconds.`
+      : error.message,
+    errorCode: error.code,
+    data: { circuitState: error.circuitState, retryAfterSeconds: error.retryAfterSeconds },
+    timestamp: new Date().toISOString(),
+  }, 503, circuitRetryHeaders(error));
 }
 
 // ---------------------------------------------------------------------------
@@ -466,7 +551,7 @@ async function loadModuleConfigs(): Promise<Array<Record<string, unknown>>> {
 }
 
 function isUsableProvider(p: ProviderDto | null): boolean {
-  return p != null && p.status.toUpperCase() === "CONNECTED"
+  return p != null && p.status.toUpperCase() !== "OFFLINE"
     && p.apiKey != null && p.apiKey !== "" && p.apiKey !== PLACEHOLDER_KEY;
 }
 
@@ -599,9 +684,12 @@ function toConfigDto(module: any, cfg: Record<string, unknown> | null, providers
 // Model fetcher (mirrors ModelFetcher)
 // ---------------------------------------------------------------------------
 
-async function httpGetJson(url: string, headers: Record<string, string>): Promise<any> {
+async function httpGetJson(url: string, headers: Record<string, string>, externalSignal?: AbortSignal): Promise<any> {
   await assertSafeProviderUrl(url);
   const ctrl = new AbortController();
+  const relayAbort = () => ctrl.abort(externalSignal?.reason ?? new DOMException("Provider request timed out", "AbortError"));
+  if (externalSignal?.aborted) relayAbort();
+  else externalSignal?.addEventListener("abort", relayAbort, { once: true });
   const timer = setTimeout(() => ctrl.abort(), 20000);
   try {
     const res = await fetch(url, { headers, signal: ctrl.signal, redirect: "manual" });
@@ -616,6 +704,7 @@ async function httpGetJson(url: string, headers: Record<string, string>): Promis
     return await res.json();
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", relayAbort);
   }
 }
 
@@ -693,13 +782,13 @@ function rankOpenAiDocumentModels(models: string[]): string[] {
   });
 }
 
-async function fetchOpenAiCompatible(apiKey: string | null, baseUrl: string | null): Promise<string[]> {
+async function fetchOpenAiCompatible(apiKey: string | null, baseUrl: string | null, signal?: AbortSignal): Promise<string[]> {
   const cleanBase = (baseUrl == null || baseUrl === "") ? "https://api.openai.com" : baseUrl.replace(/\/+$/, "");
   const modelsUrl = cleanBase.includes("/v1")
     ? cleanBase.replace(/\/v1.*/, "") + "/v1/models"
     : cleanBase + "/v1/models";
   const headers = openAiCompatibleAuthHeaders(apiKey, baseUrl);
-  const body = await httpGetJson(modelsUrl, headers);
+  const body = await httpGetJson(modelsUrl, headers, signal);
   const list = body && Array.isArray(body.data) ? body.data : [];
   const models = list.map((m: any) => String(m.id ?? "")).filter((s: string) => s !== "");
   return isOfficialOpenAiBase(baseUrl)
@@ -707,26 +796,26 @@ async function fetchOpenAiCompatible(apiKey: string | null, baseUrl: string | nu
     : models.sort((a: string, b: string) => a.localeCompare(b));
 }
 
-async function fetchGeminiModels(apiKey: string | null): Promise<string[]> {
+async function fetchGeminiModels(apiKey: string | null, signal?: AbortSignal): Promise<string[]> {
   if (!apiKey || apiKey === "") throw new Error("API Key is required for Google Gemini");
   const url = "https://generativelanguage.googleapis.com/v1beta/models?key=" + encodeURIComponent(apiKey);
-  const body = await httpGetJson(url, { Accept: "application/json" });
+  const body = await httpGetJson(url, { Accept: "application/json" }, signal);
   const list = body && Array.isArray(body.models) ? body.models : [];
   return list.map((m: any) => String(m.name ?? "").replace(/^models\//, "")).filter((s: string) => s !== "").sort((a: string, b: string) => a.localeCompare(b));
 }
 
-async function fetchAnthropicModels(apiKey: string | null): Promise<string[]> {
+async function fetchAnthropicModels(apiKey: string | null, signal?: AbortSignal): Promise<string[]> {
   if (!apiKey || apiKey === "") throw new Error("API Key is required for Anthropic Claude");
   const body = await httpGetJson("https://api.anthropic.com/v1/models", {
     Accept: "application/json",
     "x-api-key": apiKey,
     "anthropic-version": "2023-06-01",
-  });
+  }, signal);
   const list = body && Array.isArray(body.data) ? body.data : [];
   return list.map((m: any) => String(m.id ?? "")).filter((s: string) => s !== "").sort((a: string, b: string) => a.localeCompare(b));
 }
 
-async function fetchAzureModels(apiKey: string | null, baseUrl: string | null, endpoint: string | null): Promise<string[]> {
+async function fetchAzureModels(apiKey: string | null, baseUrl: string | null, endpoint: string | null, signal?: AbortSignal): Promise<string[]> {
   if (!apiKey || apiKey === "") throw new Error("API Key is required for Azure OpenAI");
   let apiVersion = "2024-02-15-preview";
   if (endpoint != null && endpoint.includes("api-version=")) {
@@ -740,23 +829,23 @@ async function fetchAzureModels(apiKey: string | null, baseUrl: string | null, e
   const body = await httpGetJson(base + "/openai/models?api-version=" + apiVersion, {
     Accept: "application/json",
     "api-key": apiKey,
-  });
+  }, signal);
   const list = body && Array.isArray(body.data) ? body.data : [];
   return list.map((m: any) => String(m.id ?? "")).filter((s: string) => s !== "").sort((a: string, b: string) => a.localeCompare(b));
 }
 
-async function fetchModels(provider: ProviderDto): Promise<string[]> {
+async function fetchModels(provider: ProviderDto, signal?: AbortSignal): Promise<string[]> {
   const type = (provider.type ?? "openai").toLowerCase();
   switch (type) {
-    case "gemini": return fetchGeminiModels(provider.apiKey);
+    case "gemini": return fetchGeminiModels(provider.apiKey, signal);
     case "claude":
-    case "anthropic": return fetchAnthropicModels(provider.apiKey);
-    case "azure": return fetchAzureModels(provider.apiKey, provider.baseUrl, provider.endpoint);
-    default: return fetchOpenAiCompatible(provider.apiKey, provider.baseUrl);
+    case "anthropic": return fetchAnthropicModels(provider.apiKey, signal);
+    case "azure": return fetchAzureModels(provider.apiKey, provider.baseUrl, provider.endpoint, signal);
+    default: return fetchOpenAiCompatible(provider.apiKey, provider.baseUrl, signal);
   }
 }
 
-async function verifyOpenAiCompatibleCredential(provider: ProviderDto): Promise<void> {
+async function verifyOpenAiCompatibleCredential(provider: ProviderDto, signal?: AbortSignal): Promise<void> {
   if (!provider.apiKey || provider.apiKey.trim() === "") throw new Error("API Key is required for remote provider");
   if (!provider.model || provider.model.trim() === "") throw new Error("Model is required");
   const base = (provider.baseUrl == null || provider.baseUrl.trim() === "")
@@ -777,21 +866,31 @@ async function verifyOpenAiCompatibleCredential(provider: ProviderDto): Promise<
   const verificationPayload: Record<string, unknown> = {
     model: provider.model,
     messages: [{ role: "user", content: "Reply with OK." }],
+    max_tokens: 16,
     stream: false,
   };
-  if (isAgentRouterBase(provider.baseUrl)) verificationPayload.max_tokens = 16;
-  else verificationPayload.max_completion_tokens = 16;
   const response = await httpPostJson(
     url,
     openAiCompatibleAuthHeaders(provider.apiKey, provider.baseUrl),
     verificationPayload,
+    provider.circuitConfig.requestTimeoutMs,
+    signal,
   );
   if (!Array.isArray(response?.choices)) throw new Error("Provider verification response was invalid");
 }
 
-async function httpPostJson(url: string, headers: Record<string, string>, payload: unknown, timeoutMs = 45000): Promise<any> {
+async function httpPostJson(
+  url: string,
+  headers: Record<string, string>,
+  payload: unknown,
+  timeoutMs = 45000,
+  externalSignal?: AbortSignal,
+): Promise<any> {
   await assertSafeProviderUrl(url);
   const ctrl = new AbortController();
+  const relayAbort = () => ctrl.abort(externalSignal?.reason ?? new DOMException("Provider request timed out", "AbortError"));
+  if (externalSignal?.aborted) relayAbort();
+  else externalSignal?.addEventListener("abort", relayAbort, { once: true });
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
@@ -812,6 +911,7 @@ async function httpPostJson(url: string, headers: Record<string, string>, payloa
     return await res.json();
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", relayAbort);
   }
 }
 
@@ -841,6 +941,8 @@ function providerFromRequest(b: Record<string, any>): ProviderDto {
     capabilities: [],
     lastVerifiedAt: null,
     requiresCredentialReconfiguration: false,
+    circuitConfig: normalizeAiCircuitConfig(),
+    circuits: [],
   };
 }
 
@@ -1020,17 +1122,21 @@ async function chatCompose(ctx: AuthContext | null, message: string, module: str
   const providerForChat = target != null && target.providerId != null
     ? providers2.find((p) => p.id === target.providerId) ?? null
     : null;
-  const usableKey = providerForChat != null && providerForChat.apiKey != null
-    && providerForChat.apiKey !== "" && providerForChat.apiKey !== PLACEHOLDER_KEY
-    ? providerForChat.apiKey : null;
 
   let reply = fallbackReply;
   let liveLlm = false;
-  if (usableKey != null) {
-    const baseUrl = providerForChat!.baseUrl != null && providerForChat!.baseUrl !== ""
-      ? providerForChat!.baseUrl : "https://api.openai.com/v1";
-    const model = target.model != null && target.model !== ""
-      ? target.model : (providerForChat!.model ?? "gpt-4o");
+  let executedProvider = providerForChat;
+  let executedModel = target?.model ?? null;
+  const configuredFallback = providers2.find((provider) => provider.isDefault && provider.id !== providerForChat?.id && isUsableProvider(provider)) ?? null;
+  const candidates = [providerForChat, configuredFallback].filter((provider): provider is ProviderDto => isUsableProvider(provider));
+  let circuitFailure: AiCircuitOpenError | null = null;
+  let providerFailure: unknown = null;
+  for (const candidate of candidates) {
+    const usableKey = candidate.apiKey!;
+    const baseUrl = candidate.baseUrl != null && candidate.baseUrl !== ""
+      ? candidate.baseUrl : "https://api.openai.com/v1";
+    const model = candidate.id === providerForChat?.id && target?.model
+      ? target.model : (candidate.model ?? "gpt-4o");
     const endpoint = (baseUrl.endsWith("/") ? baseUrl : baseUrl + "/") + "chat/completions";
     try {
       const body = {
@@ -1042,29 +1148,40 @@ async function chatCompose(ctx: AuthContext | null, message: string, module: str
           { role: "user", content: message },
         ],
       };
-      const json = await httpPostJson(
-        endpoint,
-        {
+      const json = await executeAiProviderCall({
+        db,
+        providerId: candidate.id,
+        capability: "ai-chat",
+        config: candidate.circuitConfig,
+        operation: ({ signal }) => httpPostJson(endpoint, {
           ...openAiCompatibleAuthHeaders(usableKey, baseUrl),
           "User-Agent": "Photonic-Omega/1.0",
-        },
-        body,
-        15000,
-      );
+        }, body, candidate.circuitConfig.requestTimeoutMs, signal),
+      });
       const content = json?.choices?.[0]?.message?.content ?? null;
       if (content != null && String(content).trim() !== "") {
         reply = String(content).trim();
         liveLlm = true;
+        executedProvider = candidate;
+        executedModel = model;
+        break;
       }
-    } catch {
-      // fall back to graceful reply
+      providerFailure = new AiProviderRequestError("AI_PROVIDER_INVALID_RESPONSE", "The provider returned no usable chat response.", 502);
+    } catch (error) {
+      if (error instanceof AiCircuitOpenError) circuitFailure = error;
+      else providerFailure = error;
+      // Only an explicitly configured default provider is a valid fallback.
     }
+  }
+  if (!liveLlm && circuitFailure) throw circuitFailure;
+  if (!liveLlm && providerFailure) {
+    throw new AiProviderRequestError("AI_PROVIDER_UNAVAILABLE", "AI processing is temporarily unavailable. Please try again later.", 503);
   }
 
   const latency = Math.max(1, Math.round(performance.now() - startedAt));
   addLog(
     "AI Context Chat",
-    target != null && target.providerName != null ? target.providerName : null,
+    executedProvider?.name ?? (target != null && target.providerName != null ? target.providerName : null),
     "context_chat_" + mod,
     liveLlm ? "SUCCESS" : "FAILED",
     latency,
@@ -1075,9 +1192,9 @@ async function chatCompose(ctx: AuthContext | null, message: string, module: str
   return {
     reply, module: mod, moduleName, moduleApplied, liveLlm,
     latencyMs: latency, tokensUsed: null,
-    modelUsed: target != null ? target.model : null,
-    provider: target != null ? target.providerName : null,
-    fallbackUsed: target != null && target.fallbackUsed === true,
+    modelUsed: executedModel,
+    provider: executedProvider?.name ?? (target != null ? target.providerName : null),
+    fallbackUsed: (target != null && target.fallbackUsed === true) || (executedProvider?.id !== providerForChat?.id),
   };
 }
 
@@ -1120,21 +1237,29 @@ function providerCredentialDiagnostics(body: unknown, providerId?: string) {
   };
 }
 
-async function verifyProviderCredential(p: ProviderDto): Promise<string[]> {
+async function verifyProviderCredential(p: ProviderDto, signal?: AbortSignal, maxAttempts = 2): Promise<string[]> {
   let lastError: unknown = null;
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const catalog = await fetchModels(p);
-      if (catalog.length === 0) throw new Error("Provider returned no models");
+      let catalog: string[] = [];
+      try {
+        catalog = await fetchModels(p, signal);
+      } catch (err) {
+        // GET /models failed or unsupported by provider; model completion ping will be authoritative
+        catalog = [];
+      }
       const type = p.type.toLowerCase();
       const local = ["local", "ollama", "lm studio"].some((value) => type.includes(value));
       if (!local && !["gemini", "claude", "anthropic", "azure"].includes(type)) {
-        await verifyOpenAiCompatibleCredential(p);
+        await verifyOpenAiCompatibleCredential(p, signal);
+      } else if (catalog.length === 0) {
+        throw new Error("Provider returned no models and model verification could not be performed.");
       }
+      if (catalog.length === 0 && p.model) catalog = [p.model];
       return catalog;
     } catch (error) {
       lastError = error;
-      if (attempt === 2 || !isTransientProviderError(error)) throw error;
+      if (attempt === maxAttempts || !isTransientProviderError(error)) throw error;
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
   }
@@ -1168,6 +1293,9 @@ async function getProviders() {
 
 async function addProvider(_ctx: unknown, _req: Request, body: unknown) {
   const b = (body ?? {}) as Record<string, any>;
+  const circuitErrors = circuitConfigValidationErrors(b);
+  if (circuitErrors.length > 0) return jsonResponse({ ...fail("Invalid circuit-breaker configuration", "VALIDATION_ERROR"), errors: circuitErrors }, 400);
+  const circuitConfig = circuitConfigFromRequest(b);
   const p: ProviderDto = {
     id: b.id != null && String(b.id).trim() !== "" ? String(b.id) : "p-" + Date.now(),
     name: String(b.name ?? ""),
@@ -1183,6 +1311,8 @@ async function addProvider(_ctx: unknown, _req: Request, body: unknown) {
     capabilities: Array.isArray(b.capabilities) ? b.capabilities.map(String) : [],
     lastVerifiedAt: null,
     requiresCredentialReconfiguration: false,
+    circuitConfig,
+    circuits: [],
   };
 
   const validationErrors = providerValidationErrors(p);
@@ -1238,6 +1368,11 @@ async function addProvider(_ctx: unknown, _req: Request, body: unknown) {
     status: "CONNECTED",
     is_default: shouldBeDefault,
     last_verified_at: verifiedAt,
+    circuit_failure_threshold: circuitConfig.failureThreshold,
+    circuit_open_cooldown_seconds: circuitConfig.openCooldownSeconds,
+    request_timeout_ms: circuitConfig.requestTimeoutMs,
+    max_retries: circuitConfig.maxRetries,
+    retry_base_delay_ms: circuitConfig.retryBaseDelayMs,
     created_at: nowString(),
     updated_at: nowString(),
     is_deleted: false,
@@ -1279,6 +1414,9 @@ async function updateProvider(_ctx: unknown, _req: Request, body: unknown, param
   }
 
   const b = (body ?? {}) as Record<string, any>;
+  const circuitErrors = circuitConfigValidationErrors(b);
+  if (circuitErrors.length > 0) return jsonResponse({ ...fail("Invalid circuit-breaker configuration", "VALIDATION_ERROR"), errors: circuitErrors }, 400);
+  const circuitConfig = circuitConfigFromRequest(b, existing as Record<string, unknown>);
   const candidate: ProviderDto = {
     id,
     name: b.name != null ? String(b.name) : String(existing.name),
@@ -1296,6 +1434,8 @@ async function updateProvider(_ctx: unknown, _req: Request, body: unknown, param
       : parseCapabilities(existing.capabilities != null ? String(existing.capabilities) : null),
     lastVerifiedAt: existing.last_verified_at != null ? String(existing.last_verified_at) : null,
     requiresCredentialReconfiguration: false,
+    circuitConfig,
+    circuits: [],
   };
 
   const validationErrors = providerValidationErrors(candidate);
@@ -1312,8 +1452,15 @@ async function updateProvider(_ctx: unknown, _req: Request, body: unknown, param
   }
 
   try {
-    await verifyProviderCredential(candidate);
+    await executeAiProviderCall({
+      db,
+      providerId: id,
+      capability: "provider-health",
+      config: candidate.circuitConfig,
+      operation: ({ signal }) => verifyProviderCredential(candidate, signal, 1),
+    });
   } catch (e) {
+    if (e instanceof AiCircuitOpenError) return circuitUnavailableResponse(e);
     const existingCredential = await decryptKey(String(existing.encrypted_api_key ?? ""));
     if (existingCredential == null && String(existing.status ?? "").toUpperCase() !== "OFFLINE") {
       const { error: offlineError } = await db.from("ai_providers").update({
@@ -1356,6 +1503,11 @@ async function updateProvider(_ctx: unknown, _req: Request, body: unknown, param
     status: "CONNECTED",
     is_default: candidate.isDefault,
     last_verified_at: verifiedAt,
+    circuit_failure_threshold: circuitConfig.failureThreshold,
+    circuit_open_cooldown_seconds: circuitConfig.openCooldownSeconds,
+    request_timeout_ms: circuitConfig.requestTimeoutMs,
+    max_retries: circuitConfig.maxRetries,
+    retry_base_delay_ms: circuitConfig.retryBaseDelayMs,
     updated_at: verifiedAt,
   }).eq("id", id).eq("is_deleted", false).select("id").maybeSingle();
   if (updateError || !updated) {
@@ -1404,6 +1556,32 @@ async function deleteProvider(_ctx: unknown, _req: Request, _body: unknown, para
     if (error) throw new Error(`provider delete failed: ${error.message}`);
   }
   return jsonResponse(ok({ id }, removed ? "AI Provider deleted" : "Provider not found"), 200);
+}
+
+async function resetProviderCircuit(ctx: AuthContext | null, _req: Request, body: unknown, params: Record<string, string>) {
+  const { data: provider, error: lookupError } = await db.from("ai_providers")
+    .select("id,name").eq("id", params.id).eq("is_deleted", false).maybeSingle();
+  if (lookupError) throw new Error(`provider lookup failed: ${lookupError.message}`);
+  if (!provider) {
+    return jsonResponse(fail("AI provider not found", "PROVIDER_NOT_FOUND"), 404);
+  }
+  const requestedCapability = String((body as Record<string, unknown> | null)?.capability ?? "").trim().toLowerCase();
+  let capability: string | null = null;
+  if (requestedCapability !== "") {
+    const { data: circuit, error: circuitError } = await db.from("ai_provider_circuit_breakers")
+      .select("capability").eq("provider_id", params.id).eq("capability", requestedCapability).maybeSingle();
+    if (circuitError) throw new Error(`circuit lookup failed: ${circuitError.message}`);
+    if (!circuit) return jsonResponse(fail("Provider circuit not found", "CIRCUIT_NOT_FOUND"), 404);
+    capability = String(circuit.capability);
+  }
+  const { data: resetCount, error: resetError } = await db.rpc("reset_ai_provider_circuit", {
+    p_provider_id: String(provider.id), p_capability: capability,
+  });
+  if (resetError) throw new Error(`circuit reset failed: ${resetError.message}`);
+  await writeAudit(ctx?.user ?? null, "AI_PROVIDER_CIRCUIT_RESET", "AI_SERVICES", "AIProvider", String(provider.id),
+    `Manual circuit reset for provider ${String(provider.name)}; capability=${capability ?? "all"}; resetCount=${Number(resetCount ?? 0)}`,
+    ctx?.ip ?? null, "WARNING");
+  return jsonResponse(ok({ providerId: String(provider.id), capability, resetCount: Number(resetCount ?? 0) }, "AI provider circuit reset"), 200);
 }
 
 async function getModules() {
@@ -1565,12 +1743,19 @@ async function getModuleModels(_ctx: unknown, _req: Request, _body: unknown, par
   let status: string;
   let message: string;
   try {
-    models = await fetchModels(provider);
+    models = await executeAiProviderCall({
+      db,
+      providerId: provider.id,
+      capability: "provider-model-catalog",
+      config: provider.circuitConfig,
+      operation: ({ signal }) => fetchModels(provider, signal),
+    });
     status = models.length === 0 ? "OFFLINE" : "ONLINE";
     message = models.length === 0
       ? "Provider returned no models. The assigned model can still be used."
       : `Successfully fetched ${models.length} models from ${provider.name}.`;
   } catch (e) {
+    if (e instanceof AiCircuitOpenError) return circuitUnavailableResponse(e);
     status = "OFFLINE";
     message = `Could not reach ${provider.name}: ${(e as Error).message}`;
   }
@@ -1608,6 +1793,10 @@ async function getHealthAnalytics() {
   const visitorsVerified = visitors.count ?? 0;
   const total = docsProcessed + contractsReviewed + visitorsVerified;
   const providerRows = providers.data ?? [];
+  const providerStatuses = providerRows.map((provider) => String(provider.status ?? "OFFLINE").toUpperCase());
+  const apiConnectionStatus = providerRows.length === 0 ? "EMPTY"
+    : providerStatuses.some((status) => status === "DEGRADED") ? "DEGRADED"
+    : providerStatuses.some((status) => status === "CONNECTED") ? "CONNECTED" : "OFFLINE";
   return {
     requestsToday: total,
     docsProcessed,
@@ -1617,8 +1806,8 @@ async function getHealthAnalytics() {
     successRate: null,
     totalTokensUsed: null,
     queueLength: null,
-    apiConnectionStatus: providerRows.length === 0 ? "EMPTY" : "CONFIGURED",
-    modelStatus: providerRows.some((provider) => provider.status === "ACTIVE") ? "CONFIGURED" : "EMPTY",
+    apiConnectionStatus,
+    modelStatus: providerStatuses.some((status) => status === "CONNECTED" || status === "DEGRADED") ? "CONFIGURED" : "EMPTY",
     errorRate: null,
     requestsPerDay: [],
     tokenConsumption: [],
@@ -1652,18 +1841,17 @@ async function testConnection(_ctx: unknown, _req: Request, body: unknown) {
     const candidate = target == null
       ? providerFromRequest(b)
       : { ...target, model: b.model != null && String(b.model).trim() !== "" ? String(b.model).trim() : target.model };
-    const catalog = await verifyProviderCredential(candidate);
+    const catalog = target != null
+      ? await executeAiProviderCall({
+        db,
+        providerId: target.id,
+        capability: "provider-health",
+        config: target.circuitConfig,
+        operation: ({ signal }) => verifyProviderCredential(candidate, signal, 1),
+      })
+      : await verifyProviderCredential(candidate);
     const latency = Date.now() - start;
     const modelFound = catalog.includes(model);
-    if (target != null) {
-      const verifiedAt = nowString();
-      const { error: statusError } = await db.from("ai_providers").update({
-        status: "CONNECTED",
-        last_verified_at: verifiedAt,
-        updated_at: verifiedAt,
-      }).eq("id", target.id);
-      if (statusError) throw new Error(`provider status update failed: ${statusError.message}`);
-    }
     addLog("System Gateway", providerName, "Health Ping / Test Connection", "SUCCESS", latency, 15, "System Administrator");
 
     return jsonResponse(ok({
@@ -1675,13 +1863,15 @@ async function testConnection(_ctx: unknown, _req: Request, body: unknown) {
       modelUsed: model,
     }, "AI Provider connection verified"), 200);
   } catch (e) {
+    if (e instanceof AiCircuitOpenError) return circuitUnavailableResponse(e);
     const latency = Date.now() - start;
     const providers = await loadProviders();
     const suppliedCredential = b.apiKey != null && String(b.apiKey).trim() !== "";
     const target = !suppliedCredential && b.provider != null && String(b.provider).trim() !== ""
       ? providers.find((p) => p.name === String(b.provider) || p.id === String(b.provider)) ?? null
       : null;
-    if (target != null) {
+    const failure = classifyProviderFailure(e);
+    if (target != null && !failure.countable) {
       const { error: statusError } = await db.from("ai_providers").update({
         status: "OFFLINE",
         updated_at: nowString(),
@@ -1694,7 +1884,7 @@ async function testConnection(_ctx: unknown, _req: Request, body: unknown) {
       errorCode: "PROVIDER_VERIFICATION_FAILED",
       data: {
       provider: b.provider != null ? String(b.provider) : null,
-      status: "OFFLINE",
+      status: failure.countable ? "DEGRADED" : "OFFLINE",
       verified: false,
       stage: "SERVER_VERIFICATION",
       diagnostics: providerCredentialDiagnostics(body),
@@ -1782,6 +1972,7 @@ async function classifyDocumentHandler(_ctx: unknown, _req: Request, body: unkno
       latencyMs: latency,
     }, "Document content classified successfully"), 200);
   } catch (error) {
+    if (error instanceof AiCircuitOpenError) return circuitUnavailableResponse(error);
     if (error instanceof DocumentAiError) {
       return jsonResponse({ success: false, message: error.message, errorCode: error.code, timestamp: new Date().toISOString() }, 422);
     }
@@ -1871,6 +2062,7 @@ async function executeLiveAi(_ctx: unknown, _req: Request, body: unknown) {
       responseData.durationMs = duration;
       responseData.tokensUsed = result.tokensUsed;
     } catch (error) {
+      if (error instanceof AiCircuitOpenError) return circuitUnavailableResponse(error);
       if (error instanceof DocumentAiError) {
         return jsonResponse({ success: false, message: error.message, errorCode: error.code, timestamp: new Date().toISOString() }, 422);
       }
@@ -1997,14 +2189,22 @@ async function chatHandler(ctx: AuthContext | null, _req: Request, body: unknown
   if (message.length < 1 || message.length > 4_000) {
     return jsonResponse(fail("AI chat messages must contain between 1 and 4,000 characters.", "VALIDATION_ERROR"), 400);
   }
-  const result = await chatCompose(
-    ctx,
-    message,
-    b.module != null ? String(b.module) : null,
-    Array.isArray(b.relatedModules) ? b.relatedModules.map(String) : null,
-    b.route != null ? String(b.route) : null,
-  );
-  return jsonResponse(ok(result, "AI chat completed"), 200);
+  try {
+    const result = await chatCompose(
+      ctx,
+      message,
+      b.module != null ? String(b.module) : null,
+      Array.isArray(b.relatedModules) ? b.relatedModules.map(String) : null,
+      b.route != null ? String(b.route) : null,
+    );
+    return jsonResponse(ok(result, "AI chat completed"), 200);
+  } catch (error) {
+    if (error instanceof AiCircuitOpenError) return circuitUnavailableResponse(error);
+    if (error instanceof AiProviderRequestError) {
+      return jsonResponse(fail("AI processing is temporarily unavailable. Please try again later.", error.code), 503);
+    }
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2019,6 +2219,7 @@ const routes = [
   { method: "PUT", path: "/ai/providers/:id", guard: AI_ADMIN_GUARD, handler: updateProvider },
   { method: "PUT", path: "/ai/providers/:id/default", guard: AI_ADMIN_GUARD, handler: setDefaultProvider },
   { method: "DELETE", path: "/ai/providers/:id", guard: AI_ADMIN_GUARD, handler: deleteProvider },
+  { method: "POST", path: "/ai/providers/:id/circuit/reset", guard: AI_ADMIN_GUARD, handler: resetProviderCircuit },
   { method: "GET", path: "/ai/modules", guard: AI_ADMIN_GUARD, handler: getModules },
   { method: "PUT", path: "/ai/modules/:id/toggle", guard: AI_ADMIN_GUARD, handler: toggleModule },
   { method: "PUT", path: "/ai/modules/:id/config", guard: AI_ADMIN_GUARD, handler: updateModuleConfig },

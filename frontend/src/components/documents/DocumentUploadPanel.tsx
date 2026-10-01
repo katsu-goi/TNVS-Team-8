@@ -119,8 +119,11 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
             setClassification(suggestion.classification as ClassificationLevel);
           }
         })
-        .catch(() => {
-          setError('AI analysis is temporarily unavailable. You can continue entering the document information manually.');
+        .catch((analysisError) => {
+          const message = extractErrorMessage(analysisError);
+          setError(/temporarily unavailable/i.test(message)
+            ? `${message} You can continue entering the document information manually.`
+            : 'AI analysis is temporarily unavailable. You can continue entering the document information manually.');
         })
         .finally(() => setAiTitleLoading(false));
     }
@@ -383,11 +386,26 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
         <div className="border-t border-slate-100 pt-4 space-y-3">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            <p className="text-sm font-bold text-slate-900">AI Document Analysis Persisted</p>
+            <p className="text-sm font-bold text-slate-900">
+              {result.aiProcessing?.status === 'COMPLETED' ? 'AI Document Analysis Persisted' : 'Document Stored for Manual Review'}
+            </p>
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-50 text-amber-600">
               {(result.status || '').replace(/_/g, ' ')}
             </span>
           </div>
+
+          {result.aiProcessing && result.aiProcessing.status !== 'COMPLETED' && (
+            <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <p className="font-semibold">AI processing is temporarily unavailable.</p>
+                <p className="mt-0.5">
+                  Your document was stored and duplicate detection was handled separately. Complete classification manually
+                  {result.aiProcessing.retryAfterSeconds ? ` or retry AI processing in about ${result.aiProcessing.retryAfterSeconds} seconds.` : '.'}
+                </p>
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center gap-2 text-xs text-slate-600">
             <FileText className="w-3.5 h-3.5 text-slate-400" />

@@ -10,6 +10,7 @@ import {
   SUPPORTED_DOCUMENT_EXTENSIONS,
 } from "../_shared/document-content.ts";
 import { classifyDocumentContent, DocumentAiError } from "../_shared/document-ai.ts";
+import { AiCircuitOpenError, circuitRetryHeaders } from "../_shared/ai-circuit-breaker.ts";
 
 const db = adminDb();
 
@@ -83,8 +84,18 @@ async function handleSuggestTitle(_ctx: AuthContext | null, req: Request) {
       extractionMethod: extraction.method,
     }, "AI document title suggested"), 200);
   } catch (error) {
+    if (error instanceof AiCircuitOpenError) {
+      return jsonResponse({
+        ...fail(error.message, error.code),
+        data: { circuitState: error.circuitState, retryAfterSeconds: error.retryAfterSeconds },
+      }, 503, circuitRetryHeaders(error));
+    }
     if (error instanceof DocumentExtractionError || error instanceof DocumentAiError) {
-      return jsonResponse(fail(error.message, error.code), 422);
+      const unavailable = error instanceof DocumentAiError && [
+        "PROVIDER_OFFLINE", "PROVIDER_DISABLED", "PROVIDER_UNREACHABLE",
+        "CREDENTIAL_MISSING", "CREDENTIAL_DECRYPTION_FAILED", "AI_PROVIDER_REQUEST_FAILED",
+      ].includes(error.code);
+      return jsonResponse(fail(error.message, error.code), unavailable ? 503 : 422);
     }
     throw error;
   }
