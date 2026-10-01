@@ -36,20 +36,26 @@ export const SysAdminDashboard: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [analytics, l, b, n] = await Promise.all([
+      const [analytics, l, b, n, securityState] = await Promise.all([
         fetchAnalytics({ preset: 'today' }),
         superAdministrator ? securityService.getLogs() : Promise.resolve([]),
         superAdministrator ? Promise.resolve([]) : loadBackups(),
         notificationService.getNotifications(),
+        superAdministrator
+          ? Promise.all([securityService.getActiveSessions(), securityService.getBlockedIps(), securityService.getAlerts()])
+          : Promise.resolve([[], [], []] as const),
       ]);
-      if (!analytics.operational) throw new Error('Operational analytics are unavailable for this role');
+      if (superAdministrator && !analytics.enterprise) throw new Error('Enterprise analytics are unavailable for this role');
+      if (!superAdministrator && !analytics.operational) throw new Error('Operational analytics are unavailable for this role');
+      const [sessions, blockedIps, securityAlerts] = securityState;
+      const failedLogins = l.filter((log) => log.status === 'FAILED' || /FAILED_LOGIN|LOGIN_FAILED/.test(log.action)).length;
       const m: DashboardMetrics = {
-        totalDocuments: 0,
-        totalContracts: 0,
-        activeSessions: analytics.operational.activeSessions,
-        failedLoginAttempts: analytics.operational.failedEvents,
-        blockedIpsCount: analytics.operational.blockedIps,
-        activeAlertsCount: analytics.operational.activeSecurityAlerts,
+        totalDocuments: Number(analytics.enterprise?.overview.currentState.documents ?? 0),
+        totalContracts: Number(analytics.enterprise?.overview.currentState.activeContracts ?? 0),
+        activeSessions: superAdministrator ? sessions.length : analytics.operational!.activeSessions,
+        failedLoginAttempts: superAdministrator ? failedLogins : analytics.operational!.failedEvents,
+        blockedIpsCount: superAdministrator ? blockedIps.filter((entry) => entry.status === 'ACTIVE').length : analytics.operational!.blockedIps,
+        activeAlertsCount: superAdministrator ? securityAlerts.filter((alert) => !['RESOLVED', 'DISMISSED'].includes(alert.status)).length : analytics.operational!.activeSecurityAlerts,
         totalBackups: b.length,
         totalNotifications: n.length,
       };

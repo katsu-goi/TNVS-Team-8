@@ -261,6 +261,63 @@ export interface RuntimeHealthCheck {
   detail: string;
 }
 
+export type EnterpriseMetricGroup = Record<string, number | null>;
+
+export interface EnterpriseTrendPoint {
+  date: string;
+  value: number;
+}
+
+export interface EnterpriseLabeledValue {
+  label: string;
+  value: number;
+}
+
+export interface EnterpriseModuleActivity {
+  module: string;
+  count: number;
+  basis: string;
+}
+
+export interface EnterpriseAnalyticsSection {
+  currentState: EnterpriseMetricGroup;
+  selectedPeriod: EnterpriseMetricGroup;
+  statusDistribution?: Record<string, number>;
+  classificationDistribution?: Record<string, number>;
+  facilityStatusDistribution?: Record<string, number>;
+  reservationStatusDistribution?: Record<string, number>;
+  recordsByStatus?: Record<string, number>;
+  complianceStatusDistribution?: Record<string, number>;
+  categoryDistribution?: Record<string, number>;
+  typeDistribution?: Record<string, number>;
+  reservationTrend?: EnterpriseTrendPoint[];
+  visitorTrend?: EnterpriseTrendPoint[];
+  uploadTrend?: EnterpriseTrendPoint[];
+  complianceTrend?: EnterpriseTrendPoint[];
+}
+
+export interface EnterpriseGovernanceSection extends EnterpriseAnalyticsSection {
+  usersByRole: EnterpriseLabeledValue[];
+  auditByModule: EnterpriseLabeledValue[];
+  actionsByAdministrator: EnterpriseLabeledValue[];
+  auditTrend: EnterpriseTrendPoint[];
+}
+
+export interface EnterpriseAnalytics {
+  overview: {
+    currentState: EnterpriseMetricGroup;
+    selectedPeriod: EnterpriseMetricGroup;
+    moduleActivity: EnterpriseModuleActivity[];
+  };
+  facilities: EnterpriseAnalyticsSection;
+  visitors: EnterpriseAnalyticsSection;
+  documents: EnterpriseAnalyticsSection;
+  recordsCompliance: EnterpriseAnalyticsSection;
+  legal: EnterpriseAnalyticsSection;
+  contracts: EnterpriseAnalyticsSection;
+  usersGovernance: EnterpriseGovernanceSection;
+}
+
 export interface AnalyticsData {
   scope: string;
   timezone: 'Asia/Manila';
@@ -283,6 +340,7 @@ export interface AnalyticsData {
     overallStatus: 'LIVE' | 'EMPTY' | 'DISCONNECTED';
     checks: RuntimeHealthCheck[];
   };
+  enterprise?: EnterpriseAnalytics;
   facilities?: Record<string, unknown>;
   visitors?: Record<string, unknown>;
   documents?: Record<string, unknown>;

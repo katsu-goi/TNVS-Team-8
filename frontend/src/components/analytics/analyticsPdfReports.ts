@@ -45,6 +45,106 @@ function trendDetail(trend?: AnalyticsTrend): string {
   return `${trend.percent > 0 ? '+' : ''}${trend.percent}% versus previous equal period`;
 }
 
+function enterpriseValue(value: unknown): string | number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 'Data unavailable';
+}
+
+function enterpriseRows(currentState: Record<string, number | null>, selectedPeriod: Record<string, number | null>) {
+  const humanize = (value: string) => value.replace(/([a-z])([A-Z])/g, '$1 $2').replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+  return [
+    ...Object.entries(currentState).map(([metric, value]) => [humanize(metric), enterpriseValue(value), 'Current State']),
+    ...Object.entries(selectedPeriod).map(([metric, value]) => [humanize(metric), enterpriseValue(value), 'Selected Period']),
+  ];
+}
+
+export function enterpriseAnalyticsPdfReport(data: AnalyticsData, user: User | null): PdfReportDefinition {
+  const enterprise = data.enterprise;
+  if (!enterprise) throw new Error('Enterprise analytics data is required to generate this report.');
+  const overview = enterprise.overview;
+  const sections = [
+    ['Facilities Overview', enterprise.facilities],
+    ['Visitor Overview', enterprise.visitors],
+    ['Document Overview', enterprise.documents],
+    ['Records & Compliance', enterprise.recordsCompliance],
+    ['Legal', enterprise.legal],
+    ['Contracts', enterprise.contracts],
+    ['Users & Governance', enterprise.usersGovernance],
+  ] as const;
+
+  return {
+    fileName: `hirna-enterprise-analytics-governance-${periodFilePart(data)}.pdf`,
+    title: 'Enterprise Analytics & Governance',
+    reportType: 'Enterprise Analytics & Governance Report',
+    generatedAt: data.generatedAt,
+    generatedBy: actorName(user),
+    generatedByRole: 'Super Administrator',
+    periodLabel: periodLabel(data),
+    scopeLabel: 'Authorized Super Administrator aggregate scope',
+    classification: 'RESTRICTED',
+    summary: [
+      { label: 'Active users', value: enterpriseValue(overview.currentState.activeUsers), detail: 'Current State' },
+      { label: 'Open requests', value: enterpriseValue(overview.currentState.openRequests), detail: 'Current State' },
+      { label: 'Facilities', value: enterpriseValue(overview.currentState.facilities), detail: 'Current State' },
+      { label: 'Active contracts', value: enterpriseValue(overview.currentState.activeContracts), detail: 'Current State' },
+      { label: 'Open legal matters', value: enterpriseValue(overview.currentState.openLegalMatters), detail: 'Current State' },
+      { label: 'Compliance issues', value: enterpriseValue(overview.currentState.openComplianceIssues), detail: 'Current State' },
+      { label: 'Recorded activity', value: enterpriseValue(overview.selectedPeriod.recordedActivity), detail: 'Selected Period' },
+      { label: 'Audit events', value: enterpriseValue(overview.selectedPeriod.auditEvents), detail: 'Selected Period' },
+    ],
+    charts: [
+      {
+        title: 'Enterprise Module Activity',
+        description: 'Authoritative recorded activity by module during the selected period.',
+        kind: 'bar',
+        data: overview.moduleActivity.map((row) => ({ label: row.module, value: number(row.count) })),
+        color: [168, 18, 29],
+      },
+      {
+        title: 'Reservation Trend',
+        description: 'Reservations created during the selected period.',
+        kind: 'line',
+        data: (enterprise.facilities.reservationTrend ?? []).map((row) => ({ label: row.date, value: number(row.value) })),
+        color: [202, 34, 48],
+      },
+      {
+        title: 'Visitor Trend',
+        description: 'Visitor registrations recorded during the selected period.',
+        kind: 'line',
+        data: (enterprise.visitors.visitorTrend ?? []).map((row) => ({ label: row.date, value: number(row.value) })),
+        color: [226, 75, 91],
+      },
+      {
+        title: 'Audit Overview',
+        description: 'Authorized organization-wide audit events during the selected period.',
+        kind: 'line',
+        data: enterprise.usersGovernance.auditTrend.map((row) => ({ label: row.date, value: number(row.value) })),
+        color: [148, 20, 31],
+      },
+    ],
+    tables: [
+      ...sections.map(([title, section]) => ({
+        title,
+        description: 'Authoritative aggregates; current-state and selected-period measures are explicitly separated.',
+        columns: [{ label: 'Metric', weight: 2 }, { label: 'Value', align: 'right' as const }, { label: 'Semantics' }],
+        rows: enterpriseRows(section.currentState, section.selectedPeriod),
+      })),
+      {
+        title: 'Enterprise Activity Measurement Basis',
+        description: 'The report does not infer activity from unavailable history.',
+        columns: [{ label: 'Module', weight: 1.3 }, { label: 'Count', align: 'right' as const }, { label: 'Authoritative Basis', weight: 2.8 }],
+        rows: overview.moduleActivity.map((row) => [row.module, row.count, row.basis]),
+      },
+    ],
+    notes: [
+      'Authorization scope: SUPER_ADMIN. The backend authorizes the actor before aggregating module and audit data.',
+      'Current State values describe the state at generation time; Selected Period values use the applied date range.',
+      'The report contains aggregate summaries only and does not include raw visitor, document, legal, contract, or audit records.',
+      'AI measures represent stored classification or analysis results only; no inferred AI coverage is reported.',
+      'All dates and times are presented in Asia/Manila.',
+    ],
+  };
+}
+
 export function facilitiesAnalyticsPdfReport(
   title: string,
   data: AnalyticsData,
@@ -160,7 +260,7 @@ export function systemAnalyticsPdfReport(data: AnalyticsData, user: User | null)
     reportType: 'System Operational Analytics Report',
     generatedAt: data.generatedAt,
     generatedBy: actorName(user),
-    generatedByRole: user?.assignedRoles?.includes('SUPER_ADMIN') || user?.roles?.includes('SUPER_ADMIN') ? 'Super Administrator' : 'System Administrator',
+    generatedByRole: 'System Administrator',
     periodLabel: periodLabel(data),
     scopeLabel: 'Authorized technical and system-health scope',
     classification: 'RESTRICTED',

@@ -9,7 +9,7 @@ const MANILA_OFFSET = "+08:00";
 const MAX_RANGE_MS = 366 * 86_400_000;
 
 const ANALYTICS_ROLES = [
-  "SYSTEM_ADMIN", "SUPER_ADMIN", "FACILITIES_MANAGER", "FACILITIES_OFFICER",
+  "SUPER_ADMIN", "SYSTEM_ADMIN", "FACILITIES_MANAGER", "FACILITIES_OFFICER",
   "COMPLIANCE_MANAGER", "COMPLIANCE_OFFICER", "RECORDS_OFFICER",
   "LEGAL_COUNSEL", "LEGAL_OFFICER", "CONTRACT_OFFICER", "EMPLOYEE",
 ];
@@ -134,17 +134,26 @@ async function handleAnalytics(ctx: AuthContext | null, req: Request) {
   if (window instanceof Response) return window;
   const role = selectedRole(ctx!);
   if (!role) return jsonResponse(fail("This role has no analytics scope.", "ACCESS_DENIED"), 403);
-  const { data, error } = await db.rpc("phase6_analytics_snapshot", {
-    p_role: role,
-    p_user_id: ctx!.userId,
-    p_user_email: ctx!.email,
-    p_from: window.from.toISOString(),
-    p_to: window.to.toISOString(),
-    p_timezone: TIMEZONE,
-  });
+  const rpc = role === "SUPER_ADMIN"
+    ? db.rpc("phase9_super_admin_enterprise_analytics", {
+      p_user_id: ctx!.userId,
+      p_user_email: ctx!.email,
+      p_from: window.from.toISOString(),
+      p_to: window.to.toISOString(),
+      p_timezone: TIMEZONE,
+    })
+    : db.rpc("phase6_analytics_snapshot", {
+      p_role: role,
+      p_user_id: ctx!.userId,
+      p_user_email: ctx!.email,
+      p_from: window.from.toISOString(),
+      p_to: window.to.toISOString(),
+      p_timezone: TIMEZONE,
+    });
+  const { data, error } = await rpc;
   if (error) throw new Error(`analytics aggregation failed: ${error.message}`);
   const response = data as Record<string, unknown>;
-  if (role === "SYSTEM_ADMIN" || role === "SUPER_ADMIN") {
+  if (role === "SYSTEM_ADMIN") {
     const [blockedIps, securityAlerts, unreadNotifications] = await Promise.all([
       db.from("blocked_ips").select("id", { count: "exact", head: true }).eq("status", "ACTIVE"),
       db.from("security_alerts").select("id", { count: "exact", head: true }).eq("status", "UNRESOLVED"),
@@ -164,6 +173,56 @@ async function handleAnalytics(ctx: AuthContext | null, req: Request) {
   }
   response.filter = { preset: window.preset, semantics: "from-inclusive/to-exclusive" };
   return jsonResponse(ok(response, "Role-scoped analytics retrieved"), 200);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function enterpriseCsvRows(payload: unknown): Array<Record<string, unknown>> {
+  if (!isRecord(payload) || !isRecord(payload.enterprise)) return [];
+  const rows: Array<Record<string, unknown>> = [];
+  for (const [section, rawSection] of Object.entries(payload.enterprise)) {
+    if (!isRecord(rawSection)) continue;
+    for (const semantics of ["currentState", "selectedPeriod"] as const) {
+      const metrics = rawSection[semantics];
+      if (!isRecord(metrics)) continue;
+      for (const [metric, value] of Object.entries(metrics)) {
+        rows.push({ section, metric, dimension: "", value, data_semantics: semantics === "currentState" ? "CURRENT_STATE" : "SELECTED_PERIOD", basis: "" });
+      }
+    }
+    const moduleActivity = rawSection.moduleActivity;
+    if (Array.isArray(moduleActivity)) {
+      for (const item of moduleActivity) {
+        if (!isRecord(item)) continue;
+        rows.push({ section, metric: "moduleActivity", dimension: item.module ?? "", value: item.count ?? "", data_semantics: "SELECTED_PERIOD", basis: item.basis ?? "" });
+      }
+    }
+    for (const [key, value] of Object.entries(rawSection)) {
+      if (key === "currentState" || key === "selectedPeriod" || key === "moduleActivity") continue;
+      if (Array.isArray(value)) {
+        const selectedPeriod = ["reservationTrend", "visitorTrend", "uploadTrend", "complianceTrend", "auditTrend", "auditByModule", "actionsByAdministrator"].includes(key);
+        for (const item of value) {
+          if (!isRecord(item)) continue;
+          rows.push({
+            section,
+            metric: key,
+            dimension: item.label ?? item.date ?? "",
+            value: item.value ?? "",
+            data_semantics: selectedPeriod ? "SELECTED_PERIOD" : "CURRENT_STATE",
+            basis: "",
+          });
+        }
+      } else if (isRecord(value)) {
+        const selectedPeriod = section === "visitors" && key === "statusDistribution"
+          || key === "reservationStatusDistribution";
+        for (const [dimension, count] of Object.entries(value)) {
+          rows.push({ section, metric: key, dimension, value: count, data_semantics: selectedPeriod ? "SELECTED_PERIOD" : "CURRENT_STATE", basis: "" });
+        }
+      }
+    }
+  }
+  return rows;
 }
 
 function safeCsvCell(value: unknown): string {
@@ -186,7 +245,18 @@ function csvFromRows(rows: Array<Record<string, unknown>>, metadata: Record<stri
 async function exportRows(ctx: AuthContext, role: string, from: Date, to: Date, status: string | null) {
   let query: any;
   let reportType: string;
-  if (role === "SYSTEM_ADMIN" || role === "SUPER_ADMIN") {
+  if (role === "SUPER_ADMIN") {
+    reportType = "ENTERPRISE_ANALYTICS_GOVERNANCE";
+    const { data, error } = await db.rpc("phase9_super_admin_enterprise_analytics", {
+      p_user_id: ctx.userId,
+      p_user_email: ctx.email,
+      p_from: from.toISOString(),
+      p_to: to.toISOString(),
+      p_timezone: TIMEZONE,
+    });
+    if (error) throw new Error(`enterprise analytics export failed: ${error.message}`);
+    return { rows: enterpriseCsvRows(data), reportType };
+  } else if (role === "SYSTEM_ADMIN") {
     reportType = "SYSTEM_OPERATIONAL_EVENTS";
     query = db.from("security_logs").select("timestamp,module,action,status,risk_level").gte("timestamp", from.toISOString()).lt("timestamp", to.toISOString()).order("timestamp").limit(5001);
   } else if (role === "FACILITIES_MANAGER" || role === "FACILITIES_OFFICER") {
@@ -217,6 +287,7 @@ async function handleCsvExport(ctx: AuthContext | null, req: Request) {
   if (!role) return jsonResponse(fail("This role cannot export analytics.", "ACCESS_DENIED"), 403);
   const status = new URL(req.url).searchParams.get("status")?.trim().toUpperCase() || null;
   if (status && !/^[A-Z][A-Z0-9_]{0,49}$/.test(status)) return jsonResponse(fail("Invalid status filter.", "INVALID_FILTER"), 400);
+  if (role === "SUPER_ADMIN" && status) return jsonResponse(fail("Status filtering is not supported for the enterprise aggregate export.", "INVALID_FILTER"), 400);
   const exported = await exportRows(ctx!, role, window.from, window.to, status);
   if ("error" in exported) return exported.error!;
   const generatedAt = new Date().toISOString();
@@ -239,7 +310,10 @@ async function handleCsvExport(ctx: AuthContext | null, req: Request) {
   });
   const headers = corsHeaders();
   headers.set("Content-Type", "text/csv; charset=utf-8");
-  headers.set("Content-Disposition", `attachment; filename="${exported.reportType!.toLowerCase()}-${generatedAt.slice(0, 10)}.csv"`);
+  const filename = role === "SUPER_ADMIN"
+    ? `hirna-enterprise-analytics-governance-${manilaDate(window.from)}-to-${manilaDate(new Date(window.to.getTime() - 1))}.csv`
+    : `${exported.reportType!.toLowerCase()}-${generatedAt.slice(0, 10)}.csv`;
+  headers.set("Content-Disposition", `attachment; filename="${filename}"`);
   headers.set("Cache-Control", "private, no-store");
   return new Response(csv, { status: 200, headers });
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AnalyticsData, User } from '../types';
-import { facilitiesAnalyticsPdfReport, systemAnalyticsPdfReport } from '../components/analytics/analyticsPdfReports';
+import { enterpriseAnalyticsPdfReport, facilitiesAnalyticsPdfReport, systemAnalyticsPdfReport } from '../components/analytics/analyticsPdfReports';
 import { reservationsPdfReport } from '../components/facilities-officer/reservationPdfReport';
 import { buildPdfDocument, createPdfBlob, normalizePdfText, safePdfFileName, type PdfReportDefinition } from './pdfReport';
 
@@ -70,6 +70,25 @@ const analytics: AnalyticsData = {
   },
 };
 
+const enterpriseAnalytics: AnalyticsData = {
+  ...analytics,
+  scope: 'SUPER_ADMIN',
+  enterprise: {
+    overview: {
+      currentState: { activeUsers: 42, openRequests: 3, facilities: 5, activeContracts: 4, openLegalMatters: 2, openComplianceIssues: 1 },
+      selectedPeriod: { recordedActivity: 91, auditEvents: 50 },
+      moduleActivity: [{ module: 'Facilities', count: 12, basis: 'Reservations and maintenance records created' }],
+    },
+    facilities: { currentState: { totalFacilities: 5 }, selectedPeriod: { reservations: 12 }, reservationTrend: [{ date: '2026-09-01', value: 3 }] },
+    visitors: { currentState: { currentlyCheckedIn: 2 }, selectedPeriod: { registeredVisitors: 8 }, visitorTrend: [{ date: '2026-09-01', value: 2 }] },
+    documents: { currentState: { totalDocuments: 18 }, selectedPeriod: { uploadedDocuments: 7 } },
+    recordsCompliance: { currentState: { openComplianceIssues: 1 }, selectedPeriod: { complianceItems: 2 } },
+    legal: { currentState: { openLegalMatters: 2 }, selectedPeriod: { newLegalMatters: 1 } },
+    contracts: { currentState: { activeContracts: 4 }, selectedPeriod: { newContracts: 1 } },
+    usersGovernance: { currentState: { totalUsers: 50 }, selectedPeriod: { auditEvents: 50 }, usersByRole: [], auditByModule: [], actionsByAdministrator: [], auditTrend: [{ date: '2026-09-01', value: 4 }] },
+  },
+};
+
 describe('structured PDF report generation', () => {
   it('creates a real application/pdf file with multiple report pages', () => {
     const document = buildPdfDocument(baseReport);
@@ -98,6 +117,16 @@ describe('structured PDF report generation', () => {
     expect(report.classification).toBe('RESTRICTED');
     expect(report.generatedByRole).toBe('System Administrator');
     expect(report.tables?.[0].rows[0]).toContain('Edge Function API');
+  });
+
+  it('builds the Super Administrator enterprise report with the applied scope and sections', () => {
+    const report = enterpriseAnalyticsPdfReport(enterpriseAnalytics, { ...user, assignedRoles: ['SUPER_ADMIN'] });
+    expect(report.fileName).toBe('hirna-enterprise-analytics-governance-2026-09-01-to-2026-09-25.pdf');
+    expect(report.title).toBe('Enterprise Analytics & Governance');
+    expect(report.generatedByRole).toBe('Super Administrator');
+    expect(report.scopeLabel).toContain('Super Administrator');
+    expect(report.tables?.map((table) => table.title)).toContain('Users & Governance');
+    expect(report.summary?.find((metric) => metric.label === 'Audit events')?.value).toBe(50);
   });
 
   it('builds a reservation operations report from the current officer collection', () => {

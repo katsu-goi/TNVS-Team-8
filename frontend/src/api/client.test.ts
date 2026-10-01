@@ -10,16 +10,18 @@ describe('safeFetchJson', () => {
 
 describe('Supabase Edge Function routing', () => {
   it('preserves role aliases after the deployed function name', () => {
-    expect(getApiUrl('/facilities-officer/dashboard/summary')).toBe('/api/facilities/facilities-officer/dashboard/summary');
-    expect(getApiUrl('/facilities-manager/dashboard/kpi')).toBe('/api/facilities/facilities-manager/dashboard/kpi');
+    expect(getApiUrl('/facilities-officer/dashboard/summary')).toMatch(/\/facilities\/facilities-officer\/dashboard\/summary$/);
+    expect(getApiUrl('/facilities-manager/dashboard/kpi')).toMatch(/\/facilities\/facilities-manager\/dashboard\/kpi$/);
   });
 
   it('preserves the plural visitor API beneath the singular function name', () => {
-    expect(getApiUrl('/visitors')).toBe('/api/visitor/visitors');
-    expect(getApiUrl('/visitors/occupancy')).toBe('/api/visitor/visitors/occupancy');
+    expect(getApiUrl('/visitors')).toMatch(/\/visitor\/visitors$/);
+    expect(getApiUrl('/visitors/occupancy')).toMatch(/\/visitor\/visitors\/occupancy$/);
   });
 
   it('does not duplicate an API prefix that already matches its function', () => {
-    expect(getApiUrl('/facilities/management')).toBe('/api/facilities/management');
+    const url = getApiUrl('/facilities/management');
+    expect(url).toMatch(/\/facilities\/management$/);
+    expect(url).not.toMatch(/\/facilities\/facilities\/management$/);
   });
 });

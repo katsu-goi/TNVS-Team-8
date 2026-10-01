@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, BellRing, Clock3, Database, Radio, Server, Workflow } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { exportAnalyticsCsv, fetchAnalytics } from '../../api/analyticsService';
-import { useAuthStore } from '../../stores/authStore';
+import { isActorSuperAdmin, useAuthStore } from '../../stores/authStore';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import type { AnalyticsData, RuntimeHealthCheck } from '../../types';
 import { downloadPdfReport } from '../../utils/pdfReport';
@@ -13,6 +13,7 @@ import {
 } from '../analytics/AnalyticsPrimitives';
 import { systemAnalyticsPdfReport } from '../analytics/analyticsPdfReports';
 import { type AnalyticsRangeKey, buildAnalyticsQuery, formatManilaDate, formatManilaDateTime, formatManilaInclusiveEnd, validateAnalyticsRange } from '../analytics/analyticsUtils';
+import { EnterpriseAnalyticsPage } from './EnterpriseAnalyticsDashboard';
 
 const STATUS_STYLE: Record<RuntimeHealthCheck['status'], string> = {
   LIVE: 'border-emerald-200 bg-emerald-50 text-emerald-700',
@@ -20,7 +21,7 @@ const STATUS_STYLE: Record<RuntimeHealthCheck['status'], string> = {
   DISCONNECTED: 'border-rose-200 bg-rose-50 text-rose-700',
 };
 
-export const AnalyticsPage: React.FC = () => {
+export const SystemAnalyticsPage: React.FC = () => {
   const user = useAuthStore((state) => state.user);
   const [range, setRange] = useState<AnalyticsRangeKey>('last_30_days');
   const [customFrom, setCustomFrom] = useState('');
@@ -137,6 +138,11 @@ export const AnalyticsPage: React.FC = () => {
       <section className="card-stat p-5"><h2 className="font-heading font-bold text-slate-950">Operational Data Summary</h2><p className="mt-1 text-xs text-slate-500">Exact authorized totals returned for this range.</p><dl className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4"><div><dt className="text-slate-500">Blocked IPs</dt><dd className="font-bold">{operational?.blockedIps ?? 0}</dd></div><div><dt className="text-slate-500">Active security alerts</dt><dd className="font-bold">{operational?.activeSecurityAlerts ?? 0}</dd></div><div><dt className="text-slate-500">Unread notifications</dt><dd className="font-bold">{operational?.unreadNotifications ?? 0}</dd></div><div><dt className="text-slate-500">Generated</dt><dd className="font-bold">{formatManilaDateTime(data.generatedAt)}</dd></div></dl></section>
     </main>
   );
+};
+
+export const AnalyticsPage: React.FC = () => {
+  const user = useAuthStore((state) => state.user);
+  return isActorSuperAdmin(user) ? <EnterpriseAnalyticsPage /> : <SystemAnalyticsPage />;
 };
 
 export default AnalyticsPage;
