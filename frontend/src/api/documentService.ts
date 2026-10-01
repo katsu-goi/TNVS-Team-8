@@ -4,6 +4,7 @@ import type {
   DocumentUploadOptions,
   DocumentBusinessCategory,
   ClassificationReviewDecision,
+  DocumentDuplicateDetection,
 } from '../types/documents';
 import {
   ALLOWED_UPLOAD_EXTENSIONS,
@@ -68,6 +69,18 @@ export const documentService = {
     return data?.data as DocumentSummary;
   },
 
+  async reviewDuplicate(
+    documentId: string,
+    decision: 'CONTINUE_AS_NEW' | 'CANCEL_REVIEW',
+    matchedDocumentId?: string,
+  ): Promise<{ documentId: string; decision: string; reviewedAt: string; reviewedMatches: number }> {
+    const { data } = await apiClient.post(`/documents/${documentId}/duplicate-review`, {
+      decision,
+      matchedDocumentId,
+    });
+    return data?.data;
+  },
+
   /**
    * Uploads a real file and returns the persisted document, already enriched
    * with extracted content, AI category, summary, calibrated confidence and auto-tags.
@@ -121,5 +134,12 @@ export const documentService = {
     window.URL.revokeObjectURL(blobUrl);
   },
 };
+
+export function extractDuplicateDetection(error: unknown): DocumentDuplicateDetection | null {
+  const candidate = (error as { response?: { data?: { data?: { duplicateDetection?: unknown } } } })
+    ?.response?.data?.data?.duplicateDetection;
+  if (!candidate || typeof candidate !== 'object') return null;
+  return candidate as DocumentDuplicateDetection;
+}
 
 export { extractErrorMessage };

@@ -22,6 +22,46 @@ export interface DocumentTag {
   name: string;
 }
 
+export type DuplicateConfidence = 'EXACT' | 'HIGH_CONFIDENCE' | 'POSSIBLE_DUPLICATE' | 'NO_DUPLICATE';
+export type DuplicateMatchType =
+  | 'EXACT_FILE_DUPLICATE'
+  | 'EXACT_OCR_DUPLICATE'
+  | 'POSSIBLE_DUPLICATE_DOCUMENT_NUMBER'
+  | 'NEAR_DUPLICATE'
+  | 'POSSIBLE_NEW_VERSION'
+  | 'POSSIBLE_RELATED_DOCUMENT';
+
+export interface DocumentDuplicateMatch {
+  documentId: string;
+  title: string;
+  fileName?: string | null;
+  status?: string | null;
+  ownerEmail?: string | null;
+  department?: string | null;
+  uploadedAt?: string | null;
+  documentLocation?: string | null;
+  documentNumber?: string | null;
+  documentType?: string | null;
+  classificationLevel?: string | null;
+  effectiveDate?: string | null;
+  versionNumber?: string | number | null;
+  matchType: DuplicateMatchType;
+  confidence: Exclude<DuplicateConfidence, 'NO_DUPLICATE'>;
+  textSimilarityPercent?: number | null;
+  reasons: string[];
+  ocrExcerpt?: string | null;
+}
+
+export interface DocumentDuplicateDetection {
+  confidence: DuplicateConfidence;
+  status: DuplicateConfidence;
+  checkedAt: string;
+  detectorVersion: string;
+  contentCheck: 'COMPLETE' | 'NOT_RUN_OCR_UNAVAILABLE' | 'NOT_RUN_INSUFFICIENT_TEXT';
+  message: string;
+  matches: DocumentDuplicateMatch[];
+}
+
 export interface DocumentSummary {
   id: string;
   title: string;
@@ -32,6 +72,9 @@ export interface DocumentSummary {
   status: DocumentStatus;
   classificationLevel: ClassificationLevel;
   versionNumber?: number | null;
+  duplicateCheckStatus?: 'NOT_CHECKED' | 'NO_DUPLICATE' | 'REVIEW_REQUIRED' | 'UNAVAILABLE' | null;
+  duplicateCheckedAt?: string | null;
+  duplicateDetection?: DocumentDuplicateDetection;
 
   /** AI pipeline output */
   ocrExtractedText?: string | null;

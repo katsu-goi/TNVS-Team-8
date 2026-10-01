@@ -17,6 +17,17 @@ import {
   DocumentAiError,
   getDocumentBusinessCategories,
 } from "../_shared/document-ai.ts";
+import {
+  detectDocumentDuplicates,
+  DOCUMENT_DUPLICATE_DETECTOR_VERSION,
+  extractDuplicateMetadata,
+  fileSha256,
+  normalizeIdentifier,
+  normalizeOcrText,
+  normalizedOcrSha256,
+  type DuplicateCandidate,
+  type DuplicateDetectionResult,
+} from "../_shared/document-duplicates.ts";
 
 const db = adminDb();
 
@@ -285,6 +296,8 @@ function toDocumentDto(d: Record<string, unknown>): Record<string, unknown> {
       return { id: str(tag.id), name: str(tag.name) };
     }),
     versionNumber: num(d.version_number),
+    duplicateCheckStatus: str(d.duplicate_check_status),
+    duplicateCheckedAt: str(d.duplicate_checked_at),
   };
 }
 
@@ -349,6 +362,86 @@ async function loadDocumentRow(id: string): Promise<Record<string, unknown> | nu
   if (categoryResult.error) throw new Error(`document category query failed: ${categoryResult.error.message}`);
   if (folderResult.error) throw new Error(`document folder query failed: ${folderResult.error.message}`);
   return { ...row, categories: categoryResult.data, folders: folderResult.data };
+}
+
+function duplicateCandidateFromRow(row: Record<string, unknown>): DuplicateCandidate {
+  return {
+    id: String(row.id),
+    title: str(row.title),
+    fileName: str(row.file_name),
+    status: str(row.status),
+    ownerEmail: str(row.owner_email),
+    department: str(row.department),
+    createdAt: str(row.created_at),
+    documentLocation: "Authorized document repository",
+    classificationLevel: str(row.classification_level),
+    versionNumber: num(row.version_number),
+    ocrText: str(row.ocr_extracted_text),
+    fileSha256: str(row.file_sha256),
+    ocrNormalizedSha256: str(row.ocr_normalized_sha256),
+    documentNumber: str(row.document_number),
+    effectiveDate: str(row.effective_date),
+    documentType: str(row.document_type),
+  };
+}
+
+async function runDuplicateDetection(
+  ctx: AuthContext | null,
+  source: Record<string, unknown>,
+): Promise<DuplicateDetectionResult> {
+  const metadata = source.ai_metadata_suggestions != null && typeof source.ai_metadata_suggestions === "object"
+    ? source.ai_metadata_suggestions as Record<string, unknown>
+    : {};
+  const extracted = extractDuplicateMetadata(metadata, str(source.ocr_extracted_text));
+  const normalizedText = normalizeOcrText(str(source.ocr_extracted_text) ?? "");
+  const { data, error } = await db.rpc("phase10_document_duplicate_candidates", {
+    p_user_email: ctx?.email ?? "",
+    p_user_department: str(ctx?.user.row.department),
+    p_roles: (ctx?.roles ?? []).map((role) => role.toUpperCase()),
+    p_source_document_id: String(source.id),
+    p_file_sha256: str(source.file_sha256),
+    p_ocr_normalized_sha256: str(source.ocr_normalized_sha256),
+    p_ocr_normalized_text: normalizedText || null,
+    p_document_number: normalizeIdentifier(extracted.documentNumber),
+    p_title: str(source.title),
+    p_document_type: str(source.ai_detected_document_type),
+    p_limit: 25,
+  });
+  if (error) throw new Error(`authorized duplicate candidate query failed: ${error.message}`);
+  const result = detectDocumentDuplicates({
+    fileSha256: str(source.file_sha256),
+    ocrNormalizedSha256: str(source.ocr_normalized_sha256),
+    ocrText: str(source.ocr_extracted_text),
+    title: str(source.title),
+    documentNumber: extracted.documentNumber,
+    documentType: str(source.ai_detected_document_type),
+    classificationLevel: str(source.classification_level),
+    effectiveDate: extracted.effectiveDate,
+    versionNumber: extracted.versionNumber ?? num(source.version_number),
+  }, ((data as unknown as Record<string, unknown>[]) ?? []).map(duplicateCandidateFromRow));
+
+  if (result.matches.length > 0) {
+    const { error: matchError } = await db.from("document_duplicate_matches").upsert(
+      result.matches.map((match) => ({
+        source_document_id: String(source.id),
+        matched_document_id: match.documentId,
+        match_type: match.matchType,
+        confidence: match.confidence,
+        ocr_similarity: match.textSimilarityPercent == null ? null : match.textSimilarityPercent / 100,
+        reasons: match.reasons,
+        detector_version: DOCUMENT_DUPLICATE_DETECTOR_VERSION,
+        detected_at: result.checkedAt,
+      })),
+      { onConflict: "source_document_id,matched_document_id" },
+    );
+    if (matchError) throw new Error(`duplicate match persistence failed: ${matchError.message}`);
+  }
+  const { error: statusError } = await db.from("documents").update({
+    duplicate_check_status: result.matches.length > 0 ? "REVIEW_REQUIRED" : "NO_DUPLICATE",
+    duplicate_checked_at: result.checkedAt,
+  }).eq("id", String(source.id));
+  if (statusError) throw new Error(`duplicate check status update failed: ${statusError.message}`);
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -519,6 +612,7 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
   const extension = extensionOf(uploadFile.name);
   const storedName = crypto.randomUUID() + "." + extension;
   const bytes = new Uint8Array(await uploadFile.arrayBuffer());
+  const uploadedFileSha256 = await fileSha256(bytes);
   let serverMime: string;
   try {
     serverMime = validateDocumentUpload(extension, uploadFile.type, bytes);
@@ -551,6 +645,7 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
 
     const extraction = await extractDocumentContent(extension, bytes);
     const { result: analysis } = await classifyDocumentContent(db, extraction.text, extraction.method);
+    const extractedOcrSha256 = await normalizedOcrSha256(extraction.text);
     const now = naiveIso();
     const { data: saved, error: insError } = await db.from("documents").insert({
       title: resolveTitle(titleParam, uploadFile.name),
@@ -576,6 +671,9 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
       ai_model: analysis.model,
       ai_processed_at: analysis.processedAt,
       ai_extraction_method: extraction.method,
+      file_sha256: uploadedFileSha256,
+      ocr_normalized_sha256: extractedOcrSha256,
+      duplicate_check_status: "NOT_CHECKED",
       ai_review_required: analysis.reviewRequired,
       classification_review_status: "PENDING",
       final_classification: null,
@@ -639,13 +737,35 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
       if (linkError) throw new Error(`document tags link failed: ${linkError.message}`);
     }
 
+    let duplicateDetection: DuplicateDetectionResult;
+    try {
+      duplicateDetection = await runDuplicateDetection(ctx, row);
+      row.duplicate_check_status = duplicateDetection.matches.length > 0 ? "REVIEW_REQUIRED" : "NO_DUPLICATE";
+      row.duplicate_checked_at = duplicateDetection.checkedAt;
+    } catch (duplicateError) {
+      const checkedAt = new Date().toISOString();
+      duplicateDetection = {
+        confidence: "NO_DUPLICATE",
+        status: "NO_DUPLICATE",
+        checkedAt,
+        detectorVersion: DOCUMENT_DUPLICATE_DETECTOR_VERSION,
+        contentCheck: "NOT_RUN_OCR_UNAVAILABLE",
+        message: "Duplicate detection is temporarily unavailable. The document was stored normally and no duplicate conclusion was made.",
+        matches: [],
+      };
+      row.duplicate_check_status = "UNAVAILABLE";
+      row.duplicate_checked_at = checkedAt;
+      await db.from("documents").update({ duplicate_check_status: "UNAVAILABLE", duplicate_checked_at: checkedAt }).eq("id", docId);
+      console.error("document duplicate detection failed", duplicateError);
+    }
+
     await writeAudit(ctx?.user ?? null, "UPLOAD_AND_CLASSIFY_DOCUMENT", MODULE, "Document", docId,
       `Uploaded and content-classified document '${str(row.title)}' as ${analysis.predictedCategoryName}`
-        + ` (confidence=${analysis.confidence}, reviewRequired=${analysis.reviewRequired}, provider=${analysis.providerName}, model=${analysis.model})`,
+        + ` (confidence=${analysis.confidence}, reviewRequired=${analysis.reviewRequired}, provider=${analysis.providerName}, model=${analysis.model}, duplicateResult=${duplicateDetection.confidence})`,
       ctx ? resolveClientIp(req).ip : null, "INFO");
 
     const tags = await loadTags(docId);
-    return jsonResponse(ok(toDocumentDto({ ...row, tags }), "Document securely stored, content-extracted, AI-classified, and queued for human review"), 200);
+    return jsonResponse(ok({ ...toDocumentDto({ ...row, tags }), duplicateDetection }, "Document securely stored, content-extracted, AI-classified, duplicate-checked, and queued for human review"), 200);
   } catch (error) {
     if (docId) {
       await db.from("document_tags").delete().eq("document_id", docId);
@@ -654,7 +774,36 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
     }
     await db.storage.from(BUCKET).remove([storedName]);
     if (error instanceof DocumentExtractionError) {
-      return jsonResponse(fail(error.message, error.code), 422);
+      let duplicateDetection: DuplicateDetectionResult = detectDocumentDuplicates(
+        { fileSha256: uploadedFileSha256 }, [], { ocrUnavailable: true },
+      );
+      try {
+        const { data: fileCandidates, error: candidateError } = await db.rpc("phase10_document_duplicate_candidates", {
+          p_user_email: ctx?.email ?? "",
+          p_user_department: str(ctx?.user.row.department),
+          p_roles: (ctx?.roles ?? []).map((role) => role.toUpperCase()),
+          p_source_document_id: crypto.randomUUID(),
+          p_file_sha256: uploadedFileSha256,
+          p_ocr_normalized_sha256: null,
+          p_ocr_normalized_text: null,
+          p_document_number: null,
+          p_title: titleParam,
+          p_document_type: null,
+          p_limit: 25,
+        });
+        if (candidateError) throw candidateError;
+        duplicateDetection = detectDocumentDuplicates(
+          { fileSha256: uploadedFileSha256, title: titleParam },
+          ((fileCandidates as unknown as Record<string, unknown>[]) ?? []).map(duplicateCandidateFromRow),
+          { ocrUnavailable: true },
+        );
+      } catch (candidateError) {
+        console.error("file-only duplicate detection failed after OCR extraction error", candidateError);
+      }
+      return jsonResponse({
+        ...fail(error.message, error.code),
+        data: { duplicateDetection },
+      }, 422);
     }
     if (error instanceof DocumentAiError) {
       const unavailable = ["AI_PROVIDER_UNAVAILABLE", "AI_PROVIDER_OFFLINE", "AI_CREDENTIAL_UNAVAILABLE", "DOCUMENT_AI_DISABLED"]
@@ -803,6 +952,58 @@ async function handleDownloadDocument(ctx: AuthContext | null, req: Request, _bo
   return new Response(buffer, { status: 200, headers });
 }
 
+async function handleDuplicateReview(
+  ctx: AuthContext | null,
+  req: Request,
+  body: unknown,
+  p: RouteParams,
+) {
+  if (!isUuid(p.id)) return jsonResponse(fail("Invalid document identifier.", "VALIDATION_ERROR"), 400);
+  const source = await loadDocumentRow(p.id);
+  if (!source || source.is_deleted === true) {
+    return jsonResponse(fail("Document not found.", "RESOURCE_NOT_FOUND"), 404);
+  }
+  const userEmail = ctx?.email ?? "";
+  const roles = ctx?.roles ?? [];
+  const grants = (await loadGrants([p.id])).get(p.id) ?? [];
+  const canReview = isOwner(userEmail, source) || REVIEW_ROLES.some((role) => hasRole(roles, role));
+  if (!canViewDocument(userEmail, roles, str(ctx?.user.row.department), source, grants) || !canReview) {
+    return jsonResponse(fail("You do not have permission to review this duplicate result.", "ACCESS_DENIED"), 403);
+  }
+
+  const value = (body ?? {}) as Record<string, unknown>;
+  const decision = String(value.decision ?? "").trim().toUpperCase();
+  if (!["CONTINUE_AS_NEW", "CANCEL_REVIEW"].includes(decision)) {
+    return jsonResponse(fail("Decision must be CONTINUE_AS_NEW or CANCEL_REVIEW.", "VALIDATION_ERROR"), 400);
+  }
+  const matchedDocumentId = str(value.matchedDocumentId);
+  if (matchedDocumentId != null && !isUuid(matchedDocumentId)) {
+    return jsonResponse(fail("Invalid matched document identifier.", "VALIDATION_ERROR"), 400);
+  }
+
+  let update = db.from("document_duplicate_matches").update({
+    reviewer_decision: decision,
+    reviewed_by: userEmail,
+    reviewed_at: new Date().toISOString(),
+  }).eq("source_document_id", p.id);
+  if (matchedDocumentId) update = update.eq("matched_document_id", matchedDocumentId);
+  const { data: reviewed, error } = await update.select("id, matched_document_id");
+  if (error) throw new Error(`duplicate review failed: ${error.message}`);
+  if (!reviewed || reviewed.length === 0) {
+    return jsonResponse(fail("No duplicate finding was available for review.", "DUPLICATE_MATCH_NOT_FOUND"), 404);
+  }
+
+  await writeAudit(ctx?.user ?? null, "DOCUMENT_DUPLICATE_REVIEWED", MODULE, "Document", p.id,
+    `Duplicate finding reviewed; decision=${decision}; matches=${reviewed.length}`,
+    ctx ? resolveClientIp(req).ip : null, "INFO");
+  return jsonResponse(ok({
+    documentId: p.id,
+    decision,
+    reviewedAt: new Date().toISOString(),
+    reviewedMatches: reviewed.length,
+  }, "Duplicate review decision recorded; no document was deleted, overwritten, archived, or reclassified"), 200);
+}
+
 async function handleGetSignedUrl(ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
   if (!isUuid(p.id)) return generic500();
   const row = await loadDocumentRow(p.id);
@@ -901,6 +1102,7 @@ const routes = [
   { method: "POST", path: "/documents", guard: { kind: "auth" }, handler: handleCreateDocument },
   { method: "POST", path: "/documents/upload", guard: { kind: "auth" }, handler: handleUploadDocument },
   { method: "POST", path: "/documents/:id/classification-review", guard: { kind: "roles", roles: REVIEW_ROLES }, handler: handleClassificationReview },
+  { method: "POST", path: "/documents/:id/duplicate-review", guard: { kind: "auth" }, handler: handleDuplicateReview },
   { method: "GET", path: "/documents/:id/download", guard: { kind: "auth" }, handler: handleDownloadDocument },
   { method: "GET", path: "/documents/:id/signed-url", guard: { kind: "auth" }, handler: handleGetSignedUrl },
   { method: "DELETE", path: "/documents/:id", guard: { kind: "auth" }, handler: handleDeleteOwnedDocument },

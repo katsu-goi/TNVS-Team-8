@@ -1,5 +1,5 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import DocumentUploadPanel from './DocumentUploadPanel';
 import { documentService } from '../../api/documentService';
 
@@ -8,8 +8,10 @@ vi.mock('../../api/documentService', () => ({
     suggestTitle: vi.fn(),
     uploadDocument: vi.fn(),
     downloadDocument: vi.fn(),
+    reviewDuplicate: vi.fn(),
   },
   validateUploadFile: vi.fn(() => null),
+  extractDuplicateDetection: vi.fn(() => null),
 }));
 
 describe('DocumentUploadPanel Verification', () => {
@@ -97,5 +99,50 @@ describe('DocumentUploadPanel Verification', () => {
     expect(
       await screen.findByText('AI analysis is temporarily unavailable. You can continue entering the document information manually.'),
     ).toBeInTheDocument();
+  });
+
+  afterEach(() => cleanup());
+
+  it('shows a no-duplicate result as part of the persisted OCR review', async () => {
+    vi.mocked(documentService.suggestTitle).mockResolvedValueOnce({ suggestedTitle: 'Facilities Safety Inspection Record 2026' } as any);
+    vi.mocked(documentService.uploadDocument).mockResolvedValueOnce({
+      id: '11111111-1111-4111-8111-111111111111', title: 'Facilities Safety Inspection Record 2026', fileName: 'inspection.pdf',
+      status: 'PENDING_REVIEW', classificationLevel: 'INTERNAL',
+      duplicateDetection: { confidence: 'NO_DUPLICATE', status: 'NO_DUPLICATE', checkedAt: '2026-10-01T00:00:00Z', detectorVersion: 'v1', contentCheck: 'COMPLETE', message: 'No existing authorized document matched this upload.', matches: [] },
+    } as any);
+    render(<DocumentUploadPanel />);
+    fireEvent.change(screen.getByLabelText(/File/i, { selector: 'input' }), { target: { files: [new File(['content'], 'inspection.pdf', { type: 'application/pdf' })] } });
+    await screen.findByDisplayValue('Facilities Safety Inspection Record 2026');
+    fireEvent.click(screen.getByRole('button', { name: /Upload & Analyze/i }));
+    expect(await screen.findByText('Duplicate Detection')).toBeInTheDocument();
+    expect(screen.getByText('No existing authorized document matched this upload.')).toBeInTheDocument();
+  });
+
+  it('renders ranked matches, comparison, and records Continue as New without deleting anything', async () => {
+    vi.mocked(documentService.suggestTitle).mockResolvedValueOnce({ suggestedTitle: 'Maintenance Memorandum 2026' } as any);
+    vi.mocked(documentService.reviewDuplicate).mockResolvedValueOnce({ documentId: 'source', decision: 'CONTINUE_AS_NEW', reviewedAt: '2026-10-01', reviewedMatches: 2 });
+    vi.mocked(documentService.uploadDocument).mockResolvedValueOnce({
+      id: 'source', title: 'Maintenance Memorandum 2026', fileName: 'memo.pdf', status: 'PENDING_REVIEW', classificationLevel: 'INTERNAL',
+      aiDetectedDocumentType: 'MEMORANDUM', versionNumber: 2, aiMetadataSuggestions: { documentNumber: 'HIRNA-014' },
+      duplicateDetection: {
+        confidence: 'HIGH_CONFIDENCE', status: 'HIGH_CONFIDENCE', checkedAt: '2026-10-01T00:00:00Z', detectorVersion: 'v1', contentCheck: 'COMPLETE',
+        message: 'A high-confidence duplicate candidate requires review.',
+        matches: [
+          { documentId: 'match-1', title: 'Maintenance Memorandum Signed', fileName: 'signed.pdf', matchType: 'NEAR_DUPLICATE', confidence: 'HIGH_CONFIDENCE', textSimilarityPercent: 96, reasons: ['Substantially similar meaningful OCR content'], ocrExcerpt: 'Authorized OCR text.', versionNumber: 1 },
+          { documentId: 'match-2', title: 'Maintenance Memorandum Draft', matchType: 'POSSIBLE_RELATED_DOCUMENT', confidence: 'POSSIBLE_DUPLICATE', textSimilarityPercent: 82, reasons: ['Similar meaningful OCR content'] },
+        ],
+      },
+    } as any);
+    render(<DocumentUploadPanel />);
+    fireEvent.change(screen.getByLabelText(/File/i, { selector: 'input' }), { target: { files: [new File(['content'], 'memo.pdf', { type: 'application/pdf' })] } });
+    await screen.findByDisplayValue('Maintenance Memorandum 2026');
+    fireEvent.click(screen.getByRole('button', { name: /Upload & Analyze/i }));
+    expect(await screen.findByText('Maintenance Memorandum Signed')).toBeInTheDocument();
+    expect(screen.getByText('Maintenance Memorandum Draft')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: /Compare/i })[0]);
+    expect(screen.getByText('Authorized OCR text.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Continue as New Document/i }));
+    await waitFor(() => expect(documentService.reviewDuplicate).toHaveBeenCalledWith('source', 'CONTINUE_AS_NEW'));
+    expect(await screen.findByText('Decision Recorded')).toBeInTheDocument();
   });
 });

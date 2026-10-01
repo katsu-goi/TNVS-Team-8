@@ -2,10 +2,11 @@ import React, { useRef, useState } from 'react';
 import {
   Upload, Download, Sparkles, FileText, AlertCircle, CheckCircle2, X, Loader2,
 } from 'lucide-react';
-import { documentService, validateUploadFile } from '../../api/documentService';
+import { documentService, extractDuplicateDetection, validateUploadFile } from '../../api/documentService';
 import { extractErrorMessage } from '../../api/client';
-import type { ClassificationLevel, DocumentSummary } from '../../types/documents';
+import type { ClassificationLevel, DocumentDuplicateDetection as DuplicateDetectionResult, DocumentSummary } from '../../types/documents';
 import { UPLOAD_ACCEPT_ATTRIBUTE, ALLOWED_UPLOAD_EXTENSIONS } from '../../types/documents';
+import DocumentDuplicateDetection from './DocumentDuplicateDetection';
 
 const CLASSIFICATIONS: ClassificationLevel[] = [
   'PUBLIC', 'INTERNAL', 'CONFIDENTIAL', 'RESTRICTED',
@@ -78,6 +79,7 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<DocumentSummary | null>(null);
+  const [failedDuplicateDetection, setFailedDuplicateDetection] = useState<DuplicateDetectionResult | null>(null);
   const [aiAnalysis, setAiAnalysis] = useState<AiAnalysisResult | null>(null);
   const [aiTitleLoading, setAiTitleLoading] = useState(false);
 
@@ -88,6 +90,7 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
     setProgress(0);
     setError(null);
     setAiAnalysis(null);
+    setFailedDuplicateDetection(null);
     setAiTitleLoading(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -98,6 +101,7 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
     setError(validationError);
     setFile(selected);
     setResult(null);
+    setFailedDuplicateDetection(null);
     setAiAnalysis(null);
 
     if (selected && !validationError) {
@@ -163,6 +167,7 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
       onUploaded?.(uploaded);
     } catch (err) {
       setError(extractErrorMessage(err));
+      setFailedDuplicateDetection(extractDuplicateDetection(err));
     } finally {
       setUploading(false);
     }
@@ -346,6 +351,23 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
         </div>
       )}
 
+      {failedDuplicateDetection && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-900">
+          <p className="font-bold">Duplicate Detection</p>
+          <p className="mt-1">OCR could not extract enough text to perform content-based duplicate detection. File-level duplicate detection was still attempted.</p>
+          {failedDuplicateDetection.matches.length > 0 ? (
+            <div className="mt-2 space-y-1">
+              {failedDuplicateDetection.matches.map((match) => (
+                <div key={match.documentId} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white px-2.5 py-2 text-slate-700">
+                  <span><strong>{match.title}</strong> — identical file hash</span>
+                  <button type="button" onClick={() => void documentService.downloadDocument(match.documentId, match.fileName ?? undefined)} className="font-semibold text-emerald-700">View Existing</button>
+                </div>
+              ))}
+            </div>
+          ) : <p className="mt-1 text-[11px]">No exact authorized file match was found. No content-based conclusion was made.</p>}
+        </div>
+      )}
+
       <div className="flex justify-end">
         <button
           onClick={submit}
@@ -434,6 +456,8 @@ export const DocumentUploadPanel: React.FC<DocumentUploadPanelProps> = ({
               <p className="text-xs text-slate-600 mt-1 leading-relaxed">{result.aiClassificationReason}</p>
             </div>
           )}
+
+          <DocumentDuplicateDetection document={result} onError={setError} />
 
           {!!result.tags?.length && (
             <div>
