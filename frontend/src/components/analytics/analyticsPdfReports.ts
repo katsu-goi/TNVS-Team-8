@@ -246,6 +246,9 @@ export function facilitiesAnalyticsPdfReport(
 }
 
 export function systemAnalyticsPdfReport(data: AnalyticsData, user: User | null): PdfReportDefinition {
+  if (data.scope === 'SUPER_ADMIN') {
+    return enterpriseAnalyticsPdfReport(data, user);
+  }
   const operational = data.operational;
   const checks: RuntimeHealthCheck[] = data.systemHealth?.checks ?? [];
   const trend = operational?.failedEventsTrend;

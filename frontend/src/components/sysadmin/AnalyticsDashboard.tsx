@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, BellRing, Clock3, Database, Radio, Server, Workflow } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { exportAnalyticsCsv, fetchAnalytics } from '../../api/analyticsService';
+import { dashboardErrorMessage } from '../../api/dashboardData';
 import { isActorSuperAdmin, useAuthStore } from '../../stores/authStore';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import type { AnalyticsData, RuntimeHealthCheck } from '../../types';
@@ -40,8 +41,14 @@ export const SystemAnalyticsPage: React.FC = () => {
     if (validationError) { setLoading(false); return; }
     setLoading(true);
     setError(null);
-    try { setData(await fetchAnalytics(query)); }
-    catch (requestError: any) { setError(requestError?.response?.data?.message || requestError?.message || 'Unable to load operational analytics.'); }
+    try {
+      const result = await fetchAnalytics(query);
+      if (result.scope !== 'SYSTEM_ADMIN' || !result.operational) {
+        throw new Error('Invalid analytics response');
+      }
+      setData(result);
+    }
+    catch (requestError: unknown) { setError(dashboardErrorMessage(requestError)); }
     finally { setLoading(false); }
   }, [query, validationError]);
 
