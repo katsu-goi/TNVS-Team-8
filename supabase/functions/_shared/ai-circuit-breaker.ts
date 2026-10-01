@@ -37,6 +37,8 @@ export function normalizeAiCircuitConfig(value: Partial<AiCircuitConfig> | Recor
 }
 
 export class AiProviderRequestError extends Error {
+  public readonly source = "provider" as const;
+
   constructor(
     public readonly code: string,
     message: string,
@@ -74,19 +76,20 @@ export function classifyProviderFailure(error: unknown): ProviderFailureClassifi
   const code = String(value?.code ?? "").toUpperCase();
   const message = String(value?.message ?? "").toLowerCase();
   const status = Number(value?.status);
+  const isProviderHttpFailure = error instanceof AiProviderRequestError;
   if (name === "aborterror" || code === "PROVIDER_TIMEOUT" || message.includes("timed out") || message.includes("aborted")) {
     return { category: "TIMEOUT", code: "PROVIDER_TIMEOUT", countable: true, retryable: true, safeMessage: "The provider request timed out." };
   }
   if (name === "typeerror" || code === "PROVIDER_NETWORK_FAILURE" || message.includes("fetch failed") || message.includes("connection refused") || message.includes("dns")) {
     return { category: "NETWORK", code: "PROVIDER_NETWORK_FAILURE", countable: true, retryable: true, safeMessage: "The provider network request failed." };
   }
-  if (status === 429) {
+  if (isProviderHttpFailure && status === 429) {
     return { category: "RATE_LIMIT", code: "PROVIDER_RATE_LIMITED", countable: true, retryable: true, safeMessage: "The provider is temporarily rate limited." };
   }
-  if (status >= 500 && status <= 599) {
+  if (isProviderHttpFailure && status >= 500 && status <= 599) {
     return { category: "UPSTREAM_5XX", code: "PROVIDER_UPSTREAM_FAILURE", countable: true, retryable: true, safeMessage: "The provider is temporarily unavailable." };
   }
-  if ([408, 409, 425].includes(status)) {
+  if (isProviderHttpFailure && [408, 409, 425].includes(status)) {
     return { category: "TRANSIENT_HTTP", code: `PROVIDER_HTTP_${status}`, countable: true, retryable: true, safeMessage: "The provider returned a transient response." };
   }
   return { category: "NON_TRANSIENT", code: code || (Number.isFinite(status) ? `PROVIDER_HTTP_${status}` : "PROVIDER_NON_TRANSIENT_ERROR"), countable: false, retryable: false, safeMessage: "The provider request was rejected." };

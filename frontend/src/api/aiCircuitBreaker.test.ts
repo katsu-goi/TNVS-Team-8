@@ -143,10 +143,18 @@ describe('persistent AI provider circuit executor', () => {
     expect(classifyProviderFailure(new DOMException('timed out', 'AbortError')).code).toBe('PROVIDER_TIMEOUT');
   });
 
-  it('classifies HTTP 429, HTTP 500, and connection failures as transient provider failures', () => {
+  it('classifies provider-origin HTTP 409, HTTP 429, HTTP 500, and connection failures as transient provider failures', () => {
+    expect(classifyProviderFailure(new AiProviderRequestError('CONFLICT', 'provider conflict', 409))).toMatchObject({ countable: true, retryable: true, category: 'TRANSIENT_HTTP' });
     expect(classifyProviderFailure(new AiProviderRequestError('RATE', 'rate limited', 429))).toMatchObject({ countable: true, retryable: true, category: 'RATE_LIMIT' });
     expect(classifyProviderFailure(new AiProviderRequestError('UPSTREAM', 'unavailable', 500))).toMatchObject({ countable: true, retryable: true, category: 'UPSTREAM_5XX' });
     expect(classifyProviderFailure(new TypeError('fetch failed'))).toMatchObject({ countable: true, retryable: true, category: 'NETWORK' });
+  });
+
+  it('does not count application-origin HTTP 409 or HTTP 429 responses as provider failures', () => {
+    expect(classifyProviderFailure({ status: 409, code: 'BUSINESS_RULE_VIOLATION', message: 'already processed' }))
+      .toMatchObject({ countable: false, retryable: false, category: 'NON_TRANSIENT' });
+    expect(classifyProviderFailure({ status: 429, code: 'APPLICATION_RATE_LIMIT', message: 'user quota reached' }))
+      .toMatchObject({ countable: false, retryable: false, category: 'NON_TRANSIENT' });
   });
 
   it('K: does not count deterministic validation or authentication failures', async () => {
