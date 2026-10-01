@@ -292,17 +292,22 @@ export function detectDocumentDuplicates(
       || (right.textSimilarityPercent ?? -1) - (left.textSimilarityPercent ?? -1)
       || left.title.localeCompare(right.title))
     .slice(0, MAX_DUPLICATE_MATCHES);
-  const confidence: DuplicateConfidence = matches[0]?.confidence ?? "NO_DUPLICATE";
   const meaningful = isMeaningfulOcrText(source.ocrText);
   const contentCheck = options.ocrUnavailable
     ? "NOT_RUN_OCR_UNAVAILABLE"
     : meaningful ? "COMPLETE" : "NOT_RUN_INSUFFICIENT_TEXT";
+  // An extraction failure means content matching never ran. A missing file-hash
+  // match in that state is not evidence that the document is unique.
+  const confidence: DuplicateConfidence = matches[0]?.confidence
+    ?? (options.ocrUnavailable ? "UNAVAILABLE" : "NO_DUPLICATE");
   const message = confidence === "EXACT"
     ? "An identical file or normalized OCR document already exists in your authorized repository."
     : confidence === "HIGH_CONFIDENCE"
       ? "A high-confidence duplicate candidate requires review."
       : confidence === "POSSIBLE_DUPLICATE"
         ? "One or more possible duplicate or related-version candidates require review."
+        : confidence === "UNAVAILABLE"
+          ? "Content-based duplicate detection was unavailable, so no duplicate conclusion was made."
         : contentCheck === "COMPLETE"
           ? "No existing authorized document matched this upload."
           : "Content-based duplicate detection was not run because meaningful OCR text was unavailable.";

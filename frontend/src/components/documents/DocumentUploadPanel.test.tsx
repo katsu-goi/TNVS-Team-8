@@ -162,4 +162,48 @@ describe('DocumentUploadPanel Verification', () => {
     await waitFor(() => expect(documentService.reviewDuplicate).toHaveBeenCalledWith('source', 'CONTINUE_AS_NEW'));
     expect(await screen.findByText('Decision Recorded')).toBeInTheDocument();
   });
+
+  it('renders an exact duplicate returned by the upload flow and records Cancel Review without another upload', async () => {
+    vi.mocked(documentService.suggestTitle).mockResolvedValueOnce({
+      suggestedTitle: 'Fire Safety Inspection Report - September 22, 2026 - Facilities & Administrative Management',
+    } as any);
+    vi.mocked(documentService.reviewDuplicate).mockResolvedValueOnce({
+      documentId: 'new-fire-report', decision: 'CANCEL_REVIEW', reviewedAt: '2026-10-01', reviewedMatches: 1,
+    });
+    vi.mocked(documentService.uploadDocument).mockResolvedValueOnce({
+      id: 'new-fire-report',
+      title: 'Fire Safety Inspection Report - September 22, 2026 - Facilities & Administrative Management',
+      fileName: '02_hirna_fire_safety_inspection_report.pdf',
+      status: 'PENDING_REVIEW',
+      classificationLevel: 'INTERNAL',
+      duplicateDetection: {
+        confidence: 'EXACT', status: 'EXACT', checkedAt: '2026-10-01T00:00:00Z', detectorVersion: 'v1', contentCheck: 'COMPLETE',
+        message: 'An identical file or normalized OCR document already exists in your authorized repository.',
+        matches: [{
+          documentId: 'existing-fire-report',
+          title: 'Fire Safety Inspection Report - September 22, 2026 - Facilities & Administrative Management',
+          fileName: '02_hirna_fire_safety_inspection_report.pdf',
+          matchType: 'EXACT_OCR_DUPLICATE',
+          confidence: 'EXACT',
+          textSimilarityPercent: 100,
+          reasons: ['Identical normalized OCR content hash'],
+        }],
+      },
+    } as any);
+
+    render(<DocumentUploadPanel />);
+    const file = new File(['exact fire report bytes'], '02_hirna_fire_safety_inspection_report.pdf', { type: 'application/pdf' });
+    fireEvent.change(screen.getByLabelText(/File/i, { selector: 'input' }), { target: { files: [file] } });
+    await screen.findByDisplayValue('Fire Safety Inspection Report - September 22, 2026 - Facilities & Administrative Management');
+    fireEvent.click(screen.getByRole('button', { name: /Upload & Analyze/i }));
+
+    expect(await screen.findByText('Exact')).toBeInTheDocument();
+    expect(screen.getByText('Exact Ocr Duplicate')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /View Existing/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Cancel Review/i }));
+
+    await waitFor(() => expect(documentService.reviewDuplicate).toHaveBeenCalledWith('new-fire-report', 'CANCEL_REVIEW'));
+    expect(documentService.uploadDocument).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('Review Cancelled')).toBeInTheDocument();
+  });
 });

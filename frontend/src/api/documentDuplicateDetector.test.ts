@@ -43,6 +43,28 @@ describe('deterministic document duplicate detector', () => {
     expect(result.matches[0].matchType).toBe('EXACT_OCR_DUPLICATE');
   });
 
+  it('detects an exact legacy OCR duplicate when the existing document has no stored hashes', () => {
+    const result = detectDocumentDuplicates(
+      source({ fileSha256: 'c'.repeat(64), ocrNormalizedSha256: 'd'.repeat(64) }),
+      [candidate({ fileSha256: null, ocrNormalizedSha256: null })],
+    );
+    expect(result.status).toBe('EXACT');
+    expect(result.matches[0].matchType).toBe('EXACT_OCR_DUPLICATE');
+  });
+
+  it('detects normalized content when equivalent PDFs have different metadata bytes', () => {
+    const result = detectDocumentDuplicates(
+      source({ fileSha256: 'c'.repeat(64), ocrNormalizedSha256: 'd'.repeat(64) }),
+      [candidate({
+        fileSha256: 'e'.repeat(64),
+        ocrNormalizedSha256: null,
+        ocrText: `  ${baseText.toUpperCase().replace(/ /g, '  ')}  `,
+      })],
+    );
+    expect(result.status).toBe('EXACT');
+    expect(result.matches[0].matchType).toBe('EXACT_OCR_DUPLICATE');
+  });
+
   it('normalizes Unicode, punctuation spacing, line breaks, and case deterministically', () => {
     expect(normalizeOcrText('  “MEMO”  No. :  14\nNorth—Campus  ')).toBe('"memo" no.:14 north-campus');
   });
@@ -93,6 +115,18 @@ describe('deterministic document duplicate detector', () => {
   it('reports that content comparison did not run when OCR fails', () => {
     const result = detectDocumentDuplicates(source({ ocrText: null, ocrNormalizedSha256: null }), [], { ocrUnavailable: true });
     expect(result.contentCheck).toBe('NOT_RUN_OCR_UNAVAILABLE');
+    expect(result.status).toBe('UNAVAILABLE');
+    expect(result.status).not.toBe('NO_DUPLICATE');
+  });
+
+  it('still returns an exact file match when OCR extraction is unavailable', () => {
+    const result = detectDocumentDuplicates(
+      source({ ocrText: null, ocrNormalizedSha256: null }),
+      [candidate({ ocrText: null, ocrNormalizedSha256: null })],
+      { ocrUnavailable: true },
+    );
+    expect(result.status).toBe('EXACT');
+    expect(result.matches[0].matchType).toBe('EXACT_FILE_DUPLICATE');
   });
 
   it('rejects very short OCR text as non-meaningful', () => {

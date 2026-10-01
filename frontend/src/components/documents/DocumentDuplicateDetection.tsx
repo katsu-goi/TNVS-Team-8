@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Download, GitCompare, Loader2, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Download, GitCompare, Loader2, ShieldCheck, XCircle } from 'lucide-react';
 import { documentService } from '../../api/documentService';
 import type { DocumentDuplicateMatch, DocumentSummary } from '../../types/documents';
 
@@ -61,33 +61,36 @@ function CompareView({ document, match }: { document: DocumentSummary; match: Do
 export default function DocumentDuplicateDetection({ document, onError }: Props) {
   const detection = document.duplicateDetection;
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [reviewing, setReviewing] = useState(false);
-  const [reviewed, setReviewed] = useState(false);
+  const [reviewingDecision, setReviewingDecision] = useState<'CONTINUE_AS_NEW' | 'CANCEL_REVIEW' | null>(null);
+  const [reviewedDecision, setReviewedDecision] = useState<'CONTINUE_AS_NEW' | 'CANCEL_REVIEW' | null>(null);
   if (!detection) return null;
 
   const hasMatches = detection.matches.length > 0;
+  const isUnavailable = detection.confidence === 'UNAVAILABLE';
   const isStrong = detection.confidence === 'EXACT' || detection.confidence === 'HIGH_CONFIDENCE';
   const tone = hasMatches
     ? isStrong ? 'border-rose-200 bg-rose-50/60' : 'border-amber-200 bg-amber-50/60'
-    : 'border-emerald-200 bg-emerald-50/60';
+    : isUnavailable ? 'border-amber-200 bg-amber-50/60' : 'border-emerald-200 bg-emerald-50/60';
 
-  const continueAsNew = async () => {
-    if (!hasMatches || reviewed) return;
-    setReviewing(true);
+  const recordDecision = async (decision: 'CONTINUE_AS_NEW' | 'CANCEL_REVIEW') => {
+    if (!hasMatches || reviewingDecision || reviewedDecision) return;
+    setReviewingDecision(decision);
     try {
-      await documentService.reviewDuplicate(document.id, 'CONTINUE_AS_NEW');
-      setReviewed(true);
+      await documentService.reviewDuplicate(document.id, decision);
+      setReviewedDecision(decision);
     } catch (error) {
       onError(error instanceof Error ? error.message : 'The duplicate review decision could not be recorded.');
     } finally {
-      setReviewing(false);
+      setReviewingDecision(null);
     }
   };
 
   return (
     <section className={`rounded-xl border p-4 ${tone}`} aria-labelledby="duplicate-detection-title">
       <div className="flex items-start gap-2">
-        {hasMatches ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />}
+        {hasMatches || isUnavailable
+          ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+          : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h4 id="duplicate-detection-title" className="text-sm font-bold text-slate-900">Duplicate Detection</h4>
@@ -140,11 +143,19 @@ export default function DocumentDuplicateDetection({ document, onError }: Props)
             </article>
           ))}
           <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-[10px] text-slate-500">Detection is advisory. Existing documents and this upload remain unchanged.</p>
-            <button type="button" onClick={() => void continueAsNew()} disabled={reviewing || reviewed} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-[11px] font-semibold text-white hover:bg-slate-800 disabled:opacity-60">
-              {reviewing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
-              {reviewed ? 'Decision Recorded' : 'Continue as New Document'}
-            </button>
+            <p className="text-[10px] text-slate-500">
+              Detection is advisory. Cancel Review records your decision but does not delete either stored document.
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button type="button" onClick={() => void recordDecision('CANCEL_REVIEW')} disabled={reviewingDecision != null || reviewedDecision != null} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60">
+                {reviewingDecision === 'CANCEL_REVIEW' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
+                {reviewedDecision === 'CANCEL_REVIEW' ? 'Review Cancelled' : 'Cancel Review'}
+              </button>
+              <button type="button" onClick={() => void recordDecision('CONTINUE_AS_NEW')} disabled={reviewingDecision != null || reviewedDecision != null} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-[11px] font-semibold text-white hover:bg-slate-800 disabled:opacity-60">
+                {reviewingDecision === 'CONTINUE_AS_NEW' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                {reviewedDecision === 'CONTINUE_AS_NEW' ? 'Decision Recorded' : 'Continue as New Document'}
+              </button>
+            </div>
           </div>
         </div>
       )}
