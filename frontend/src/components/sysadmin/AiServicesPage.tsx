@@ -25,14 +25,14 @@ interface Provider {
   capabilities?: string[];
   lastVerifiedAt?: string | null;
   requiresCredentialReconfiguration?: boolean;
-  circuitConfig: {
+  circuitConfig?: {
     failureThreshold: number;
     openCooldownSeconds: number;
     requestTimeoutMs: number;
     maxRetries: number;
     retryBaseDelayMs: number;
   };
-  circuits: Array<{
+  circuits?: Array<{
     capability: string;
     state: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
     failureCount: number;
@@ -813,9 +813,13 @@ export const AiServicesPage: React.FC = () => {
                     </div>
                   )}
                   <div className="mt-3 space-y-2">
-                    {p.circuits.length === 0 ? (
+                    {!Array.isArray(p.circuits) ? (
                       <div className="flex items-center justify-between rounded-lg bg-slate-50 px-2.5 py-2 text-[11px] text-slate-600">
-                        <span>Circuit</span><span className="font-bold text-emerald-700">CLOSED · no failures</span>
+                        <span>Circuit</span><span className="font-bold text-slate-500">Telemetry unavailable</span>
+                      </div>
+                    ) : p.circuits.length === 0 ? (
+                      <div className="flex items-center justify-between rounded-lg bg-slate-50 px-2.5 py-2 text-[11px] text-slate-600">
+                        <span>Circuit</span><span className="font-bold text-emerald-700">CLOSED · no recorded failures</span>
                       </div>
                     ) : p.circuits.map(circuit => {
                       const retrySeconds = circuit.nextAttemptAt
