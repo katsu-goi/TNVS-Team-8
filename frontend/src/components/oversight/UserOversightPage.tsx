@@ -15,10 +15,11 @@ import {
 import { extractErrorMessage } from '../../api/client';
 import { getDashboardPath } from '../../stores/authStore';
 import {
-  Button, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader, SelectField,
+  Button, Card, EmptyState, ErrorState, Modal, PageHeader, SelectField,
   StatusBadge, TextAreaField,
 } from '../ui/SharedUI';
 import { formatRoleLabel } from '../ui/UserProfileMenu';
+import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 
 type DurationValue = '5' | '10' | '15' | 'manual';
 type StatusFilter = 'ALL' | 'ONLINE' | 'OFFLINE';
@@ -153,7 +154,7 @@ export const UserOversightPage: React.FC = () => {
     }
   };
 
-  if (loading) return <LoadingState label="Loading authorized oversight accounts..." />;
+  if (loading) return <PortalLoadingOverlay message="Loading authorized oversight accounts..." />;
   if (error && targets.length === 0) return <ErrorState message={error} onRetry={() => void load()} />;
 
   const visibleCount = groupedTargets.reduce((count, [, items]) => count + items.length, 0);

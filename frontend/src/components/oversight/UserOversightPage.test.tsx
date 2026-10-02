@@ -78,6 +78,17 @@ describe('Super Admin User Oversight page', () => {
   });
   afterEach(cleanup);
 
+  it('uses the branded portal animation while oversight data is loading', () => {
+    mocks.listTargets.mockReturnValue(new Promise(() => undefined));
+    mocks.getSummary.mockReturnValue(new Promise(() => undefined));
+    mocks.getCurrent.mockReturnValue(new Promise(() => undefined));
+
+    render(<MemoryRouter><UserOversightPage /></MemoryRouter>);
+
+    expect(screen.getByRole('status')).toHaveTextContent('Loading authorized oversight accounts...');
+    expect(screen.getByTestId('portal-loading-animation')).toBeInTheDocument();
+  });
+
   it('renders backend summary data and keeps offline accounts separately eligible', async () => {
     render(<MemoryRouter><UserOversightPage /></MemoryRouter>);
     expect(await screen.findByRole('heading', { name: 'Department Head' })).toBeInTheDocument();
