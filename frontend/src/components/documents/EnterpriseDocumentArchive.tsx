@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive, ArrowLeft, Download, Eye, FileArchive,
   FileText, Folder, FolderOpen, LockKeyhole, Printer, RefreshCw, Search, ShieldCheck,
@@ -6,7 +6,7 @@ import {
 import { extractErrorMessage } from '../../api/client';
 import {
   ArchiveDepartment, ArchiveDocument, ArchiveFilters, DocumentAccessRequest,
-  documentArchiveService,
+  DocumentViewerError, documentArchiveService,
 } from '../../api/documentArchiveService';
 import { hasPermission, useAuthStore } from '../../stores/authStore';
 import {
@@ -44,6 +44,14 @@ function classificationTone(value: ArchiveDocument['classification']): 'info' | 
   return 'danger';
 }
 
+function documentViewerErrorMessage(error: unknown, viewerKind?: ArchiveDocument['viewerKind']): string {
+  if (error instanceof DocumentViewerError) return error.message;
+  const status = Number((error as { response?: { status?: unknown } })?.response?.status);
+  if (status === 403) return 'You do not have permission to view this document.';
+  if (status === 404) return viewerKind === 'PDF' ? 'The PDF file could not be found.' : 'The document file could not be found.';
+  return 'Unable to load the document. Try again.';
+}
+
 const EMPTY_FILTERS: ArchiveFilters = {
   search: '', classification: '', documentType: '', archiveStatus: '', retentionStatus: '',
   owner: '', aiStatus: '', ocrStatus: '', dateFrom: '', dateTo: '',
@@ -60,10 +68,15 @@ export const EnterpriseDocumentArchive: React.FC<{ initialView?: ArchiveView }> 
   const [folderSearch, setFolderSearch] = useState('');
   const [loadingDepartments, setLoadingDepartments] = useState(true);
   const [loadingDocuments, setLoadingDocuments] = useState(false);
+  const [departmentError, setDepartmentError] = useState('');
   const [error, setError] = useState('');
   const [viewerDocument, setViewerDocument] = useState<ArchiveDocument | null>(null);
   const [viewerUrl, setViewerUrl] = useState('');
   const [viewerLoading, setViewerLoading] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [viewerError, setViewerError] = useState('');
+  const viewerAbortRef = useRef<AbortController | null>(null);
+  const viewerObjectUrlRef = useRef<string | null>(null);
   const [requestTarget, setRequestTarget] = useState<ArchiveDocument | null>(null);
   const [requestReason, setRequestReason] = useState('');
   const [requestBusy, setRequestBusy] = useState(false);
@@ -72,9 +85,9 @@ export const EnterpriseDocumentArchive: React.FC<{ initialView?: ArchiveView }> 
 
   const loadDepartments = useCallback(async () => {
     setLoadingDepartments(true);
-    setError('');
+    setDepartmentError('');
     try { setDepartments(await documentArchiveService.getDepartments()); }
-    catch (reason) { setError(extractErrorMessage(reason)); }
+    catch (reason) { setDepartments([]); setDepartmentError(extractErrorMessage(reason)); }
     finally { setLoadingDepartments(false); }
   }, []);
 
@@ -110,19 +123,64 @@ export const EnterpriseDocumentArchive: React.FC<{ initialView?: ArchiveView }> 
     setFilters((current) => ({ ...current, [key]: value }));
   };
 
-  const openDocument = async (document: ArchiveDocument) => {
-    setViewerLoading(true);
+  const releaseViewerObjectUrl = useCallback(() => {
+    if (viewerObjectUrlRef.current) {
+      window.URL.revokeObjectURL(viewerObjectUrlRef.current);
+      viewerObjectUrlRef.current = null;
+    }
+  }, []);
+
+  const closeViewer = useCallback(() => {
+    viewerAbortRef.current?.abort();
+    viewerAbortRef.current = null;
+    releaseViewerObjectUrl();
+    setViewerDocument(null);
     setViewerUrl('');
-    setError('');
+    setViewerError('');
+    setViewerLoading(false);
+    setPreviewLoading(false);
+  }, [releaseViewerObjectUrl]);
+
+  useEffect(() => () => {
+    viewerAbortRef.current?.abort();
+    releaseViewerObjectUrl();
+  }, [releaseViewerObjectUrl]);
+
+  const openDocument = async (document: ArchiveDocument) => {
+    viewerAbortRef.current?.abort();
+    const controller = new AbortController();
+    viewerAbortRef.current = controller;
+    releaseViewerObjectUrl();
+    setViewerDocument(document);
+    setViewerLoading(true);
+    setPreviewLoading(false);
+    setViewerUrl('');
+    setViewerError('');
     try {
-      const detail = await documentArchiveService.getDocument(document.id);
+      const detail = await documentArchiveService.getDocument(document.id, controller.signal);
+      if (controller.signal.aborted) return;
       setViewerDocument(detail);
+      setViewerLoading(false);
       if (detail.access.view && (detail.viewerKind === 'PDF' || detail.viewerKind === 'IMAGE')) {
-        const preview = await documentArchiveService.getViewerUrl(detail.id);
-        setViewerUrl(preview.signedUrl);
+        setPreviewLoading(true);
+        const preview = await documentArchiveService.getViewerFile(detail.id, detail.viewerKind, controller.signal);
+        if (controller.signal.aborted) return;
+        const objectUrl = window.URL.createObjectURL(preview.blob);
+        if (controller.signal.aborted) {
+          window.URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        viewerObjectUrlRef.current = objectUrl;
+        setViewerUrl(objectUrl);
       }
-    } catch (reason) { setError(extractErrorMessage(reason)); }
-    finally { setViewerLoading(false); }
+    } catch (reason) {
+      if (!controller.signal.aborted) setViewerError(documentViewerErrorMessage(reason, document.viewerKind));
+    } finally {
+      if (viewerAbortRef.current === controller) {
+        setViewerLoading(false);
+        setPreviewLoading(false);
+      }
+    }
   };
 
   const refresh = async () => {
@@ -168,9 +226,12 @@ export const EnterpriseDocumentArchive: React.FC<{ initialView?: ArchiveView }> 
         </div>}
       />
 
-      {error && <ErrorState message={error} onRetry={() => void refresh()} />}
-
-      {view === 'access-requests' ? <AccessRequestWorkspace canApprove={canApprove} /> : <>
+      {view === 'access-requests' ? <AccessRequestWorkspace canApprove={canApprove} /> : departmentError || error ? (
+        <ErrorState
+          message={departmentError || error}
+          onRetry={() => void (departmentError ? loadDepartments() : refresh())}
+        />
+      ) : <>
         {!selectedDepartment && !String(filters.search || '').trim() ? (
           <DepartmentFolders
             departments={visibleDepartments}
@@ -217,10 +278,13 @@ export const EnterpriseDocumentArchive: React.FC<{ initialView?: ArchiveView }> 
         document={viewerDocument}
         previewUrl={viewerUrl}
         loading={viewerLoading}
-        onClose={() => { setViewerDocument(null); setViewerUrl(''); }}
+        previewLoading={previewLoading}
+        error={viewerError}
+        onClose={closeViewer}
+        onRetry={() => { if (viewerDocument) void openDocument(viewerDocument); }}
         onDownload={(document) => void documentArchiveService.downloadDocument(document.id, document.fileName || undefined).catch((reason) => setError(extractErrorMessage(reason)))}
-        onRequest={(document) => { setViewerDocument(null); setViewerUrl(''); setRequestTarget(document); }}
-        onLifecycle={(document) => { setViewerDocument(null); setViewerUrl(''); setLifecycleTarget(document); }}
+        onRequest={(document) => { closeViewer(); setRequestTarget(document); }}
+        onLifecycle={(document) => { closeViewer(); setLifecycleTarget(document); }}
       />
 
       <Modal
@@ -341,10 +405,11 @@ const DocumentResults: React.FC<{
 </>;
 
 const DocumentViewer: React.FC<{
-  document: ArchiveDocument | null; previewUrl: string; loading: boolean; onClose: () => void;
+  document: ArchiveDocument | null; previewUrl: string; loading: boolean; previewLoading: boolean; error: string;
+  onClose: () => void; onRetry: () => void;
   onDownload: (document: ArchiveDocument) => void; onRequest: (document: ArchiveDocument) => void;
   onLifecycle: (document: ArchiveDocument) => void;
-}> = ({ document, previewUrl, loading, onClose, onDownload, onRequest, onLifecycle }) => (
+}> = ({ document, previewUrl, loading, previewLoading, error, onClose, onRetry, onDownload, onRequest, onLifecycle }) => (
   <Modal open={Boolean(document) || loading} title="Document Viewer" description="Private content is fetched only after server authorization and uses a short-lived signed URL." onClose={onClose} size="xl" footer={document ? <>
     {document.access.download && <Button onClick={() => onDownload(document)}><Download className="h-4 w-4" />Download</Button>}
     {document.access.print && previewUrl && <Button onClick={() => window.open(previewUrl, '_blank', 'noopener,noreferrer')}><Printer className="h-4 w-4" />Open to print</Button>}
@@ -354,8 +419,10 @@ const DocumentViewer: React.FC<{
     {loading || !document ? <LoadingState label="Authorizing document viewer..." /> : <div className="grid max-h-[70vh] gap-5 overflow-y-auto lg:grid-cols-[minmax(0,1.7fr)_minmax(280px,1fr)]">
       <div className="min-h-[420px] overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
         {!document.access.view ? <div className="flex h-full min-h-[420px] flex-col items-center justify-center p-8 text-center"><LockKeyhole className="h-10 w-10 text-slate-400" /><h3 className="mt-4 font-bold text-slate-900">Content access is restricted</h3><p className="mt-2 max-w-md text-sm text-slate-500">You may view authorized metadata. Submit a reasoned request for document content access.</p></div>
-          : document.viewerKind === 'PDF' && previewUrl ? <iframe title={`Preview of ${document.title}`} src={previewUrl} className="h-[62vh] min-h-[520px] w-full bg-white" />
-            : document.viewerKind === 'IMAGE' && previewUrl ? <div className="flex min-h-[520px] items-center justify-center p-4"><img src={previewUrl} alt={`Preview of ${document.title}`} className="max-h-[58vh] max-w-full object-contain" /></div>
+          : (document.viewerKind === 'PDF' || document.viewerKind === 'IMAGE') && previewLoading ? <LoadingState label="Loading document..." className="min-h-[520px] border-0 bg-transparent" />
+            : (document.viewerKind === 'PDF' || document.viewerKind === 'IMAGE') && error ? <ErrorState title="Unable to preview this document" message={error} onRetry={onRetry} className="min-h-[520px] rounded-none border-0" />
+              : document.viewerKind === 'PDF' && previewUrl ? <iframe title={`Preview of ${document.title}`} src={previewUrl} className="h-[62vh] min-h-[520px] w-full bg-white" />
+                : document.viewerKind === 'IMAGE' && previewUrl ? <div className="flex min-h-[520px] items-center justify-center p-4"><img src={previewUrl} alt={`Preview of ${document.title}`} className="max-h-[58vh] max-w-full object-contain" /></div>
               : document.viewerKind === 'TEXT' ? <pre className="max-h-[62vh] min-h-[520px] overflow-auto whitespace-pre-wrap break-words bg-white p-5 text-sm text-slate-700">{document.ocrText || 'No extracted text is available for this document.'}</pre>
                 : <div className="flex min-h-[420px] flex-col items-center justify-center p-8 text-center"><FileText className="h-10 w-10 text-slate-400" /><h3 className="mt-4 font-bold text-slate-900">Preview unavailable</h3><p className="mt-2 max-w-md text-sm text-slate-500">This format cannot be previewed safely in the browser. Authorized users may download the original file.</p></div>}
       </div>

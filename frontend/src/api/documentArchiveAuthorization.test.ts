@@ -123,4 +123,17 @@ describe('enterprise archive server and migration contract', () => {
     expect(edge).toMatch(/APPROVE_DOCUMENT_ACCESS/);
     expect(edge).toMatch(/DENY_DOCUMENT_ACCESS/);
   });
+
+  it('registers all archive collection routes before the document identifier route', () => {
+    const departmentsRoute = edge.indexOf('path: "/documents/archive/departments"');
+    const archiveRoute = edge.indexOf('path: "/documents/archive"');
+    const accessRequestsRoute = edge.indexOf('path: "/documents/access-requests"');
+    const documentDetailRoute = edge.indexOf('path: "/documents/:id"');
+    expect(departmentsRoute).toBeGreaterThan(-1);
+    expect(archiveRoute).toBeGreaterThan(-1);
+    expect(accessRequestsRoute).toBeGreaterThan(-1);
+    expect(departmentsRoute).toBeLessThan(documentDetailRoute);
+    expect(archiveRoute).toBeLessThan(documentDetailRoute);
+    expect(accessRequestsRoute).toBeLessThan(documentDetailRoute);
+  });
 });

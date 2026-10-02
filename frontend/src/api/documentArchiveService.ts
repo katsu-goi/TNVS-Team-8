@@ -86,6 +86,125 @@ export type DocumentAccessRequest = {
   decidedAt: string | null;
 };
 
+export type ArchiveViewerFile = {
+  blob: Blob;
+  expiresAt: string;
+  contentType: string;
+  fileName: string | null;
+};
+
+export class DocumentViewerError extends Error {
+  constructor(
+    public readonly code: 'ACCESS_DENIED' | 'FILE_NOT_FOUND' | 'SIGNED_URL_EXPIRED' | 'INVALID_DOCUMENT_RESPONSE' | 'VIEWER_UNAVAILABLE',
+    message: string,
+    public readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'DocumentViewerError';
+  }
+}
+
+type SignedViewerUrl = {
+  signedUrl: string;
+  expiresAt: string;
+  contentType: string | null;
+  fileName: string | null;
+};
+
+async function requestViewerUrl(documentId: string, signal?: AbortSignal): Promise<SignedViewerUrl> {
+  const { data } = await apiClient.get(`/documents/${documentId}/signed-url`, { signal });
+  return data?.data;
+}
+
+async function readBlobPrefix(blob: Blob, byteLength: number): Promise<Uint8Array> {
+  const prefix = blob.slice(0, byteLength);
+  if (typeof prefix.arrayBuffer === 'function') {
+    return new Uint8Array(await prefix.arrayBuffer());
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error('Unable to inspect the document file.'));
+    reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer));
+    reader.readAsArrayBuffer(prefix);
+  });
+}
+
+async function fetchSignedViewerFile(
+  documentId: string,
+  viewerKind: 'PDF' | 'IMAGE',
+  signal?: AbortSignal,
+  refreshed = false,
+): Promise<ArchiveViewerFile> {
+  const source = await requestViewerUrl(documentId, signal);
+  let response: Response;
+  try {
+    response = await fetch(source.signedUrl, {
+      cache: 'no-store',
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
+      signal,
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new DocumentViewerError('VIEWER_UNAVAILABLE', 'Unable to load the document. Try again.');
+  }
+
+  if (!response.ok) {
+    if ([400, 401, 403].includes(response.status) && !refreshed) {
+      return fetchSignedViewerFile(documentId, viewerKind, signal, true);
+    }
+    if ([400, 401, 403].includes(response.status)) {
+      throw new DocumentViewerError('SIGNED_URL_EXPIRED', 'The secure document link expired. Try again.', response.status);
+    }
+    if (response.status === 404) {
+      throw new DocumentViewerError(
+        'FILE_NOT_FOUND',
+        viewerKind === 'PDF' ? 'The PDF file could not be found.' : 'The document file could not be found.',
+        404,
+      );
+    }
+    throw new DocumentViewerError('VIEWER_UNAVAILABLE', 'Unable to load the document. Try again.', response.status);
+  }
+
+  const responseType = (response.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
+  if (responseType === 'application/json' || responseType === 'text/html') {
+    throw new DocumentViewerError('INVALID_DOCUMENT_RESPONSE', 'The server did not return a valid document file.', response.status);
+  }
+
+  const received = await response.blob();
+  if (viewerKind === 'PDF') {
+    const signature = await readBlobPrefix(received, 5);
+    const isPdf = signature.length === 5
+      && signature[0] === 0x25
+      && signature[1] === 0x50
+      && signature[2] === 0x44
+      && signature[3] === 0x46
+      && signature[4] === 0x2d;
+    if (!isPdf) {
+      throw new DocumentViewerError('INVALID_DOCUMENT_RESPONSE', 'The server did not return a valid PDF file.', response.status);
+    }
+    return {
+      blob: new Blob([received], { type: 'application/pdf' }),
+      expiresAt: source.expiresAt,
+      contentType: 'application/pdf',
+      fileName: source.fileName,
+    };
+  }
+
+  const declaredType = (source.contentType || '').split(';', 1)[0].trim().toLowerCase();
+  const imageType = responseType.startsWith('image/') ? responseType : declaredType.startsWith('image/') ? declaredType : '';
+  if (!imageType) {
+    throw new DocumentViewerError('INVALID_DOCUMENT_RESPONSE', 'The server did not return a valid image file.', response.status);
+  }
+  return {
+    blob: new Blob([received], { type: imageType }),
+    expiresAt: source.expiresAt,
+    contentType: imageType,
+    fileName: source.fileName,
+  };
+}
+
 export const documentArchiveService = {
   async getDepartments(): Promise<ArchiveDepartment[]> {
     const { data } = await apiClient.get('/documents/archive/departments');
@@ -97,14 +216,17 @@ export const documentArchiveService = {
     return data?.data ?? { documents: [], total: 0 };
   },
 
-  async getDocument(documentId: string): Promise<ArchiveDocument> {
-    const { data } = await apiClient.get(`/documents/${documentId}`);
+  async getDocument(documentId: string, signal?: AbortSignal): Promise<ArchiveDocument> {
+    const { data } = await apiClient.get(`/documents/${documentId}`, { signal });
     return data?.data as ArchiveDocument;
   },
 
-  async getViewerUrl(documentId: string): Promise<{ signedUrl: string; expiresAt: string; contentType: string | null; fileName: string | null }> {
-    const { data } = await apiClient.get(`/documents/${documentId}/signed-url`);
-    return data?.data;
+  getViewerUrl(documentId: string, signal?: AbortSignal): Promise<SignedViewerUrl> {
+    return requestViewerUrl(documentId, signal);
+  },
+
+  getViewerFile(documentId: string, viewerKind: 'PDF' | 'IMAGE', signal?: AbortSignal): Promise<ArchiveViewerFile> {
+    return fetchSignedViewerFile(documentId, viewerKind, signal);
   },
 
   downloadDocument: documentService.downloadDocument,
