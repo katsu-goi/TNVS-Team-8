@@ -80,7 +80,8 @@ export const workspaceConfigs: WorkspaceConfig[] = [
     description: 'Custody-controlled archives, metadata validation, retention, and defensible disposal.',
     nav: [
       { section: 'dashboard', label: 'Records Dashboard', icon: LayoutDashboard },
-      { section: 'repositories', label: 'Active Records Repositories', icon: Archive },
+      { section: 'repositories', label: 'Enterprise Document Archive', icon: Archive },
+      { section: 'access-requests', label: 'Document Access Requests', icon: LockKeyhole },
       { section: 'ingestion', label: 'Document Ingestion Queue', icon: FileCheck2 },
       { section: 'custody', label: 'Chain of Custody Control', icon: KeyRound },
       { section: 'disposal', label: 'Lifecycle & Defensible Disposal', icon: Trash2 },
@@ -96,6 +97,8 @@ export const workspaceConfigs: WorkspaceConfig[] = [
     nav: [
       { section: 'dashboard', label: 'Department Dashboard', icon: LayoutDashboard },
       { section: 'approvals', label: 'Department Approvals', icon: ClipboardCheck },
+      { section: 'repository', label: 'Department Repository', icon: Archive },
+      { section: 'access-requests', label: 'Document Access Requests', icon: LockKeyhole },
       { section: 'supervision', label: 'Compliance Supervision', icon: UsersRound },
       { section: 'activity', label: 'Team Activity', icon: Activity },
       { section: 'reports', label: 'Operational Reports', icon: BarChart3 },

@@ -5,6 +5,7 @@ import { governanceService, WorkspacePayload } from '../../api/governanceService
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { OversightPanel } from '../oversight';
 import { RecordsDisposalConsole } from '../records/RecordsDisposalConsole';
+import { EnterpriseDocumentArchive } from '../documents/EnterpriseDocumentArchive';
 import { ComplianceOfficerDashboard } from '../compliance/ComplianceOfficerDashboard';
 import {
   CoComplianceAlertsPage, CoContractsPage, CoDisposalApprovalsPage,
@@ -52,6 +53,10 @@ function rowDetails(row: Record<string, any>): Array<[string, string]> {
 
 export const RoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: string }> = ({ config, section }) => {
   if (config.slug === 'records' && section === 'disposal') return <RecordsDisposalConsole />;
+  if (config.slug === 'records' && section === 'repositories') return <EnterpriseDocumentArchive />;
+  if (config.slug === 'records' && section === 'access-requests') return <EnterpriseDocumentArchive initialView="access-requests" />;
+  if (config.slug === 'department' && section === 'repository') return <EnterpriseDocumentArchive />;
+  if (config.slug === 'department' && section === 'access-requests') return <EnterpriseDocumentArchive initialView="access-requests" />;
   if (config.slug === 'compliance') {
     if (section === 'dashboard') return <ComplianceOfficerDashboard />;
     if (section === 'documents') return <CoDocumentsPage />;

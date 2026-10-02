@@ -9,7 +9,7 @@ import { UPLOAD_ACCEPT_ATTRIBUTE, ALLOWED_UPLOAD_EXTENSIONS } from '../../types/
 import DocumentDuplicateDetection from './DocumentDuplicateDetection';
 
 const CLASSIFICATIONS: ClassificationLevel[] = [
-  'PUBLIC', 'INTERNAL', 'CONFIDENTIAL', 'RESTRICTED',
+  'PUBLIC', 'INTERNAL', 'CONFIDENTIAL', 'RESTRICTED', 'HIGHLY_RESTRICTED',
 ];
 
 const inputCls =

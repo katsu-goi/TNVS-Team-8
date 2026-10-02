@@ -7,6 +7,7 @@ export type AuthUserRow = {
   email: string;
   employee_id: string | null;
   department: string | null;
+  department_id: string | null;
   position: string | null;
   avatar_url: string | null;
   phone_number: string | null;
@@ -202,6 +203,7 @@ export function userSummary(user: AuthUser) {
     email: r.email,
     employeeId: r.employee_id,
     department: r.department,
+    departmentId: r.department_id,
     position: r.position,
     avatarUrl: r.avatar_url,
     roles: user.roles,

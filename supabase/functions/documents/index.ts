@@ -29,6 +29,17 @@ import {
   type DuplicateDetectionResult,
 } from "../_shared/document-duplicates.ts";
 import { AiCircuitOpenError, circuitRetryHeaders } from "../_shared/ai-circuit-breaker.ts";
+import {
+  accessRequestApproverRole,
+  canApproveDocumentAccess,
+  canDownloadDocumentContent,
+  canKnowDocument,
+  canManageArchive,
+  canViewDocumentContent,
+  documentAccessFlags,
+  normalizeDocumentClassification,
+  type DocumentAccessContext,
+} from "../_shared/document-access.ts";
 
 const db = adminDb();
 
@@ -38,15 +49,14 @@ const MAX_FILE_SIZE_BYTES = MAX_EXTRACTABLE_FILE_BYTES;
 const MAX_AUTO_TAGS = 3;
 
 const DOCUMENT_STATUSES = ["DRAFT", "PENDING_REVIEW", "APPROVED", "ARCHIVED", "DELETED"];
-const CLASSIFICATION_LEVELS = ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED", "SECRET"];
+const CLASSIFICATION_LEVELS = ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED", "HIGHLY_RESTRICTED", "SECRET"];
 const ALLOWED_EXTENSIONS = [...SUPPORTED_DOCUMENT_EXTENSIONS];
 
-const CONTRACT_KEYWORDS = [
-  "contract", "procurement", "vendor", "supplier", "sla",
-  "lease", "purchase", "agreement", "obligation", "dpa",
+const REVIEW_ROLES = [
+  "RECORDS_OFFICER", "DEPARTMENT_HEAD", "COMPLIANCE_MANAGER", "COMPLIANCE_OFFICER",
+  "DATA_PROTECTION_OFFICER", "LEGAL_COUNSEL", "LEGAL_OFFICER", "CONTRACT_OFFICER",
+  "SECURITY_OFFICER", "INFOSEC_OFFICER",
 ];
-
-const REVIEW_ROLES = ["SUPER_ADMIN", "COMPLIANCE_OFFICER", "LEGAL_OFFICER"];
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -110,34 +120,6 @@ function resolveTitle(title: string | null, originalFilename: string | null): st
   return dot > 0 ? originalFilename.substring(0, dot) : originalFilename;
 }
 
-// ---------------------------------------------------------------------------
-// DocumentAccessPolicy (mirrors the Spring policy)
-// ---------------------------------------------------------------------------
-
-function normalizeDept(value: string | null): string {
-  return value == null ? "" : value.trim().toLowerCase();
-}
-
-function sameDepartment(userDept: string | null, docDept: string | null): boolean {
-  const ud = normalizeDept(userDept);
-  const dd = normalizeDept(docDept);
-  return ud !== "" && ud === dd;
-}
-
-function isContractRelated(d: Record<string, unknown>, categoryName: string | null): boolean {
-  const parts = [str(d.title), str(d.ai_predicted_category), str(d.department), categoryName]
-    .filter((v): v is string => v != null && v !== "");
-  const text = parts.join(" ").toLowerCase();
-  return CONTRACT_KEYWORDS.some((kw) => text.includes(kw));
-}
-
-function categoryNameOf(d: Record<string, unknown>): string | null {
-  const cats = d.categories;
-  if (Array.isArray(cats) && cats.length > 0) return str((cats[0] as Record<string, unknown>).name);
-  if (cats != null && typeof cats === "object") return str((cats as Record<string, unknown>).name);
-  return null;
-}
-
 function hasRole(roles: string[], role: string): boolean {
   return roles.some((r) => r.toUpperCase() === role);
 }
@@ -149,56 +131,14 @@ function isOwner(userEmail: string, d: Record<string, unknown>): boolean {
   return createdBy != null && createdBy.toLowerCase() === userEmail.toLowerCase();
 }
 
-function grantMatches(
-  grants: Array<Record<string, unknown>>,
-  userEmail: string,
-  roles: string[],
-  requiredLevel: string | null,
-): boolean {
-  const roleSet = new Set(roles.map((r) => r.toUpperCase()));
-  for (const g of grants) {
-    if (g.is_deleted === true) continue;
-    const key = str(g.grantee_key) ?? "";
-    let matches = false;
-    if (g.grantee_type === "USER") matches = key.toLowerCase() === userEmail.toLowerCase();
-    else if (g.grantee_type === "ROLE") matches = roleSet.has(key.toUpperCase());
-    if (!matches) continue;
-    const level = str(g.access_level) ?? "";
-    if (requiredLevel == null) return true;
-    if (level === "DOWNLOAD") return true;
-    if (level === requiredLevel) return true;
-  }
-  return false;
-}
-
-function canViewDocument(
-  userEmail: string, roles: string[], userDept: string | null,
-  d: Record<string, unknown>, grants: Array<Record<string, unknown>>,
-): boolean {
-  if (hasRole(roles, "SUPER_ADMIN")) return true;
-  if (isOwner(userEmail, d)) return true;
-  if (grantMatches(grants, userEmail, roles, null)) return true;
-  if (hasRole(roles, "COMPLIANCE_OFFICER") || hasRole(roles, "LEGAL_OFFICER")) return true;
-  if (hasRole(roles, "CONTRACT_OFFICER")) {
-    return isContractRelated(d, categoryNameOf(d)) || sameDepartment(userDept, str(d.department));
-  }
-  if (hasRole(roles, "EMPLOYEE")) return false;
-  return sameDepartment(userDept, str(d.department));
-}
-
-function canDownloadDocument(
-  userEmail: string, roles: string[], userDept: string | null,
-  d: Record<string, unknown>, grants: Array<Record<string, unknown>>,
-): boolean {
-  if (hasRole(roles, "SUPER_ADMIN")) return true;
-  if (isOwner(userEmail, d)) return true;
-  if (grantMatches(grants, userEmail, roles, "DOWNLOAD")) return true;
-  if (hasRole(roles, "COMPLIANCE_OFFICER") || hasRole(roles, "LEGAL_OFFICER")) return true;
-  if (hasRole(roles, "CONTRACT_OFFICER")) {
-    return isContractRelated(d, categoryNameOf(d)) || sameDepartment(userDept, str(d.department));
-  }
-  if (hasRole(roles, "EMPLOYEE")) return false;
-  return sameDepartment(userDept, str(d.department));
+function accessContext(ctx: AuthContext | null): DocumentAccessContext {
+  return {
+    email: ctx?.email ?? "",
+    departmentId: ctx?.user.row.department_id ?? null,
+    departmentName: ctx?.user.row.department ?? null,
+    roles: ctx?.roles ?? [],
+    permissions: ctx?.permissions ?? [],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +285,90 @@ async function loadTagsForDocs(docIds: string[]): Promise<Map<string, Array<Reco
   return map;
 }
 
+async function loadRetentionPolicies(policyIds: string[]): Promise<Map<string, Record<string, unknown>>> {
+  const map = new Map<string, Record<string, unknown>>();
+  const ids = [...new Set(policyIds.filter((id) => isUuid(id)))];
+  if (ids.length === 0) return map;
+  const { data, error } = await db.from("retention_policies")
+    .select("id,name,retention_period_days,action_on_expiry,active")
+    .in("id", ids);
+  if (error) throw new Error(`retention policy lookup failed: ${error.message}`);
+  for (const row of (data as unknown as Record<string, unknown>[]) ?? []) map.set(String(row.id), row);
+  return map;
+}
+
+async function loadActiveLegalHolds(docIds: string[]): Promise<Set<string>> {
+  const result = new Set<string>();
+  if (docIds.length === 0) return result;
+  const { data, error } = await db.from("document_legal_holds")
+    .select("document_id")
+    .in("document_id", docIds)
+    .eq("status", "ACTIVE");
+  if (error) throw new Error(`document legal-hold lookup failed: ${error.message}`);
+  for (const row of data ?? []) result.add(String(row.document_id));
+  return result;
+}
+
+function nested(value: unknown): Record<string, unknown> | null {
+  if (Array.isArray(value)) return value[0] && typeof value[0] === "object" ? value[0] as Record<string, unknown> : null;
+  return value != null && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
+function archiveDocumentDto(
+  row: Record<string, unknown>,
+  flags: ReturnType<typeof documentAccessFlags>,
+  policy: Record<string, unknown> | null,
+  legalHold: boolean,
+  tags: Array<Record<string, unknown>>,
+  includeContent = false,
+): Record<string, unknown> {
+  const department = nested(row.departments);
+  const metadata = row.ai_metadata_suggestions != null && typeof row.ai_metadata_suggestions === "object"
+    ? row.ai_metadata_suggestions as Record<string, unknown>
+    : {};
+  const effectiveDate = str(metadata.effectiveDate ?? metadata.effective_date ?? metadata.documentDate ?? metadata.document_date);
+  const expirationDate = str(metadata.expirationDate ?? metadata.expiration_date ?? metadata.expiryDate ?? metadata.expiry_date);
+  const fileType = str(row.file_type) ?? "";
+  const viewerKind = fileType === "application/pdf" ? "PDF"
+    : fileType.startsWith("image/") ? "IMAGE"
+    : fileType.startsWith("text/") || ["TXT_UTF8", "DOCX_XML"].includes(str(row.ai_extraction_method) ?? "") ? "TEXT"
+    : "UNSUPPORTED";
+  return {
+    id: str(row.id),
+    title: str(row.title),
+    fileName: str(row.file_name),
+    fileType,
+    fileSize: num(row.file_size),
+    documentType: str(row.ai_detected_document_type),
+    documentNumber: str(metadata.documentNumber ?? metadata.document_number ?? metadata.referenceNumber),
+    department: department ? { id: str(department.id), name: str(department.name), status: str(department.status) } : {
+      id: str(row.department_id), name: str(row.department), status: null,
+    },
+    ownerEmail: str(row.owner_email ?? row.created_by),
+    classification: normalizeDocumentClassification(row.classification_level),
+    archiveStatus: str(row.status),
+    retentionStatus: legalHold ? "LEGAL_HOLD" : str(row.retention_status),
+    retentionPolicy: policy ? {
+      id: str(policy.id), name: str(policy.name), periodDays: num(policy.retention_period_days), actionOnExpiry: str(policy.action_on_expiry),
+    } : null,
+    retentionStartDate: str(row.retention_trigger_at ?? row.retention_assigned_at),
+    retentionReviewDate: str(row.retention_expires_at),
+    effectiveDate,
+    expirationDate,
+    version: num(row.version_number),
+    uploadedAt: createdAtUtc(row.created_at),
+    updatedAt: naiveStr(row.updated_at) ?? createdAtUtc(row.created_at),
+    aiClassificationStatus: row.classification_review_status === "APPROVED" || row.classification_review_status === "CORRECTED"
+      ? "HUMAN_CONFIRMED" : row.ai_processed_at ? "AI_SUGGESTED" : "UNAVAILABLE",
+    ocrStatus: str(row.ocr_extracted_text)?.trim() ? "AVAILABLE" : "UNAVAILABLE",
+    viewerKind,
+    tags: tags.map((tag) => ({ id: str(tag.id), name: str(tag.name) })),
+    access: flags,
+    ocrText: includeContent && flags.view && viewerKind === "TEXT" ? str(row.ocr_extracted_text) : undefined,
+    aiSummary: includeContent && flags.view && viewerKind === "TEXT" ? str(row.ai_summary) : undefined,
+  };
+}
+
 async function loadDocumentRow(id: string): Promise<Record<string, unknown> | null> {
   const { data, error } = await db.from("documents").select("*").eq("id", id).maybeSingle();
   if (error) throw new Error(`document query failed: ${error.message}`);
@@ -398,7 +422,12 @@ async function runDuplicateDetection(
   const { data, error } = await db.rpc("phase10_document_duplicate_candidates", {
     p_user_email: ctx?.email ?? "",
     p_user_department: str(ctx?.user.row.department),
-    p_roles: (ctx?.roles ?? []).map((role) => role.toUpperCase()),
+    // Technical administrator roles are deliberately excluded: they do not
+    // confer document-content visibility. Any separately assigned business
+    // role, ownership, department scope, or explicit grant still applies.
+    p_roles: (ctx?.roles ?? [])
+      .map((role) => role.toUpperCase())
+      .filter((role) => role !== "SUPER_ADMIN" && role !== "SYSTEM_ADMIN"),
     p_source_document_id: String(source.id),
     p_file_sha256: str(source.file_sha256),
     p_ocr_normalized_sha256: str(source.ocr_normalized_sha256),
@@ -459,10 +488,8 @@ async function handleListDocuments(ctx: AuthContext | null) {
   const ids = rows.map((r) => String(r.id ?? ""));
   const grants = await loadGrants(ids);
   const tagsByDoc = await loadTagsForDocs(ids);
-  const userEmail = ctx ? ctx.email : "";
-  const userRoles = ctx ? ctx.roles : [];
-  const userDept = ctx ? str(ctx.user.row.department) : null;
-  const visible = rows.filter((d) => canViewDocument(userEmail, userRoles, userDept, d, grants.get(String(d.id ?? "")) ?? []));
+  const viewer = accessContext(ctx);
+  const visible = rows.filter((d) => canViewDocumentContent(viewer, d, grants.get(String(d.id ?? "")) ?? []));
   return jsonResponse(ok(visible.map((d) => toDocumentDto({ ...d, tags: tagsByDoc.get(String(d.id ?? "")) ?? [] })), "Documents retrieved"), 200);
 }
 
@@ -484,14 +511,311 @@ async function handleSearchDocuments(ctx: AuthContext | null, req: Request) {
   const ids = rows.map((r) => String(r.id ?? ""));
   const grants = await loadGrants(ids);
   const tagsByDoc = await loadTagsForDocs(ids);
-  const userEmail = ctx ? ctx.email : "";
-  const userRoles = ctx ? ctx.roles : [];
-  const userDept = ctx ? str(ctx.user.row.department) : null;
-  const visible = rows.filter((d) => canViewDocument(userEmail, userRoles, userDept, d, grants.get(String(d.id ?? "")) ?? []));
+  const viewer = accessContext(ctx);
+  const visible = rows.filter((d) => canViewDocumentContent(viewer, d, grants.get(String(d.id ?? "")) ?? []));
   return jsonResponse(ok(visible.map((d) => toDocumentDto({ ...d, tags: tagsByDoc.get(String(d.id ?? "")) ?? [] })), "Search results retrieved"), 200);
 }
 
+async function loadArchiveRows(): Promise<Record<string, unknown>[]> {
+  const rows: Record<string, unknown>[] = [];
+  const pageSize = 1000;
+  for (let offset = 0;; offset += pageSize) {
+    const { data, error } = await db.from("documents")
+      .select("*, departments(id,name,status), categories(name), folders(name,path)")
+      .eq("is_deleted", false)
+      .neq("status", "DELETED")
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
+      .range(offset, offset + pageSize - 1);
+    if (error) throw new Error(`enterprise archive query failed: ${error.message}`);
+    const page = (data as unknown as Record<string, unknown>[]) ?? [];
+    rows.push(...page);
+    if (page.length < pageSize) return rows;
+  }
+}
+
+async function archiveDependencies(rows: Record<string, unknown>[]) {
+  const documentIds = rows.map((row) => String(row.id));
+  const policyIds = rows.map((row) => str(row.retention_policy_id) ?? "");
+  const [grants, tags, policies, legalHolds] = await Promise.all([
+    loadGrants(documentIds),
+    loadTagsForDocs(documentIds),
+    loadRetentionPolicies(policyIds),
+    loadActiveLegalHolds(documentIds),
+  ]);
+  return { grants, tags, policies, legalHolds };
+}
+
+async function handleArchiveDepartments(ctx: AuthContext | null) {
+  const [rows, departmentsResult] = await Promise.all([
+    loadArchiveRows(),
+    db.from("departments").select("id,name,status,updated_at").eq("is_deleted", false).eq("status", "ACTIVE").order("name"),
+  ]);
+  if (departmentsResult.error) throw new Error(`department catalog query failed: ${departmentsResult.error.message}`);
+  const { grants } = await archiveDependencies(rows);
+  const viewer = accessContext(ctx);
+  const authorized = rows.filter((row) => canKnowDocument(viewer, row, grants.get(String(row.id)) ?? []));
+  const byDepartment = new Map<string, Record<string, unknown>[] >();
+  for (const row of authorized) {
+    const departmentId = str(row.department_id);
+    if (!departmentId) continue;
+    if (!byDepartment.has(departmentId)) byDepartment.set(departmentId, []);
+    byDepartment.get(departmentId)!.push(row);
+  }
+  const isRecordsOfficer = hasRole(viewer.roles, "RECORDS_OFFICER")
+    && viewer.permissions.some((permission) => permission.toUpperCase() === "DOCUMENT_VIEW_METADATA");
+  const departments = ((departmentsResult.data as unknown as Record<string, unknown>[]) ?? [])
+    .filter((department) => isRecordsOfficer
+      || str(department.id) === str(viewer.departmentId)
+      || byDepartment.has(String(department.id)))
+    .map((department) => {
+      const documents = byDepartment.get(String(department.id)) ?? [];
+      const restricted = documents.filter((document) => ["RESTRICTED", "HIGHLY_RESTRICTED"]
+        .includes(normalizeDocumentClassification(document.classification_level))).length;
+      const updated = documents.map((document) => str(document.updated_at ?? document.created_at)).filter(Boolean).sort().at(-1) ?? str(department.updated_at);
+      return {
+        id: str(department.id),
+        name: str(department.name),
+        status: str(department.status),
+        authorizedDocumentCount: documents.length,
+        activeDocumentCount: documents.filter((document) => String(document.status).toUpperCase() !== "ARCHIVED").length,
+        archivedDocumentCount: documents.filter((document) => String(document.status).toUpperCase() === "ARCHIVED").length,
+        restrictedDocumentCount: restricted,
+        lastUpdatedAt: updated,
+      };
+    });
+  return jsonResponse(ok(departments, "Authorized archive departments retrieved"), 200);
+}
+
+async function handleArchiveDocuments(ctx: AuthContext | null, req: Request) {
+  const url = new URL(req.url);
+  const departmentId = url.searchParams.get("departmentId")?.trim() ?? "";
+  if (departmentId && !isUuid(departmentId)) return jsonResponse(fail("Invalid department identifier.", "VALIDATION_ERROR"), 400);
+  const search = (url.searchParams.get("search") ?? "").trim().toLowerCase().slice(0, 200);
+  const classification = (url.searchParams.get("classification") ?? "").trim().toUpperCase();
+  const archiveStatus = (url.searchParams.get("archiveStatus") ?? "").trim().toUpperCase();
+  const documentType = (url.searchParams.get("documentType") ?? "").trim().toLowerCase();
+  const retentionStatus = (url.searchParams.get("retentionStatus") ?? "").trim().toUpperCase();
+  const owner = (url.searchParams.get("owner") ?? "").trim().toLowerCase();
+  const aiStatus = (url.searchParams.get("aiStatus") ?? "").trim().toUpperCase();
+  const ocrStatus = (url.searchParams.get("ocrStatus") ?? "").trim().toUpperCase();
+  const dateFrom = url.searchParams.get("dateFrom")?.trim() ?? "";
+  const dateTo = url.searchParams.get("dateTo")?.trim() ?? "";
+  const rows = await loadArchiveRows();
+  const dependencies = await archiveDependencies(rows);
+  const viewer = accessContext(ctx);
+  const filtered = rows.filter((row) => {
+    const grants = dependencies.grants.get(String(row.id)) ?? [];
+    if (!canKnowDocument(viewer, row, grants)) return false;
+    if (departmentId && str(row.department_id) !== departmentId) return false;
+    if (classification && normalizeDocumentClassification(row.classification_level) !== classification) return false;
+    if (archiveStatus && String(row.status).toUpperCase() !== archiveStatus) return false;
+    if (documentType && !String(row.ai_detected_document_type ?? "").toLowerCase().includes(documentType)) return false;
+    const effectiveRetention = dependencies.legalHolds.has(String(row.id)) ? "LEGAL_HOLD" : String(row.retention_status ?? "").toUpperCase();
+    if (retentionStatus && effectiveRetention !== retentionStatus) return false;
+    if (owner && !String(row.owner_email ?? row.created_by ?? "").toLowerCase().includes(owner)) return false;
+    const effectiveAiStatus = row.classification_review_status === "APPROVED" || row.classification_review_status === "CORRECTED"
+      ? "HUMAN_CONFIRMED" : row.ai_processed_at ? "AI_SUGGESTED" : "UNAVAILABLE";
+    if (aiStatus && effectiveAiStatus !== aiStatus) return false;
+    const effectiveOcrStatus = str(row.ocr_extracted_text)?.trim() ? "AVAILABLE" : "UNAVAILABLE";
+    if (ocrStatus && effectiveOcrStatus !== ocrStatus) return false;
+    const createdDate = String(row.created_at ?? "").slice(0, 10);
+    if (dateFrom && createdDate < dateFrom) return false;
+    if (dateTo && createdDate > dateTo) return false;
+    if (search) {
+      const metadata = row.ai_metadata_suggestions != null && typeof row.ai_metadata_suggestions === "object"
+        ? row.ai_metadata_suggestions as Record<string, unknown> : {};
+      const tagText = (dependencies.tags.get(String(row.id)) ?? []).map((tag) => str(tag.name)).join(" ");
+      const haystack = [row.title, row.file_name, metadata.documentNumber, metadata.document_number,
+        metadata.referenceNumber, row.owner_email, row.department, row.ai_detected_document_type, tagText]
+        .map((value) => String(value ?? "").toLowerCase()).join(" ");
+      if (!haystack.includes(search)) return false;
+    }
+    return true;
+  });
+  const documents = filtered.map((row) => {
+    const id = String(row.id);
+    const flags = documentAccessFlags(viewer, row, dependencies.grants.get(id) ?? []);
+    return archiveDocumentDto(row, flags, dependencies.policies.get(str(row.retention_policy_id) ?? "") ?? null,
+      dependencies.legalHolds.has(id), dependencies.tags.get(id) ?? []);
+  });
+  return jsonResponse(ok({ documents, total: documents.length }, "Authorized archive documents retrieved"), 200);
+}
+
+async function loadArchiveDocument(id: string): Promise<Record<string, unknown> | null> {
+  const { data, error } = await db.from("documents")
+    .select("*, departments(id,name,status), categories(name), folders(name,path)")
+    .eq("id", id)
+    .eq("is_deleted", false)
+    .neq("status", "DELETED")
+    .maybeSingle();
+  if (error) throw new Error(`archive document lookup failed: ${error.message}`);
+  return data as unknown as Record<string, unknown> | null;
+}
+
+async function handleArchiveDocumentDetail(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
+  if (!isUuid(p.id)) return jsonResponse(fail("Invalid document identifier.", "VALIDATION_ERROR"), 400);
+  const row = await loadArchiveDocument(p.id);
+  if (!row) return jsonResponse(fail("Document not found.", "RESOURCE_NOT_FOUND"), 404);
+  const dependencies = await archiveDependencies([row]);
+  const grants = dependencies.grants.get(p.id) ?? [];
+  const viewer = accessContext(ctx);
+  if (!canKnowDocument(viewer, row, grants)) return jsonResponse(fail("Document not found.", "RESOURCE_NOT_FOUND"), 404);
+  const flags = documentAccessFlags(viewer, row, grants);
+  const document = archiveDocumentDto(row, flags,
+    dependencies.policies.get(str(row.retention_policy_id) ?? "") ?? null,
+    dependencies.legalHolds.has(p.id), dependencies.tags.get(p.id) ?? [], true);
+  if (flags.view && document.viewerKind === "TEXT") {
+    await writeAudit(ctx?.user ?? null, "VIEW_DOCUMENT", MODULE, "Document", p.id,
+      `Opened text document in secure viewer: ${str(row.title)}`,
+      ctx ? resolveClientIp(req).ip : null, "INFO");
+  }
+  return jsonResponse(ok(document, "Document archive details retrieved"), 200);
+}
+
+async function handleArchiveStatus(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams, restore: boolean) {
+  if (!isUuid(p.id)) return jsonResponse(fail("Invalid document identifier.", "VALIDATION_ERROR"), 400);
+  const row = await loadArchiveDocument(p.id);
+  if (!row) return jsonResponse(fail("Document not found.", "RESOURCE_NOT_FOUND"), 404);
+  if (!canManageArchive(accessContext(ctx), restore)) {
+    return jsonResponse(fail(`${restore ? "Restore" : "Archive"} custody permission is required.`, "ACCESS_DENIED"), 403);
+  }
+  const current = String(row.status ?? "").toUpperCase();
+  if (restore && current !== "ARCHIVED") return jsonResponse(fail("Only archived documents can be restored.", "BUSINESS_RULE_VIOLATION"), 409);
+  if (!restore && current === "ARCHIVED") return jsonResponse(fail("The document is already archived.", "BUSINESS_RULE_VIOLATION"), 409);
+  if (!restore && current !== "APPROVED") {
+    return jsonResponse(fail("Only approved active documents can enter archive custody.", "BUSINESS_RULE_VIOLATION"), 409);
+  }
+  const previousStatus = String(row.pre_archive_status ?? "").toUpperCase();
+  const nextStatus = restore && ["DRAFT", "PENDING_REVIEW", "APPROVED"].includes(previousStatus)
+    ? previousStatus : restore ? "APPROVED" : "ARCHIVED";
+  const now = naiveIso();
+  const { error } = await db.from("documents").update({
+    status: nextStatus,
+    pre_archive_status: restore ? null : current,
+    updated_at: now,
+    updated_by: ctx?.email,
+  }).eq("id", p.id);
+  if (error) throw new Error(`document ${restore ? "restore" : "archive"} failed: ${error.message}`);
+  await writeAudit(ctx?.user ?? null, restore ? "RESTORE_DOCUMENT" : "ARCHIVE_DOCUMENT", MODULE, "Document", p.id,
+    `${restore ? "Restored" : "Archived"} document '${str(row.title)}'; retained content was not deleted or overwritten`,
+    ctx ? resolveClientIp(req).ip : null, "INFO");
+  return jsonResponse(ok({ documentId: p.id, status: nextStatus }, restore ? "Document restored" : "Document archived"), 200);
+}
+
+async function handleRequestDocumentAccess(ctx: AuthContext | null, req: Request, body: unknown, p: RouteParams) {
+  if (!ctx || !isUuid(p.id)) return jsonResponse(fail("Invalid document identifier.", "VALIDATION_ERROR"), 400);
+  const row = await loadArchiveDocument(p.id);
+  if (!row) return jsonResponse(fail("Document not found.", "RESOURCE_NOT_FOUND"), 404);
+  const grants = (await loadGrants([p.id])).get(p.id) ?? [];
+  const viewer = accessContext(ctx);
+  if (!canKnowDocument(viewer, row, grants)) return jsonResponse(fail("Document not found.", "RESOURCE_NOT_FOUND"), 404);
+  if (canViewDocumentContent(viewer, row, grants)) return jsonResponse(fail("You already have document-content access.", "BUSINESS_RULE_VIOLATION"), 409);
+  if (!ctx.permissions.some((permission) => permission.toUpperCase() === "DOCUMENT_REQUEST_ACCESS")) {
+    return jsonResponse(fail("You do not have permission to request document access.", "ACCESS_DENIED"), 403);
+  }
+  const value = (body ?? {}) as Record<string, unknown>;
+  const reason = String(value.reason ?? "").trim().slice(0, 1000);
+  if (reason.length < 10) return jsonResponse(fail("An access reason of at least 10 characters is required.", "VALIDATION_ERROR"), 400);
+  const requested = Array.isArray(value.actions) ? value.actions.map((action) => String(action).toUpperCase()) : ["VIEW"];
+  const actions = [...new Set(requested.filter((action) => ["VIEW", "DOWNLOAD", "PRINT", "SHARE"].includes(action)))];
+  if (actions.length === 0) return jsonResponse(fail("At least one supported action is required.", "VALIDATION_ERROR"), 400);
+  const { data, error } = await db.from("document_access_requests").insert({
+    document_id: p.id,
+    requester_id: ctx.userId,
+    requester_email: ctx.email,
+    requester_department_id: ctx.user.row.department_id ?? null,
+    requested_actions: actions,
+    reason,
+    routed_approver_role: accessRequestApproverRole(row),
+    status: "PENDING",
+  }).select("id,status,routed_approver_role,created_at").single();
+  if (error) {
+    if (String(error.message ?? "").toLowerCase().includes("duplicate")) {
+      return jsonResponse(fail("A pending access request already exists for this document.", "BUSINESS_RULE_VIOLATION"), 409);
+    }
+    throw new Error(`document access request failed: ${error.message}`);
+  }
+  await writeAudit(ctx.user, "REQUEST_DOCUMENT_ACCESS", MODULE, "Document", p.id,
+    `Requested ${actions.join(",")} access; routed approver role=${String((data as Record<string, unknown>).routed_approver_role)}`,
+    resolveClientIp(req).ip, "INFO");
+  return jsonResponse(ok(data, "Document access request submitted for human approval"), 201);
+}
+
+async function handleListAccessRequests(ctx: AuthContext | null, req: Request) {
+  if (!ctx) return jsonResponse(fail("Authentication required.", "UNAUTHORIZED"), 401);
+  const scope = new URL(req.url).searchParams.get("scope") === "approvals" ? "approvals" : "mine";
+  let query = db.from("document_access_requests").select("*").order("created_at", { ascending: false }).limit(300);
+  if (scope === "mine") query = query.eq("requester_id", ctx.userId);
+  else query = query.eq("status", "PENDING");
+  const { data, error } = await query;
+  if (error) throw new Error(`document access requests query failed: ${error.message}`);
+  const requests = (data as unknown as Record<string, unknown>[]) ?? [];
+  const ids = [...new Set(requests.map((request) => String(request.document_id)))];
+  const { data: documentRows, error: documentError } = ids.length
+    ? await db.from("documents").select("id,title,department,department_id,classification_level,owning_module,ai_detected_document_type,ai_predicted_category,final_classification,owner_email,created_by,status").in("id", ids).eq("is_deleted", false)
+    : { data: [], error: null };
+  if (documentError) throw new Error(`access-request document lookup failed: ${documentError.message}`);
+  const documents = new Map(((documentRows as unknown as Record<string, unknown>[]) ?? []).map((document) => [String(document.id), document]));
+  const result = requests.filter((request) => {
+    if (scope === "mine") return true;
+    const document = documents.get(String(request.document_id));
+    return document ? canApproveDocumentAccess(accessContext(ctx), document) : false;
+  }).map((request) => {
+    const document = documents.get(String(request.document_id));
+    return {
+      id: str(request.id), documentId: str(request.document_id), documentTitle: str(document?.title),
+      classification: normalizeDocumentClassification(document?.classification_level), department: str(document?.department),
+      requesterEmail: str(request.requester_email), requestedActions: request.requested_actions,
+      reason: str(request.reason), routedApproverRole: str(request.routed_approver_role), status: str(request.status),
+      decisionReason: str(request.decision_reason), createdAt: str(request.created_at), decidedAt: str(request.decided_at),
+    };
+  });
+  return jsonResponse(ok(result, "Authorized document access requests retrieved"), 200);
+}
+
+async function handleDecideAccessRequest(ctx: AuthContext | null, req: Request, body: unknown, p: RouteParams) {
+  if (!ctx || !isUuid(p.id)) return jsonResponse(fail("Invalid access request identifier.", "VALIDATION_ERROR"), 400);
+  const { data: requestRow, error: requestError } = await db.from("document_access_requests").select("*").eq("id", p.id).maybeSingle();
+  if (requestError) throw new Error(`access request lookup failed: ${requestError.message}`);
+  if (!requestRow) return jsonResponse(fail("Access request not found.", "RESOURCE_NOT_FOUND"), 404);
+  if (requestRow.status !== "PENDING") return jsonResponse(fail("Only pending access requests can be decided.", "BUSINESS_RULE_VIOLATION"), 409);
+  const document = await loadArchiveDocument(String(requestRow.document_id));
+  if (!document) return jsonResponse(fail("Document not found.", "RESOURCE_NOT_FOUND"), 404);
+  if (!canApproveDocumentAccess(accessContext(ctx), document)) {
+    return jsonResponse(fail("Access request not found.", "RESOURCE_NOT_FOUND"), 404);
+  }
+  const value = (body ?? {}) as Record<string, unknown>;
+  const decision = String(value.decision ?? "").trim().toUpperCase();
+  const reason = String(value.reason ?? "").trim().slice(0, 1000);
+  if (!['APPROVE', 'DENY'].includes(decision) || reason.length < 5) {
+    return jsonResponse(fail("Decision must be APPROVE or DENY with a reason.", "VALIDATION_ERROR"), 400);
+  }
+  const status = decision === "APPROVE" ? "APPROVED" : "DENIED";
+  const { data: decisionResult, error: decisionError } = await db.rpc("decide_document_access_request", {
+    p_request_id: p.id,
+    p_decision: decision,
+    p_reason: reason,
+    p_actor_id: ctx.userId,
+    p_actor_email: ctx.email,
+  });
+  if (decisionError) {
+    if (String(decisionError.message ?? "").includes("ACCESS_REQUEST_NOT_PENDING")) {
+      return jsonResponse(fail("Only pending access requests can be decided.", "BUSINESS_RULE_VIOLATION"), 409);
+    }
+    throw new Error(`access request decision failed: ${decisionError.message}`);
+  }
+  await writeAudit(ctx.user, decision === "APPROVE" ? "APPROVE_DOCUMENT_ACCESS" : "DENY_DOCUMENT_ACCESS",
+    MODULE, "Document", String(requestRow.document_id),
+    `${status} access request ${p.id}; actions=${((requestRow.requested_actions as string[]) ?? []).join(",")}`,
+    resolveClientIp(req).ip, "INFO");
+  return jsonResponse(ok(decisionResult, `Document access request ${status.toLowerCase()}`), 200);
+}
+
 async function handleCreateDocument(ctx: AuthContext | null, _req: Request, body: unknown) {
+  if (!ctx?.permissions.some((permission) => permission.toUpperCase() === "DOCUMENT_UPLOAD")) {
+    return jsonResponse(fail("Document upload permission is required.", "ACCESS_DENIED"), 403);
+  }
   const b = (body ?? {}) as Record<string, unknown>;
   const classificationLevel = str(b.classificationLevel) ?? "INTERNAL";
   if (!CLASSIFICATION_LEVELS.includes(classificationLevel)) {
@@ -535,6 +859,7 @@ async function handleCreateDocument(ctx: AuthContext | null, _req: Request, body
     supabase_storage_url: str(b.supabaseStorageUrl),
     owner_email: userEmail,
     department: userDept,
+    department_id: ctx?.user.row.department_id ?? null,
     category_id: resolvedCategoryId,
     folder_id: resolvedFolderId,
     classification_level: classificationLevel,
@@ -574,6 +899,9 @@ async function handleCreateDocument(ctx: AuthContext | null, _req: Request, body
 }
 
 async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
+  if (!ctx?.permissions.some((permission) => permission.toUpperCase() === "DOCUMENT_UPLOAD")) {
+    return jsonResponse(fail("Document upload permission is required.", "ACCESS_DENIED"), 403);
+  }
   const url = new URL(req.url);
   const form = await req.formData();
   const file = form.get("file");
@@ -678,6 +1006,7 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
       file_path: storedName,
       owner_email: userEmail,
       department: userDept,
+      department_id: ctx?.user.row.department_id ?? null,
       category_id: resolvedCategoryId,
       folder_id: resolvedFolderId,
       classification_level: classificationLevel,
@@ -813,7 +1142,9 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
         const { data: fileCandidates, error: candidateError } = await db.rpc("phase10_document_duplicate_candidates", {
           p_user_email: ctx?.email ?? "",
           p_user_department: str(ctx?.user.row.department),
-          p_roles: (ctx?.roles ?? []).map((role) => role.toUpperCase()),
+          p_roles: (ctx?.roles ?? [])
+            .map((role) => role.toUpperCase())
+            .filter((role) => role !== "SUPER_ADMIN" && role !== "SYSTEM_ADMIN"),
           p_source_document_id: crypto.randomUUID(),
           p_file_sha256: uploadedFileSha256,
           p_ocr_normalized_sha256: null,
@@ -880,6 +1211,12 @@ async function handleClassificationReview(
   if (!row || row.is_deleted === true) {
     return jsonResponse(fail("Document not found.", "RESOURCE_NOT_FOUND"), 404);
   }
+  const reviewGrants = (await loadGrants([p.id])).get(p.id) ?? [];
+  const reviewContext = accessContext(ctx);
+  if (!reviewContext.permissions.some((permission) => permission.toUpperCase() === "DOCUMENT_CLASSIFY")
+    || !canViewDocumentContent(reviewContext, row, reviewGrants)) {
+    return jsonResponse(fail("You do not have permission to classify this document.", "ACCESS_DENIED"), 403);
+  }
   if (String(row.status ?? "") !== "PENDING_REVIEW") {
     return jsonResponse(fail("Only documents pending review can receive a classification decision.", "BUSINESS_RULE_VIOLATION"), 409);
   }
@@ -944,11 +1281,8 @@ async function handleDownloadDocument(ctx: AuthContext | null, req: Request, _bo
     return jsonResponse(fail(`Document not found: ${p.id}`, "RESOURCE_NOT_FOUND"), 404);
   }
 
-  const userEmail = ctx ? ctx.email : "";
-  const userRoles = ctx ? ctx.roles : [];
-  const userDept = ctx ? str(ctx.user.row.department) : null;
   const grants = (await loadGrants([p.id])).get(p.id) ?? [];
-  if (!canDownloadDocument(userEmail, userRoles, userDept, row, grants)) {
+  if (!canDownloadDocumentContent(accessContext(ctx), row, grants)) {
     return jsonResponse(fail("You do not have permission to download this document.", "ACCESS_DENIED"), 403);
   }
 
@@ -1005,8 +1339,10 @@ async function handleDuplicateReview(
   const userEmail = ctx?.email ?? "";
   const roles = ctx?.roles ?? [];
   const grants = (await loadGrants([p.id])).get(p.id) ?? [];
-  const canReview = isOwner(userEmail, source) || REVIEW_ROLES.some((role) => hasRole(roles, role));
-  if (!canViewDocument(userEmail, roles, str(ctx?.user.row.department), source, grants) || !canReview) {
+  const viewer = accessContext(ctx);
+  const canReview = isOwner(userEmail, source)
+    || (REVIEW_ROLES.some((role) => hasRole(roles, role)) && canViewDocumentContent(viewer, source, grants));
+  if (!canReview) {
     return jsonResponse(fail("You do not have permission to review this duplicate result.", "ACCESS_DENIED"), 403);
   }
 
@@ -1043,19 +1379,16 @@ async function handleDuplicateReview(
   }, "Duplicate review decision recorded; no document was deleted, overwritten, archived, or reclassified"), 200);
 }
 
-async function handleGetSignedUrl(ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
+async function handleGetSignedUrl(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
   if (!isUuid(p.id)) return generic500();
   const row = await loadDocumentRow(p.id);
   if (!row) {
     return jsonResponse(fail(`Document not found: ${p.id}`, "RESOURCE_NOT_FOUND"), 404);
   }
 
-  const userEmail = ctx ? ctx.email : "";
-  const userRoles = ctx ? ctx.roles : [];
-  const userDept = ctx ? str(ctx.user.row.department) : null;
   const grants = (await loadGrants([p.id])).get(p.id) ?? [];
-  if (!canDownloadDocument(userEmail, userRoles, userDept, row, grants)) {
-    return jsonResponse(fail("You do not have permission to download this document.", "ACCESS_DENIED"), 403);
+  if (!canViewDocumentContent(accessContext(ctx), row, grants)) {
+    return jsonResponse(fail("You do not have permission to view this document.", "ACCESS_DENIED"), 403);
   }
 
   const filePath = str(row.file_path);
@@ -1087,8 +1420,17 @@ async function handleGetSignedUrl(ctx: AuthContext | null, _req: Request, _body:
     return jsonResponse(fail("The document storage service is temporarily unavailable.", "STORAGE_UNAVAILABLE"), 503);
   }
 
+  await writeAudit(ctx?.user ?? null, "VIEW_DOCUMENT", MODULE, "Document", p.id,
+    `Opened document in secure viewer: ${str(row.title)}`,
+    ctx ? resolveClientIp(req).ip : null, "INFO");
+
   return jsonResponse(
-    ok({ signedUrl: data.signedUrl, expiresAt: new Date(Date.now() + 300_000).toISOString() }, "Signed URL generated"),
+    ok({
+      signedUrl: data.signedUrl,
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      contentType: str(row.file_type),
+      fileName: str(row.file_name),
+    }, "Signed URL generated"),
     200,
   );
 }
@@ -1130,16 +1472,32 @@ async function handleDeleteOwnedDocument(ctx: AuthContext | null, req: Request, 
   return jsonResponse(ok({ documentDeleted: true }, "Unlinked source document deleted"), 200);
 }
 
+async function handleArchiveDocument(ctx: AuthContext | null, req: Request, body: unknown, p: RouteParams) {
+  return handleArchiveStatus(ctx, req, body, p, false);
+}
+
+async function handleRestoreDocument(ctx: AuthContext | null, req: Request, body: unknown, p: RouteParams) {
+  return handleArchiveStatus(ctx, req, body, p, true);
+}
+
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 
 const routes = [
-  { method: "GET", path: "/documents", guard: { kind: "auth" }, handler: handleListDocuments },
   { method: "GET", path: "/documents/search", guard: { kind: "auth" }, handler: handleSearchDocuments },
   { method: "GET", path: "/documents/classification-categories", guard: { kind: "auth" }, handler: handleClassificationCategories },
+  { method: "GET", path: "/documents/archive/departments", guard: { kind: "auth" }, handler: handleArchiveDepartments },
+  { method: "GET", path: "/documents/archive", guard: { kind: "auth" }, handler: handleArchiveDocuments },
+  { method: "GET", path: "/documents/access-requests", guard: { kind: "auth" }, handler: handleListAccessRequests },
+  { method: "POST", path: "/documents/access-requests/:id/decision", guard: { kind: "auth" }, handler: handleDecideAccessRequest },
+  { method: "GET", path: "/documents", guard: { kind: "auth" }, handler: handleListDocuments },
   { method: "POST", path: "/documents", guard: { kind: "auth" }, handler: handleCreateDocument },
   { method: "POST", path: "/documents/upload", guard: { kind: "auth" }, handler: handleUploadDocument },
+  { method: "GET", path: "/documents/:id", guard: { kind: "auth" }, handler: handleArchiveDocumentDetail },
+  { method: "POST", path: "/documents/:id/archive", guard: { kind: "auth" }, handler: handleArchiveDocument },
+  { method: "POST", path: "/documents/:id/restore", guard: { kind: "auth" }, handler: handleRestoreDocument },
+  { method: "POST", path: "/documents/:id/access-requests", guard: { kind: "auth" }, handler: handleRequestDocumentAccess },
   { method: "POST", path: "/documents/:id/classification-review", guard: { kind: "roles", roles: REVIEW_ROLES }, handler: handleClassificationReview },
   { method: "POST", path: "/documents/:id/duplicate-review", guard: { kind: "auth" }, handler: handleDuplicateReview },
   { method: "GET", path: "/documents/:id/download", guard: { kind: "auth" }, handler: handleDownloadDocument },

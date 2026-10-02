@@ -157,7 +157,7 @@ const notificationDestinations: Partial<Record<CanonicalRole, Record<string, str
   DATA_PROTECTION_OFFICER: { incident: '/privacy/breaches', security_alert: '/privacy/breaches', document: '/privacy/governance', retention: '/privacy/retention' },
   LEGAL_COUNSEL: { contract: '/legal-counsel/approvals', approval: '/legal-counsel/approvals' },
   RECORDS_OFFICER: { document: '/records/repositories', retention: '/records/disposal' },
-  DEPARTMENT_HEAD: { approval: '/department/approvals', audit: '/department/activity', security_log: '/department/activity' },
+  DEPARTMENT_HEAD: { document: '/department/repository', approval: '/department/approvals', audit: '/department/activity', security_log: '/department/activity' },
   SECURITY_OFFICER: { incident: '/security-operations/incidents', security_alert: '/security-operations/incidents', audit: '/security-operations/reports' },
   INFOSEC_OFFICER: { incident: '/information-security/cyber-incidents', security_alert: '/information-security/cyber-incidents' },
   FACILITIES_MANAGER: { reservation: '/facilities/reservations' },

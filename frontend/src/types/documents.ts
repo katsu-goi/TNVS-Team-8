@@ -15,6 +15,7 @@ export type ClassificationLevel =
   | 'INTERNAL'
   | 'CONFIDENTIAL'
   | 'RESTRICTED'
+  | 'HIGHLY_RESTRICTED'
   | 'SECRET';
 
 export interface DocumentTag {
