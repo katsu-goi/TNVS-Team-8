@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Clock3, Loader2, LogOut, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getCurrentUser, logout as apiLogout, refreshToken as refreshAuthToken } from '../../api/authService';
-import { useAuthStore } from '../../stores/authStore';
+import { isActorSuperAdmin, useAuthStore } from '../../stores/authStore';
 import {
   ACTIVITY_WRITE_THROTTLE_MS,
   CONTINUATION_LOCK_STORAGE_KEY,
@@ -229,6 +229,11 @@ export const SessionIdleManager: React.FC<SessionIdleManagerProps> = ({
   const acceptVerifiedUser = useAuthStore((state) => state.acceptVerifiedUser);
   const logout = useAuthStore((state) => state.logout);
   const authenticated = Boolean(user && accessToken && refreshToken);
+  // The idle policy is based on the authenticated actor, never the temporary
+  // oversight target. Super Admin keeps normal token expiry/refresh behavior,
+  // but is exempt from the five-minute idle warning and inactivity logout.
+  const idleTimeoutExempt = isActorSuperAdmin(user);
+  const idleProtectionEnabled = authenticated && !idleTimeoutExempt;
   const sourceRef = useRef(crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
   const channelRef = useRef<BroadcastChannel | null>(null);
   const lastActivityRef = useRef(0);
@@ -257,6 +262,7 @@ export const SessionIdleManager: React.FC<SessionIdleManagerProps> = ({
   }, []);
 
   const finishLogout = useCallback(async (reason: SessionEndReason) => {
+    if (reason === 'inactivity' && idleTimeoutExempt) return;
     if (loggingOutRef.current) return;
     loggingOutRef.current = true;
     continuingRef.current = false;
@@ -271,10 +277,10 @@ export const SessionIdleManager: React.FC<SessionIdleManagerProps> = ({
       logout(reason);
       navigate('/login', { replace: true });
     }
-  }, [logout, navigate]);
+  }, [idleTimeoutExempt, logout, navigate]);
 
   const recordActivity = useCallback((force = false) => {
-    if (!authenticated || warningRef.current || continuingRef.current) return;
+    if (!idleProtectionEnabled || warningRef.current || continuingRef.current) return;
     const now = Date.now();
     if (!force && now - lastWriteRef.current < activityThrottleMs) return;
     lastWriteRef.current = now;
@@ -282,7 +288,7 @@ export const SessionIdleManager: React.FC<SessionIdleManagerProps> = ({
     writeLastActivityAt(now);
     window.dispatchEvent(new CustomEvent(MEANINGFUL_ACTIVITY_EVENT, { detail: { at: now } }));
     sendSignal({ type: 'activity', at: now, source: sourceRef.current });
-  }, [activityThrottleMs, authenticated, sendSignal]);
+  }, [activityThrottleMs, idleProtectionEnabled, sendSignal]);
 
   const showWarning = useCallback((startedAt: number) => {
     if (warningRef.current || loggingOutRef.current) return;
@@ -293,7 +299,7 @@ export const SessionIdleManager: React.FC<SessionIdleManagerProps> = ({
   }, [sendSignal, warningDurationMs]);
 
   const evaluateDeadline = useCallback(() => {
-    if (!authenticated || loggingOutRef.current) return;
+    if (!idleProtectionEnabled || loggingOutRef.current) return;
     const now = Date.now();
     if (continuingRef.current && now - continuingStartedAtRef.current >= CONTINUATION_LOCK_TIMEOUT_MS) {
       continuingRef.current = false;
@@ -312,10 +318,17 @@ export const SessionIdleManager: React.FC<SessionIdleManagerProps> = ({
       showWarning(warningStartsAt);
       setRemainingMs(expiresAt - now);
     }
-  }, [authenticated, finishLogout, idleThresholdMs, showWarning, warningDurationMs]);
+  }, [finishLogout, idleProtectionEnabled, idleThresholdMs, showWarning, warningDurationMs]);
 
   const handleSignal = useCallback((signal: SessionSignal) => {
     if (signal.source === sourceRef.current) return;
+    if (idleTimeoutExempt && (
+      signal.type === 'warning'
+      || signal.type === 'continuing'
+      || signal.type === 'continued'
+      || signal.type === 'continue-failed'
+      || (signal.type === 'logout' && signal.reason === 'inactivity')
+    )) return;
     if (signal.type === 'activity') {
       if (!warningRef.current && signal.at > lastActivityRef.current) {
         lastActivityRef.current = signal.at;
@@ -359,10 +372,10 @@ export const SessionIdleManager: React.FC<SessionIdleManagerProps> = ({
       logout(signal.reason ?? 'expired', false);
       navigate('/login', { replace: true });
     }
-  }, [closeWarning, finishLogout, logout, navigate, showWarning, updateSessionTokens]);
+  }, [closeWarning, finishLogout, idleTimeoutExempt, logout, navigate, showWarning, updateSessionTokens]);
 
   useEffect(() => {
-    if (!authenticated) {
+    if (!idleProtectionEnabled) {
       closeWarning();
       loggingOutRef.current = false;
       return undefined;
@@ -410,10 +423,10 @@ export const SessionIdleManager: React.FC<SessionIdleManagerProps> = ({
       channelRef.current?.close();
       channelRef.current = null;
     };
-  }, [authenticated, closeWarning, evaluateDeadline, handleSignal, recordActivity, tickMs]);
+  }, [closeWarning, evaluateDeadline, handleSignal, idleProtectionEnabled, recordActivity, tickMs]);
 
   const continueSession = async () => {
-    if (continuingRef.current || loggingOutRef.current || !refreshToken) return;
+    if (!idleProtectionEnabled || continuingRef.current || loggingOutRef.current || !refreshToken) return;
     continuingRef.current = true;
     continuingStartedAtRef.current = Date.now();
     setContinuing(true);
@@ -463,7 +476,7 @@ export const SessionIdleManager: React.FC<SessionIdleManagerProps> = ({
   return (
     <>
       {children}
-      {authenticated && warning ? (
+      {idleProtectionEnabled && warning ? (
         <SessionWarningDialog
           remainingMs={remainingMs}
           continuing={continuing}

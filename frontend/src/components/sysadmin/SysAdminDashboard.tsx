@@ -10,7 +10,6 @@ import { securityService } from '../../api/securityService';
 import { loadBackups } from '../../api/adminService';
 import { notificationService, type AppNotification } from '../../api/notificationService';
 import { isActorSuperAdmin, useAuthStore } from '../../stores/authStore';
-import { OversightPanel } from '../oversight';
 import { useLiveActivities } from './useLiveActivities';
 import { SubsystemHealthGrid } from './SubsystemHealthGrid';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
@@ -145,8 +144,6 @@ export const SysAdminDashboard: React.FC = () => {
       </div>
 
       {overview && <EnterpriseOverview overview={overview} periodLabel="Today (Asia/Manila)" />}
-
-      {superAdministrator && <OversightPanel />}
 
       <div className={`grid grid-cols-1 gap-6 ${superAdministrator ? 'lg:grid-cols-2' : ''}`}>
         {superAdministrator && <div className="card-stat p-5">

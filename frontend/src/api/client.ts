@@ -205,6 +205,18 @@ apiClient.interceptors.response.use(
     const request = error.config as RetriableRequest | undefined;
     const isAuthRequest = request?.url?.includes('/auth/login') || request?.url?.includes('/auth/refresh');
 
+    const errorCode = String((error.response?.data as { errorCode?: unknown } | undefined)?.errorCode ?? '');
+    if (error.response?.status === 410 && errorCode === 'OVERSIGHT_SESSION_EXPIRED') {
+      clearOversightSession();
+      window.dispatchEvent(new CustomEvent('oversight:expired'));
+      return Promise.reject(error);
+    }
+    if (error.response?.status === 409 && errorCode === 'OVERSIGHT_TARGET_UNAVAILABLE') {
+      clearOversightSession();
+      window.dispatchEvent(new CustomEvent('oversight:terminated', { detail: { reason: 'target-unavailable' } }));
+      return Promise.reject(error);
+    }
+
     if (error.response?.status === 401 && request && !request._retry && !isAuthRequest) {
       request._retry = true;
       try {

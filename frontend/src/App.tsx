@@ -33,6 +33,7 @@ const SystemHealthPage = lazyNamed(() => import('./components/sysadmin/AdminPage
 const SessionsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'SessionsPage');
 const AnalyticsPage = lazyNamed(() => import('./components/sysadmin/AnalyticsDashboard'), 'AnalyticsPage');
 const RbacAdminPage = lazyNamed(() => import('./components/sysadmin/RbacAdminPage'), 'RbacAdminPage');
+const UserOversightPage = lazyNamed(() => import('./components/oversight/UserOversightPage'), 'UserOversightPage');
 const FacilitiesDashboard = lazyNamed(() => import('./components/facilities/FacilitiesDashboard'), 'FacilitiesDashboard');
 const ReservationsPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'ReservationsPage');
 const ApprovalPage = lazyNamed(() => import('./components/facilities/FacilitiesPages'), 'ApprovalPage');
@@ -283,6 +284,7 @@ export const AppRoutes: React.FC = () => (
           {/* Legacy path preserved for bookmarks/links to the renamed Analytics page */}
           <Route path="admin/reports" element={<AdminPortalRoute><Navigate to="/admin/analytics" replace /></AdminPortalRoute>} />
           <Route path="admin/rbac" element={<SuperAdminRoute><RbacAdminPage /></SuperAdminRoute>} />
+          <Route path="super-admin/user-oversight" element={<SuperAdminRoute><UserOversightPage /></SuperAdminRoute>} />
 
           {/* Security Center */}
           <Route path="security" element={

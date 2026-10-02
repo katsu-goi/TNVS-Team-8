@@ -16,6 +16,23 @@ export type AuthContext = {
   authorities: string[]; // ROLE_* + permission names
   ip: string;
   userAgent: string | null;
+  oversight?: {
+    sessionId: string;
+    mode: "IMPERSONATION" | "SHADOW";
+    readOnly: boolean;
+    justification: string;
+    actorUserId: string;
+    actorEmail: string;
+    actorFullName: string;
+    targetUserId: string;
+    targetEmail: string;
+    targetFullName: string;
+    targetRoles: string[];
+    startedAt: string;
+    expiresAt: string | null;
+    durationMinutes: number | null;
+    manualTerminationRequired: boolean;
+  };
 };
 
 export function unauthorizedResponse(): Response {
@@ -130,45 +147,130 @@ const OVERSIGHT_SESSION_HEADER = "X-Oversight-Session";
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-type ActiveOversightSession = { id: string; target_user_id: string };
+type ActiveOversightSession = {
+  id: string;
+  actor_user_id: string;
+  target_user_id: string;
+  mode: "IMPERSONATION" | "SHADOW";
+  target_role_names: string[];
+  justification: string;
+  read_only: boolean;
+  started_at: string;
+  expires_at: string | null;
+  duration_minutes: number | null;
+  manual_termination_required: boolean;
+};
 
-async function activeOversightSession(ctx: AuthContext): Promise<ActiveOversightSession | null> {
+class OversightContextError extends Error {
+  constructor(public readonly status: number, public readonly code: string, message: string) {
+    super(message);
+    this.name = "OversightContextError";
+  }
+}
+
+function oversightContextErrorResponse(error: OversightContextError): Response {
+  return jsonResponse(fail(error.message, error.code), error.status, corsHeaders());
+}
+
+function fullName(user: AuthUser): string {
+  return `${user.row.first_name ?? ""} ${user.row.last_name ?? ""}`.trim() || user.row.email;
+}
+
+async function recordOversightLifecycle(
+  actor: AuthContext,
+  session: ActiveOversightSession,
+  action: string,
+  resultStatus: string,
+  endedAt: string | null = null,
+): Promise<void> {
+  const target = await findUserById(session.target_user_id);
+  const { error } = await adminDb().from("admin_audit_logs").insert({
+    actor_user_id: actor.userId,
+    target_user_id: session.target_user_id,
+    oversight_session_id: session.id,
+    action,
+    entity_type: "OversightSession",
+    entity_id: session.id,
+    details: {
+      auditMarker: "Performed via Super Admin Oversight",
+      actorEmail: actor.email,
+      actorName: fullName(actor.user),
+      targetEmail: target?.row.email ?? null,
+      targetName: target ? fullName(target) : null,
+      targetRoles: session.target_role_names,
+      justification: session.justification,
+      sessionType: session.mode,
+      durationMinutes: session.duration_minutes,
+      manualTerminationRequired: session.manual_termination_required,
+      startedAt: session.started_at,
+      expiresAt: session.expires_at,
+      endedAt,
+      resultStatus,
+    },
+    source_ip: actor.ip,
+    user_agent: actor.userAgent,
+    occurred_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(`oversight lifecycle audit failed: ${error.message}`);
+}
+
+async function activeOversightSession(ctx: AuthContext, sessionId: string): Promise<ActiveOversightSession> {
   const { data, error } = await adminDb()
     .from("oversight_sessions")
-    .select("id, target_user_id")
+    .select("id, actor_user_id, target_user_id, mode, target_role_names, justification, read_only, started_at, expires_at, duration_minutes, manual_termination_required")
+    .eq("id", sessionId)
     .eq("actor_user_id", ctx.userId)
-    .eq("read_only", true)
     .eq("status", "ACTIVE")
     .is("ended_at", null)
-    .gt("expires_at", new Date().toISOString())
-    .order("started_at", { ascending: false })
-    .limit(1)
     .maybeSingle();
   if (error) throw new Error(`oversight session lookup failed: ${error.message}`);
-  return data as ActiveOversightSession | null;
+  if (!data) {
+    throw new OversightContextError(403, "OVERSIGHT_SESSION_INVALID", "The oversight session is no longer active.");
+  }
+  const session = data as ActiveOversightSession;
+  if (session.expires_at && Date.parse(session.expires_at) <= Date.now()) {
+    const endedAt = new Date().toISOString();
+    const { data: expired, error: expiryError } = await adminDb().from("oversight_sessions").update({
+      status: "EXPIRED",
+      ended_at: endedAt,
+      ended_by: ctx.userId,
+      ended_reason: "EXPIRED",
+    }).eq("id", session.id).eq("status", "ACTIVE").select("id").maybeSingle();
+    if (expiryError) throw new Error(`oversight session expiry failed: ${expiryError.message}`);
+    if (expired) await recordOversightLifecycle(ctx, session, "OVERSIGHT_SESSION_EXPIRED", "EXPIRED", endedAt);
+    throw new OversightContextError(410, "OVERSIGHT_SESSION_EXPIRED", "The oversight session has expired.");
+  }
+  return session;
 }
 
-function isOversightControlPath(req: Request): boolean {
-  return new URL(req.url).pathname.replace(/\/+$/, "").includes("/admin/oversight/");
-}
-
-async function activeReadOnlyOversightSession(ctx: AuthContext, req: Request): Promise<boolean> {
-  if (!MUTATING_METHODS.has(req.method)) return false;
-  if (new URL(req.url).pathname.replace(/\/+$/, "").endsWith("/admin/oversight/stop")) return false;
-
-  const sessionId = req.headers.get(OVERSIGHT_SESSION_HEADER)?.trim();
-  if (sessionId && !UUID_PATTERN.test(sessionId)) return true;
-  return (await activeOversightSession(ctx)) !== null;
+function isActorIdentityPath(req: Request): boolean {
+  const path = new URL(req.url).pathname.replace(/\/+$/, "");
+  return path.includes("/admin/oversight/") || path.includes("/auth/");
 }
 
 async function oversightTargetContext(ctx: AuthContext, req: Request): Promise<AuthContext> {
-  if (isOversightControlPath(req)) return ctx;
-  const session = await activeOversightSession(ctx);
-  if (!session) return ctx;
+  if (isActorIdentityPath(req)) return ctx;
+  const sessionId = req.headers.get(OVERSIGHT_SESSION_HEADER)?.trim();
+  if (!sessionId) return ctx;
+  if (!UUID_PATTERN.test(sessionId)) {
+    throw new OversightContextError(403, "OVERSIGHT_SESSION_INVALID", "The oversight session identifier is invalid.");
+  }
+  const session = await activeOversightSession(ctx, sessionId);
 
   const target = await findUserById(session.target_user_id);
   if (!target || !isAccountActive(target)) {
-    throw new Error("oversight target is unavailable");
+    const endedAt = new Date().toISOString();
+    const { data: ended, error } = await adminDb().from("oversight_sessions").update({
+      status: "ENDED",
+      ended_at: endedAt,
+      ended_by: ctx.userId,
+      ended_reason: "TARGET_UNAVAILABLE",
+    }).eq("id", session.id).eq("status", "ACTIVE").select("id").maybeSingle();
+    if (error) throw new Error(`unavailable oversight target termination failed: ${error.message}`);
+    if (ended) {
+      await recordOversightLifecycle(ctx, session, "OVERSIGHT_TARGET_UNAVAILABLE", "ENDED", endedAt);
+    }
+    throw new OversightContextError(409, "OVERSIGHT_TARGET_UNAVAILABLE", "The oversight target account is unavailable.");
   }
   const authorities = target.roles.map((role) => `ROLE_${role}`).concat(target.permissions);
   return {
@@ -179,7 +281,97 @@ async function oversightTargetContext(ctx: AuthContext, req: Request): Promise<A
     roles: target.roles,
     permissions: target.permissions,
     authorities,
+    oversight: {
+      sessionId: session.id,
+      mode: session.mode,
+      readOnly: session.read_only,
+      justification: session.justification,
+      actorUserId: ctx.userId,
+      actorEmail: ctx.email,
+      actorFullName: fullName(ctx.user),
+      targetUserId: target.row.id,
+      targetEmail: target.row.email,
+      targetFullName: fullName(target),
+      targetRoles: session.target_role_names,
+      startedAt: session.started_at,
+      expiresAt: session.expires_at,
+      durationMinutes: session.duration_minutes,
+      manualTerminationRequired: session.manual_termination_required,
+    },
   };
+}
+
+async function writeOversightActionAudit(
+  ctx: AuthContext,
+  req: Request,
+  route: Route,
+  params: RouteParams,
+  phase: "AUTHORIZED_ATTEMPT" | "COMPLETED",
+  responseStatus?: number,
+): Promise<void> {
+  if (!ctx.oversight) return;
+  const oversight = ctx.oversight;
+  const normalizedPath = route.path.replace(/:[^/]+/g, "RESOURCE");
+  const action = `OVERSIGHT_${req.method}_${normalizedPath}`.replace(/[^A-Z0-9_]+/gi, "_").slice(0, 100);
+  const resourceId = params.id ?? Object.values(params)[0] ?? null;
+  const resultStatus = phase === "AUTHORIZED_ATTEMPT"
+    ? phase
+    : responseStatus != null && responseStatus < 400 ? "SUCCESS" : "FAILED";
+  const { error } = await adminDb().from("admin_audit_logs").insert({
+    actor_user_id: oversight.actorUserId,
+    target_user_id: oversight.targetUserId,
+    oversight_session_id: oversight.sessionId,
+    action,
+    entity_type: route.path.split("/").filter(Boolean).at(-2) ?? "ApplicationResource",
+    entity_id: resourceId,
+    details: {
+      auditMarker: "Performed via Super Admin Oversight",
+      actorEmail: oversight.actorEmail,
+      actorName: oversight.actorFullName,
+      targetEmail: oversight.targetEmail,
+      targetName: oversight.targetFullName,
+      targetRoles: oversight.targetRoles,
+      justification: oversight.justification,
+      sessionType: oversight.mode,
+      durationMinutes: oversight.durationMinutes,
+      manualTerminationRequired: oversight.manualTerminationRequired,
+      sessionStartedAt: oversight.startedAt,
+      sessionExpiresAt: oversight.expiresAt,
+      requestMethod: req.method,
+      route: route.path,
+      requestPath: new URL(req.url).pathname,
+      resourceParams: params,
+      resultStatus,
+      responseStatus: responseStatus ?? null,
+    },
+    source_ip: ctx.ip,
+    user_agent: ctx.userAgent,
+    occurred_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(`oversight action audit failed: ${error.message}`);
+}
+
+async function terminateOversightForLogout(ctx: AuthContext, req: Request, body: unknown): Promise<void> {
+  const path = new URL(req.url).pathname.replace(/\/+$/, "");
+  if (!path.endsWith("/auth/logout")) return;
+  const reason = (body as Record<string, unknown> | null)?.reason;
+  if (reason === "INACTIVITY" && hasAnyAssignedRole(ctx, ["SUPER_ADMIN"])) return;
+  const { data, error } = await adminDb().from("oversight_sessions")
+    .select("id, actor_user_id, target_user_id, mode, target_role_names, justification, read_only, started_at, expires_at, duration_minutes, manual_termination_required")
+    .eq("actor_user_id", ctx.userId)
+    .eq("status", "ACTIVE")
+    .is("ended_at", null);
+  if (error) throw new Error(`oversight logout lookup failed: ${error.message}`);
+  for (const session of (data ?? []) as ActiveOversightSession[]) {
+    const endedAt = new Date().toISOString();
+    const { data: ended, error: updateError } = await adminDb().from("oversight_sessions").update({
+      status: "ENDED", ended_at: endedAt, ended_by: ctx.userId, ended_reason: "LOGOUT",
+    }).eq("id", session.id).eq("status", "ACTIVE").select("id").maybeSingle();
+    if (updateError) throw new Error(`oversight logout termination failed: ${updateError.message}`);
+    if (ended) {
+      await recordOversightLifecycle(ctx, session, "OVERSIGHT_SESSION_ENDED_ON_LOGOUT", "ENDED", endedAt);
+    }
+  }
 }
 
 export type RouteGuard =
@@ -280,6 +472,12 @@ export function createHandler(routes: Route[], options: RouterOptions = {}): (re
     const actorCtx = await extractAuthContext(req);
     if (!actorCtx) return finish(unauthorizedResponse());
 
+    try {
+      await terminateOversightForLogout(actorCtx, req, body);
+    } catch (e) {
+      return finish(internalErrorResponse(e));
+    }
+
     const rate = tierFor(
       hasAnyRole(actorCtx, ["SUPER_ADMIN", "SYSTEM_ADMIN"]) ? "admin" : "user",
       route.path,
@@ -287,37 +485,60 @@ export function createHandler(routes: Route[], options: RouterOptions = {}): (re
     const key = `${actorCtx.userId}:${rate.name}:${route.path}`;
     if (!(await consumeRateLimit(key, rate.spec))) return finish(rateLimitedResponse(rate.spec.windowSeconds));
 
-    try {
-      if (await activeReadOnlyOversightSession(actorCtx, req)) {
-        return finish(oversightReadOnlyResponse());
-      }
-    } catch (e) {
-      return finish(internalErrorResponse(e));
-    }
-
     let ctx = actorCtx;
     try {
       ctx = await oversightTargetContext(actorCtx, req);
     } catch (e) {
+      if (e instanceof OversightContextError) return finish(oversightContextErrorResponse(e));
       return finish(internalErrorResponse(e));
     }
 
+    if (ctx.oversight) {
+      try {
+        await writeOversightActionAudit(ctx, req, route, params, "AUTHORIZED_ATTEMPT");
+      } catch (e) {
+        return finish(internalErrorResponse(e));
+      }
+    }
+
+    if (ctx.oversight?.readOnly && MUTATING_METHODS.has(req.method)) {
+      const response = oversightReadOnlyResponse();
+      try { await writeOversightActionAudit(ctx, req, route, params, "COMPLETED", response.status); }
+      catch (e) { console.error("oversight completion audit failed:", (e as Error).message); }
+      return finish(response);
+    }
+
     if (route.guard.kind === "roles" && !hasAnyRole(ctx, route.guard.roles)) {
-      return finish(forbiddenResponse());
+      const response = forbiddenResponse();
+      try { await writeOversightActionAudit(ctx, req, route, params, "COMPLETED", response.status); }
+      catch (e) { console.error("oversight completion audit failed:", (e as Error).message); }
+      return finish(response);
     }
     if (route.guard.kind === "assignedRoles" && !hasAnyAssignedRole(ctx, route.guard.roles)) {
-      return finish(forbiddenResponse());
+      const response = forbiddenResponse();
+      try { await writeOversightActionAudit(ctx, req, route, params, "COMPLETED", response.status); }
+      catch (e) { console.error("oversight completion audit failed:", (e as Error).message); }
+      return finish(response);
     }
     if (route.guard.kind === "permissions" && !hasAnyPermission(ctx, route.guard.permissions)) {
-      return finish(forbiddenResponse());
+      const response = forbiddenResponse();
+      try { await writeOversightActionAudit(ctx, req, route, params, "COMPLETED", response.status); }
+      catch (e) { console.error("oversight completion audit failed:", (e as Error).message); }
+      return finish(response);
     }
     if (route.guard.kind === "rolesOrPermissions"
       && !hasAnyRole(ctx, route.guard.roles)
       && !hasAnyPermission(ctx, route.guard.permissions)) {
-      return finish(forbiddenResponse());
+      const response = forbiddenResponse();
+      try { await writeOversightActionAudit(ctx, req, route, params, "COMPLETED", response.status); }
+      catch (e) { console.error("oversight completion audit failed:", (e as Error).message); }
+      return finish(response);
     }
 
-    return finish(await safeRun(route.handler, ctx, req, body, params));
+    const response = await safeRun(route.handler, ctx, req, body, params);
+    try { await writeOversightActionAudit(ctx, req, route, params, "COMPLETED", response.status); }
+    catch (e) { console.error("oversight completion audit failed:", (e as Error).message); }
+    return finish(response);
   };
 }
 

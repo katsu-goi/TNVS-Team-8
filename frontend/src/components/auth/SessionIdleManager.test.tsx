@@ -18,6 +18,7 @@ import {
   SESSION_SIGNAL_STORAGE_KEY,
   writeLastActivityAt,
 } from '../../session/sessionState';
+import { OVERSIGHT_SESSION_ID_KEY, OVERSIGHT_TARGET_USER_KEY } from '../../utils/oversightSession';
 import { SessionIdleManager } from './SessionIdleManager';
 
 const baseUser = {
@@ -330,9 +331,35 @@ describe('SessionIdleManager', () => {
     expect(mocks.logout).not.toHaveBeenCalled();
   });
 
-  it('covers every canonical role and multi-role users through the shared authenticated wrapper', async () => {
+  it('exempts the Super Admin actor from the five-minute warning and inactivity logout during oversight', async () => {
+    authenticate(['SUPER_ADMIN']);
+    localStorage.setItem(OVERSIGHT_SESSION_ID_KEY, '33333333-3333-4333-8333-333333333333');
+    localStorage.setItem(OVERSIGHT_TARGET_USER_KEY, JSON.stringify({
+      ...baseUser,
+      assignedRoles: ['EMPLOYEE'],
+      roles: ['EMPLOYEE'],
+    }));
+    renderManager({ idleThresholdMs: 5_000, warningDurationMs: 1_000 });
+
+    await advance(60_000);
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(mocks.logout).not.toHaveBeenCalled();
+    expect(useAuthStore.getState().accessToken).toBe('access-token');
+
+    const staleIdleLogout = JSON.stringify({
+      type: 'logout', at: Date.now(), source: 'other-tab', reason: 'inactivity',
+    });
+    act(() => window.dispatchEvent(new StorageEvent('storage', {
+      key: SESSION_SIGNAL_STORAGE_KEY,
+      newValue: staleIdleLogout,
+    })));
+    expect(useAuthStore.getState().accessToken).toBe('access-token');
+    expect(screen.getByText('Portal action')).toBeInTheDocument();
+  });
+
+  it('covers every canonical non-exempt role and multi-role users through the shared authenticated wrapper', async () => {
     const roles = [
-      'SUPER_ADMIN', 'SYSTEM_ADMIN', 'COMPLIANCE_MANAGER', 'DATA_PROTECTION_OFFICER',
+      'SYSTEM_ADMIN', 'COMPLIANCE_MANAGER', 'DATA_PROTECTION_OFFICER',
       'LEGAL_COUNSEL', 'RECORDS_OFFICER', 'DEPARTMENT_HEAD', 'SECURITY_OFFICER',
       'INFOSEC_OFFICER', 'FACILITIES_MANAGER', 'FACILITIES_OFFICER', 'COMPLIANCE_OFFICER',
       'LEGAL_OFFICER', 'CONTRACT_OFFICER', 'EMPLOYEE',

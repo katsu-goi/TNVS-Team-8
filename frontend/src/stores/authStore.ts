@@ -204,6 +204,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     return get().bootstrapSession();
   },
   logout: (reason = 'manual', broadcast = true) => {
+    if (reason === 'inactivity' && isActorSuperAdmin(get().user)) return;
     applySessionEndReason(reason);
     if (broadcast) {
       publishSessionSignal({ type: 'logout', at: Date.now(), source: 'auth-store', reason });
@@ -232,6 +233,7 @@ window.addEventListener('auth:session-refreshed', (event) => {
 
 window.addEventListener('auth:session-expired', (event) => {
   const reason = (event as CustomEvent<{ reason?: SessionEndReason }>).detail?.reason ?? 'expired';
+  if (reason === 'inactivity' && isActorSuperAdmin(useAuthStore.getState().user)) return;
   applySessionEndReason(reason);
   clearOversightSession();
   clearIdleSessionState();
@@ -243,6 +245,7 @@ window.addEventListener('storage', (event) => {
   if (event.key === SESSION_SIGNAL_STORAGE_KEY) {
     const signal = parseSessionSignal(event.newValue);
     if (signal?.type === 'logout') {
+      if (signal.reason === 'inactivity' && isActorSuperAdmin(useAuthStore.getState().user)) return;
       applySessionEndReason(signal.reason ?? 'expired');
       clearLocalSession();
       useAuthStore.setState({

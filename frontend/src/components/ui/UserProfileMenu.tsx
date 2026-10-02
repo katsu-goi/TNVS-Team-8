@@ -5,6 +5,7 @@ import { logout as apiLogout } from '../../api/authService';
 import { useAuthStore } from '../../stores/authStore';
 import { getRolePresentation } from '../../config/roleRegistry';
 import { ConfirmDialog } from './SharedUI';
+import { getOversightTargetUser, OVERSIGHT_TARGET_USER_KEY } from '../../utils/oversightSession';
 
 export function formatRoleLabel(role?: string): string {
   if (!role) return 'User';
@@ -34,6 +35,7 @@ type UserProfileMenuProps = {
 
 export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({ profilePath, settingsPath, roleLabelOverride }) => {
   const { user, logout } = useAuthStore();
+  const [oversightTarget, setOversightTarget] = useState(() => getOversightTargetUser());
   const navigate = useNavigate();
   const menuRef = useRef<HTMLDivElement>(null);
   const accountTriggerRef = useRef<HTMLButtonElement>(null);
@@ -41,15 +43,27 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({ profilePath, s
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
+  const displayedUser = oversightTarget || user;
   const displayName = useMemo(() => {
-    const fullName = user?.fullName?.trim();
+    const fullName = displayedUser?.fullName?.trim();
     if (fullName) return fullName;
-    const composed = [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim();
-    return composed || user?.email || 'User';
-  }, [user]);
-  const primaryRole = user?.assignedRoles?.[0] || user?.roles?.[0];
+    const composed = [displayedUser?.firstName, displayedUser?.lastName].filter(Boolean).join(' ').trim();
+    return composed || displayedUser?.email || 'User';
+  }, [displayedUser]);
+  const primaryRole = displayedUser?.assignedRoles?.[0] || displayedUser?.roles?.[0];
   const roleLabel = roleLabelOverride || formatRoleLabel(primaryRole);
   const initials = initialsFor(displayName);
+
+  useEffect(() => {
+    const syncOversightTarget = () => setOversightTarget(getOversightTargetUser());
+    const onStorage = (event: StorageEvent) => { if (event.key === OVERSIGHT_TARGET_USER_KEY) syncOversightTarget(); };
+    window.addEventListener('oversight:changed', syncOversightTarget);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('oversight:changed', syncOversightTarget);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -97,8 +111,8 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({ profilePath, s
           className="flex min-w-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-left shadow-sm transition-colors hover:border-[#D02F34]/40 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#D02F34]/25 sm:gap-2.5 sm:px-3"
         >
           <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#D02F34] text-xs font-bold text-white shadow-sm">
-            {user?.avatarUrl ? (
-              <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" />
+            {displayedUser?.avatarUrl ? (
+              <img src={displayedUser.avatarUrl} alt="" className="h-full w-full object-cover" />
             ) : initials}
           </span>
           <span className="hidden min-w-0 max-w-44 sm:block">

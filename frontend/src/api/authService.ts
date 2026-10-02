@@ -1,5 +1,6 @@
 import { apiClient } from './client';
 import { User } from '../types';
+import { clearOversightSession, getOversightSessionId } from '../utils/oversightSession';
 
 export interface LoginRequest {
   email: string;
@@ -58,6 +59,16 @@ export async function getCurrentUser(): Promise<User> {
 }
 
 export async function logout(reason: 'MANUAL' | 'INACTIVITY' = 'MANUAL'): Promise<void> {
+  const oversightSessionId = getOversightSessionId();
+  if (oversightSessionId) {
+    try {
+      await apiClient.post('/admin/oversight/stop', { sessionId: oversightSessionId });
+      clearOversightSession();
+    } catch {
+      // /auth/logout also terminates any server-side oversight context for the
+      // authenticated actor, so logout remains safe if this best-effort call fails.
+    }
+  }
   try {
     await apiClient.post('/auth/logout', {
       refreshToken: localStorage.getItem('refreshToken'),

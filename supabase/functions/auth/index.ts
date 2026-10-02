@@ -1,4 +1,4 @@
-import { createHandler, AuthContext, mePayload } from "../_shared/guard.ts";
+import { createHandler, AuthContext, hasAnyAssignedRole, mePayload } from "../_shared/guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
 import { ok, fail } from "../_shared/envelope.ts";
 import {
@@ -210,6 +210,9 @@ async function handleLogout(ctx: AuthContext | null, _req: Request, body: unknow
   if (ctx) {
     const requestedReason = (body as Record<string, unknown> | null)?.reason;
     const idleLogout = requestedReason === "INACTIVITY";
+    if (idleLogout && hasAnyAssignedRole(ctx, ["SUPER_ADMIN"])) {
+      return jsonResponse(ok("Super Admin is exempt from inactivity logout"), 200);
+    }
     const auditAction = idleLogout ? "SESSION_IDLE_LOGOUT" : "LOGOUT";
     const auditDescription = idleLogout
       ? "User session ended due to inactivity"

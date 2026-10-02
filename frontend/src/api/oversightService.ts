@@ -24,13 +24,23 @@ export interface OversightSession {
   id: string;
   mode: OversightMode;
   actorRole: string;
-  readOnly: true;
+  readOnly: boolean;
+  access: 'FULL_ACCESS' | 'READ_ONLY';
   status: 'ACTIVE' | 'ENDED' | 'EXPIRED';
   justification: string;
   actorUserId: string;
   targetUser: OversightTarget;
   startedAt: string;
-  expiresAt: string;
+  expiresAt: string | null;
+  durationMinutes: number | null;
+  manualTerminationRequired: boolean;
+}
+
+export interface OversightSummary {
+  totalUsers: number;
+  activeUsers: number;
+  offlineUsers: number;
+  activeOversightSessions: number;
 }
 
 function dataOf<T>(response: { data?: { data?: T } }): T {
@@ -39,6 +49,10 @@ function dataOf<T>(response: { data?: { data?: T } }): T {
 
 export async function listOversightTargets(): Promise<OversightTarget[]> {
   return dataOf<OversightTarget[]>(await apiClient.get('/admin/oversight/targets')) || [];
+}
+
+export async function getOversightSummary(): Promise<OversightSummary> {
+  return dataOf<OversightSummary>(await apiClient.get('/admin/oversight/summary'));
 }
 
 export async function getCurrentOversightSession(): Promise<OversightSession | null> {
@@ -56,7 +70,8 @@ export async function startOversightSession(input: {
   targetUserId: string;
   mode: OversightMode;
   justification: string;
-  durationMinutes: number;
+  durationMinutes: number | null;
+  manualTermination?: boolean;
 }): Promise<OversightSession> {
   const session = dataOf<OversightSession>(await apiClient.post('/admin/oversight/start', input));
   persistOversightSession(session.id, session.targetUser);
@@ -65,6 +80,9 @@ export async function startOversightSession(input: {
 
 export async function stopOversightSession(): Promise<void> {
   const sessionId = getOversightSessionId();
-  await apiClient.post('/admin/oversight/stop', sessionId ? { sessionId } : {});
-  clearOversightSession();
+  try {
+    await apiClient.post('/admin/oversight/stop', sessionId ? { sessionId } : {});
+  } finally {
+    clearOversightSession();
+  }
 }

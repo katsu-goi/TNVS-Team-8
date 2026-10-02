@@ -34,8 +34,9 @@ const explicitRoles: RolePresentation[] = [
       { id: 'dashboard', label: 'Executive Dashboard', path: '/super-admin', icon: LayoutDashboard, exact },
       { id: 'analytics', label: 'Analytics', path: '/admin/analytics', icon: BarChart3, exact },
       { id: 'notifications', label: 'Notifications', path: '/admin/notifications', icon: Bell, exact },
-      { id: 'rbac', label: 'RBAC Administration', path: '/admin/rbac', icon: KeyRound, exact },
-      { id: 'security', label: 'Security Center', path: '/security', icon: ShieldCheck, exact, children: [
+      { id: 'rbac', label: 'Role & Permission Management', path: '/admin/rbac', icon: KeyRound, exact, group: 'Administration' },
+      { id: 'user-oversight', label: 'User Oversight', path: '/super-admin/user-oversight', icon: Eye, exact, group: 'Administration' },
+      { id: 'security', label: 'Security Center', path: '/security', icon: ShieldCheck, exact, group: 'Audit & Security', children: [
         { id: 'security-audit', label: 'Audit Logs', path: '/security/audit-logs', icon: FileText, exact },
       ] },
     ],

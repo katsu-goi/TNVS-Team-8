@@ -3,7 +3,10 @@ import { apiClient } from './client';
 import { extractLoginLockout, logout } from './authService';
 
 describe('extractLoginLockout', () => {
-  beforeEach(() => vi.useFakeTimers());
+  beforeEach(() => {
+    vi.useFakeTimers();
+    localStorage.clear();
+  });
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -50,5 +53,26 @@ describe('extractLoginLockout', () => {
       refreshToken: 'refresh-token',
       reason: 'INACTIVITY',
     });
+  });
+
+  it('ends and clears active oversight before explicit actor logout', async () => {
+    localStorage.setItem('refreshToken', 'refresh-token');
+    localStorage.setItem('oversightSessionId', '33333333-3333-4333-8333-333333333333');
+    localStorage.setItem('oversightTargetUser', JSON.stringify({ id: 'target-user' }));
+    const post = vi.spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({ data: { data: 'Oversight session stopped' } })
+      .mockResolvedValueOnce({ data: { data: 'Logged out successfully' } });
+
+    await logout();
+
+    expect(post).toHaveBeenNthCalledWith(1, '/admin/oversight/stop', {
+      sessionId: '33333333-3333-4333-8333-333333333333',
+    });
+    expect(post).toHaveBeenNthCalledWith(2, '/auth/logout', {
+      refreshToken: 'refresh-token',
+      reason: 'MANUAL',
+    });
+    expect(localStorage.getItem('oversightSessionId')).toBeNull();
+    expect(localStorage.getItem('oversightTargetUser')).toBeNull();
   });
 });

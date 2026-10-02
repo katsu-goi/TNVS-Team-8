@@ -72,18 +72,24 @@ function adminAuditLogDto(r: Record<string, unknown>, actor?: Record<string, unk
   const fullName = actor
     ? `${String(actor.first_name ?? "")} ${String(actor.last_name ?? "")}`.trim()
     : "";
+  const details = r.details && typeof r.details === "object" ? r.details as Record<string, unknown> : {};
+  const targetEmail = typeof details.targetEmail === "string" ? details.targetEmail : null;
+  const oversight = r.oversight_session_id != null;
   return {
     id: r.id,
     timestamp: r.occurred_at,
     userId: r.actor_user_id,
     username: actor?.email ?? null,
     fullName: fullName || null,
-    role: null,
+    role: oversight ? "SUPER_ADMIN" : null,
     module: "ADMIN",
-    action: r.action,
+    action: oversight && targetEmail ? `${String(r.action)} · Acting as ${targetEmail}` : r.action,
     ipAddress: r.source_ip,
     riskLevel: "INFO",
-    status: "SUCCESS",
+    status: details.resultStatus ?? "SUCCESS",
+    oversightSessionId: r.oversight_session_id ?? null,
+    targetUserId: r.target_user_id ?? null,
+    details,
     source: "ADMIN_AUDIT",
   };
 }
@@ -286,7 +292,7 @@ async function handleAuditLogs(_ctx: AuthContext | null, req: Request, _body: un
   const includeAdmin = (!module || module === "ADMIN") && (!severity || severity === "INFO");
   let adminQuery = db
     .from("admin_audit_logs")
-    .select("id,actor_user_id,action,source_ip,occurred_at", { count: "exact" })
+    .select("id,actor_user_id,target_user_id,oversight_session_id,action,details,source_ip,occurred_at", { count: "exact" })
     .order("occurred_at", { ascending: false })
     .limit(fetchLimit);
   if (userId) adminQuery = adminQuery.eq("actor_user_id", userId);

@@ -91,6 +91,33 @@ describe('authoritative session bootstrap', () => {
     });
   });
 
+  it('ignores inactivity logout for Super Admin but still permits explicit logout', () => {
+    useAuthStore.setState({
+      user: {
+        id: 'super-admin', email: 'superadmin@hirna.inc', assignedRoles: ['SUPER_ADMIN'],
+        roles: ['SUPER_ADMIN'], permissions: [],
+      },
+      accessToken: 'super-access',
+      refreshToken: 'super-refresh',
+      sessionStatus: 'ready',
+      sessionError: null,
+    });
+
+    useAuthStore.getState().logout('inactivity', false);
+    expect(useAuthStore.getState()).toMatchObject({
+      accessToken: 'super-access',
+      refreshToken: 'super-refresh',
+      user: expect.objectContaining({ id: 'super-admin' }),
+    });
+
+    useAuthStore.getState().logout('manual', false);
+    expect(useAuthStore.getState()).toMatchObject({
+      user: null,
+      accessToken: null,
+      refreshToken: null,
+    });
+  });
+
   it('clears newly issued tokens when post-login identity verification fails', async () => {
     useAuthStore.getState().setAuthTokens(
       { id: 'unverified', email: 'user@example.com', assignedRoles: [], roles: [], permissions: [] },
