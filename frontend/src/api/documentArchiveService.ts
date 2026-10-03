@@ -35,6 +35,8 @@ export type ArchiveDocument = {
   documentType: string | null;
   documentNumber: string | null;
   department: { id: string | null; name: string | null; status: string | null };
+  category: string | null;
+  folder: { name: string | null; path: string | null } | null;
   ownerEmail: string | null;
   classification: 'PUBLIC' | 'INTERNAL' | 'CONFIDENTIAL' | 'RESTRICTED' | 'HIGHLY_RESTRICTED';
   archiveStatus: string;

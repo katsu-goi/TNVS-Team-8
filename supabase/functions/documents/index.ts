@@ -323,6 +323,8 @@ function archiveDocumentDto(
   includeContent = false,
 ): Record<string, unknown> {
   const department = nested(row.departments);
+  const category = nested(row.categories);
+  const folder = nested(row.folders);
   const metadata = row.ai_metadata_suggestions != null && typeof row.ai_metadata_suggestions === "object"
     ? row.ai_metadata_suggestions as Record<string, unknown>
     : {};
@@ -344,6 +346,8 @@ function archiveDocumentDto(
     department: department ? { id: str(department.id), name: str(department.name), status: str(department.status) } : {
       id: str(row.department_id), name: str(row.department), status: null,
     },
+    category: str(category?.name),
+    folder: folder ? { name: str(folder.name), path: str(folder.path) } : null,
     ownerEmail: str(row.owner_email ?? row.created_by),
     classification: normalizeDocumentClassification(row.classification_level),
     archiveStatus: str(row.status),

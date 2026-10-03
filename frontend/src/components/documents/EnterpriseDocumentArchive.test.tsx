@@ -108,11 +108,47 @@ describe('EnterpriseDocumentArchive', () => {
   it('renders an authorized PDF from a verified local blob URL', async () => {
     render(<EnterpriseDocumentArchive />);
     fireEvent.click(await screen.findByRole('button', { name: /Existing Department/ }));
-    const viewButtons = await screen.findAllByRole('button', { name: 'View' });
-    fireEvent.click(viewButtons[0]);
+    const previewButtons = await screen.findAllByRole('button', { name: 'Preview Document' });
+    fireEvent.click(previewButtons[0]);
     await waitFor(() => expect(documentArchiveService.getViewerFile).toHaveBeenCalledWith('document-id', 'PDF', expect.any(AbortSignal)));
     expect(await screen.findByTitle('Preview of Retention Schedule')).toHaveAttribute('src', 'blob:authorized-document-preview');
-    expect(screen.getByText(/Archived records remain retained and retrievable/)).toBeInTheDocument();
+    expect(screen.getByText('Preview information')).toBeInTheDocument();
+  });
+
+  it('opens full record details separately without fetching preview bytes', async () => {
+    render(<EnterpriseDocumentArchive />);
+    fireEvent.click(await screen.findByRole('button', { name: /Existing Department/ }));
+    fireEvent.click((await screen.findAllByRole('button', { name: 'View Details' }))[0]);
+    const details = await screen.findByRole('dialog', { name: 'Document Details' });
+    expect(within(details).getByText('Version and history')).toBeInTheDocument();
+    expect(within(details).getByText('Record ID: document-id')).toBeInTheDocument();
+    expect(documentArchiveService.getDocument).toHaveBeenCalledWith('document-id', expect.any(AbortSignal));
+    expect(documentArchiveService.getViewerFile).not.toHaveBeenCalled();
+  });
+
+  it('wires each icon action to only its row document ID', async () => {
+    const financeDocument = { ...archivedDocument, id: 'finance-document-id', title: 'Finance Ledger', fileName: 'ledger.pdf' };
+    vi.mocked(documentArchiveService.getDocuments).mockResolvedValue({ documents: [archivedDocument, financeDocument] as never, total: 2 });
+    vi.mocked(documentArchiveService.getDocument).mockImplementation(async (id) => (id === financeDocument.id ? financeDocument : archivedDocument) as never);
+    render(<EnterpriseDocumentArchive />);
+    fireEvent.click(await screen.findByRole('button', { name: /Existing Department/ }));
+    const detailActions = await screen.findAllByRole('button', { name: 'View Details' });
+    expect(detailActions[1]).toHaveAttribute('title', 'View Details');
+    fireEvent.click(detailActions[1]);
+    expect(await screen.findByText('Record ID: finance-document-id')).toBeInTheDocument();
+    expect(documentArchiveService.getDocument).toHaveBeenCalledWith('finance-document-id', expect.any(AbortSignal));
+    expect(documentArchiveService.getDocument).not.toHaveBeenCalledWith('document-id', expect.anything());
+  });
+
+  it('shows the required message when the selected file type cannot be previewed', async () => {
+    const unsupported = { ...archivedDocument, viewerKind: 'UNSUPPORTED', fileName: 'retention.docx', fileType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
+    vi.mocked(documentArchiveService.getDocuments).mockResolvedValue({ documents: [unsupported as never], total: 1 });
+    vi.mocked(documentArchiveService.getDocument).mockResolvedValue(unsupported as never);
+    render(<EnterpriseDocumentArchive />);
+    fireEvent.click(await screen.findByRole('button', { name: /Existing Department/ }));
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Preview Document' }))[0]);
+    expect(await screen.findByText('Preview is not available for this file type.')).toBeInTheDocument();
+    expect(documentArchiveService.getViewerFile).not.toHaveBeenCalled();
   });
 
   it('shows a recoverable PDF error and retries the authorized file request', async () => {
@@ -121,9 +157,9 @@ describe('EnterpriseDocumentArchive', () => {
       .mockResolvedValueOnce({ blob: new Blob(['%PDF-1.7\n'], { type: 'application/pdf' }), expiresAt: '2026-10-01T01:05:00Z', contentType: 'application/pdf', fileName: 'retention.pdf' });
     render(<EnterpriseDocumentArchive />);
     fireEvent.click(await screen.findByRole('button', { name: /Existing Department/ }));
-    fireEvent.click((await screen.findAllByRole('button', { name: 'View' }))[0]);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Preview Document' }))[0]);
     expect(await screen.findByText('Unable to load the document. Try again.')).toBeInTheDocument();
-    const viewer = screen.getByRole('dialog', { name: 'Document Viewer' });
+    const viewer = screen.getByRole('dialog', { name: 'Preview Document' });
     fireEvent.click(within(viewer).getByRole('button', { name: 'Try again' }));
     expect(await screen.findByTitle('Preview of Retention Schedule')).toHaveAttribute('src', 'blob:authorized-document-preview');
     expect(documentArchiveService.getViewerFile).toHaveBeenCalledTimes(2);
@@ -133,7 +169,7 @@ describe('EnterpriseDocumentArchive', () => {
     vi.mocked(documentArchiveService.getViewerFile).mockImplementation(() => new Promise(() => undefined));
     render(<EnterpriseDocumentArchive />);
     fireEvent.click(await screen.findByRole('button', { name: /Existing Department/ }));
-    fireEvent.click((await screen.findAllByRole('button', { name: 'View' }))[0]);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Preview Document' }))[0]);
     expect(await screen.findByText('Loading document...')).toBeInTheDocument();
     expect(screen.queryByTitle('Preview of Retention Schedule')).not.toBeInTheDocument();
   });
@@ -145,7 +181,7 @@ describe('EnterpriseDocumentArchive', () => {
     vi.mocked(documentArchiveService.getViewerFile).mockRejectedValue({ response: { status } });
     render(<EnterpriseDocumentArchive />);
     fireEvent.click(await screen.findByRole('button', { name: /Existing Department/ }));
-    fireEvent.click((await screen.findAllByRole('button', { name: 'View' }))[0]);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Preview Document' }))[0]);
     expect(await screen.findByText(message)).toBeInTheDocument();
     expect(screen.queryByTitle('Preview of Retention Schedule')).not.toBeInTheDocument();
   });
@@ -154,8 +190,8 @@ describe('EnterpriseDocumentArchive', () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     render(<EnterpriseDocumentArchive />);
     fireEvent.click(await screen.findByRole('button', { name: /Existing Department/ }));
-    fireEvent.click((await screen.findAllByRole('button', { name: 'View' }))[0]);
-    const viewer = await screen.findByRole('dialog', { name: 'Document Viewer' });
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Preview Document' }))[0]);
+    const viewer = await screen.findByRole('dialog', { name: 'Preview Document' });
     await screen.findByTitle('Preview of Retention Schedule');
     fireEvent.click(within(viewer).getByRole('button', { name: 'Download' }));
     expect(documentArchiveService.downloadDocument).toHaveBeenCalledWith('document-id', 'retention.pdf');
@@ -169,13 +205,13 @@ describe('EnterpriseDocumentArchive', () => {
     render(<EnterpriseDocumentArchive />);
     fireEvent.click(await screen.findByRole('button', { name: /Existing Department/ }));
 
-    fireEvent.click((await screen.findAllByRole('button', { name: 'View' }))[0]);
-    let viewer = await screen.findByRole('dialog', { name: 'Document Viewer' });
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Preview Document' }))[0]);
+    let viewer = await screen.findByRole('dialog', { name: 'Preview Document' });
     await screen.findByTitle('Preview of Retention Schedule');
     fireEvent.click(within(viewer).getByRole('button', { name: 'Close dialog' }));
 
-    fireEvent.click((await screen.findAllByRole('button', { name: 'View' }))[0]);
-    viewer = await screen.findByRole('dialog', { name: 'Document Viewer' });
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Preview Document' }))[0]);
+    viewer = await screen.findByRole('dialog', { name: 'Preview Document' });
     expect(await within(viewer).findByTitle('Preview of Retention Schedule')).toHaveAttribute('src', 'blob:authorized-document-preview');
     expect(documentArchiveService.getViewerFile).toHaveBeenCalledTimes(2);
     expect(window.URL.createObjectURL).toHaveBeenCalledTimes(2);
@@ -192,10 +228,10 @@ describe('EnterpriseDocumentArchive', () => {
     vi.mocked(documentArchiveService.getDocument).mockResolvedValue(restricted as never);
     render(<EnterpriseDocumentArchive />);
     fireEvent.click(await screen.findByRole('button', { name: /Existing Department/ }));
-    fireEvent.click((await screen.findAllByRole('button', { name: 'Metadata' }))[0]);
-    expect(await screen.findByText('Content access is restricted')).toBeInTheDocument();
+    fireEvent.click((await screen.findAllByRole('button', { name: 'View Details' }))[0]);
+    expect(await screen.findByText('Complete metadata and record information for the selected document.')).toBeInTheDocument();
     expect(documentArchiveService.getViewerFile).not.toHaveBeenCalled();
-    const viewer = screen.getByRole('dialog', { name: 'Document Viewer' });
+    const viewer = screen.getByRole('dialog', { name: 'Document Details' });
     fireEvent.click(within(viewer).getByRole('button', { name: 'Request access' }));
     const requestDialog = await screen.findByRole('dialog', { name: 'Request document access' });
     fireEvent.change(within(requestDialog).getByRole('textbox'), { target: { value: 'Required for an authorized case review.' } });
