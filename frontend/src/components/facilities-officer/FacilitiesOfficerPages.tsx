@@ -18,7 +18,7 @@ import { reservationPortalService } from '../../api/reservationPortalService';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
 import { DashboardHero } from '../ui/DashboardPrimitives';
-import { cameraFailureMessage } from './qrCamera';
+import { cameraFailureMessage, cameraStatusForFailure, type CameraStatus } from './qrCamera';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -773,10 +773,12 @@ function qrDateTime(value: string): string {
 export const QrCheckInPage: React.FC = () => {
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const controlsRef = React.useRef<IScannerControls | null>(null);
+  const streamRef = React.useRef<MediaStream | null>(null);
   const scanLockRef = React.useRef(false);
   const manualTokenRef = React.useRef<HTMLInputElement>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
+  const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle');
   const [cameraError, setCameraError] = useState('');
   const [manualToken, setManualToken] = useState('');
   const [processing, setProcessing] = useState(false);
@@ -785,15 +787,22 @@ export const QrCheckInPage: React.FC = () => {
   const [history, setHistory] = useState<QrScanRecord[]>([]);
   const [scanMode, setScanMode] = useState<'CHECK_IN' | 'CHECK_OUT'>('CHECK_IN');
 
-  const stopCamera = useCallback(() => {
+  const releaseCamera = useCallback(() => {
     controlsRef.current?.stop();
     controlsRef.current = null;
-    const stream = videoRef.current?.srcObject as MediaStream | null;
-    stream?.getTracks().forEach((track) => track.stop());
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    const attachedStream = videoRef.current?.srcObject as MediaStream | null;
+    attachedStream?.getTracks().forEach((track) => track.stop());
     if (videoRef.current) videoRef.current.srcObject = null;
+  }, []);
+
+  const stopCamera = useCallback(() => {
+    releaseCamera();
     setCameraActive(false);
     setCameraStarting(false);
-  }, []);
+    setCameraStatus('idle');
+  }, [releaseCamera]);
 
   const checkIn = useCallback(async (rawValue: string) => {
     const token = qrTokenFromValue(rawValue);
@@ -823,6 +832,7 @@ export const QrCheckInPage: React.FC = () => {
     setError('');
     setResult(null);
     setCameraStarting(true);
+    setCameraStatus('requesting');
     try {
       if (!window.isSecureContext) {
         throw new DOMException('Camera access requires HTTPS or localhost.', 'SecurityError');
@@ -830,34 +840,38 @@ export const QrCheckInPage: React.FC = () => {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new DOMException('This browser does not expose a camera API.', 'NotSupportedError');
       }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+      });
+      streamRef.current = stream;
+      setCameraStatus('granted');
+
       const reader = new BrowserMultiFormatReader();
-      const onResult = (scanResult: { getText(): string } | undefined) => { if (scanResult) void checkIn(scanResult.getText()); };
+      const onResult = (scanResult: { getText(): string } | undefined) => {
+        if (scanResult) void checkIn(scanResult.getText());
+      };
       try {
-        controlsRef.current = await reader.decodeFromConstraints(
-          { audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } },
+        controlsRef.current = await reader.decodeFromStream(
+          stream,
           videoRef.current,
           onResult,
         );
-      } catch (preferredCameraError) {
-        const constraintName = preferredCameraError instanceof DOMException ? preferredCameraError.name : '';
-        if (!['OverconstrainedError', 'ConstraintNotSatisfiedError'].includes(constraintName)) throw preferredCameraError;
-        controlsRef.current = await reader.decodeFromConstraints(
-          { audio: false, video: true },
-          videoRef.current,
-          onResult,
-        );
+      } catch {
+        throw new Error('Camera permission was granted, but the QR scanner could not start. Close other camera tabs, retry, or use Manual Token Entry.');
       }
       setCameraActive(true);
     } catch (cameraException) {
-      stopCamera();
+      releaseCamera();
+      setCameraActive(false);
+      setCameraStatus(cameraStatusForFailure(cameraException));
       setCameraError(cameraFailureMessage(cameraException));
       manualTokenRef.current?.focus();
     } finally {
       setCameraStarting(false);
     }
-  }, [cameraActive, cameraStarting, checkIn, stopCamera]);
+  }, [cameraActive, cameraStarting, checkIn, releaseCamera]);
 
-  useEffect(() => () => stopCamera(), [stopCamera]);
+  useEffect(() => () => releaseCamera(), [releaseCamera]);
 
   return (
     <div className="space-y-6">
@@ -869,7 +883,7 @@ export const QrCheckInPage: React.FC = () => {
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-center justify-between gap-3"><div><h3 className="text-sm font-bold text-slate-900">Camera scanner</h3><p className="mt-1 text-xs text-slate-500">Current action: <span className="font-bold text-red-700">{scanMode === 'CHECK_IN' ? 'Check-In' : 'Check-Out'}</span></p></div>{cameraActive ? <button type="button" onClick={stopCamera} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"><XCircle className="h-4 w-4" />Stop camera</button> : <button type="button" onClick={() => void startCamera()} disabled={processing || cameraStarting} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-red-800 disabled:opacity-60">{cameraStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}{cameraStarting ? 'Starting camera...' : 'Start camera'}</button>}</div>
+          <div className="mb-4 flex items-center justify-between gap-3"><div><h3 className="text-sm font-bold text-slate-900">Camera scanner</h3><p className="mt-1 text-xs text-slate-500">Current action: <span className="font-bold text-red-700">{scanMode === 'CHECK_IN' ? 'Check-In' : 'Check-Out'}</span> · Camera: <span className="font-semibold">{cameraStatus === 'idle' ? 'permission not requested' : cameraStatus}</span></p></div>{cameraActive ? <button type="button" onClick={stopCamera} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"><XCircle className="h-4 w-4" />Stop camera</button> : <button type="button" onClick={() => void startCamera()} disabled={processing || cameraStarting} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-red-800 disabled:opacity-60">{cameraStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}{cameraStarting ? 'Requesting camera...' : 'Enable Camera'}</button>}</div>
           <div className="relative aspect-video overflow-hidden rounded-xl bg-slate-950"><video ref={videoRef} className={cameraActive ? 'h-full w-full object-cover' : 'hidden'} autoPlay muted playsInline />{!cameraActive && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center text-white/60"><ScanLine className="h-10 w-10 text-white/40" /><p className="text-sm">{cameraStarting ? 'Starting camera...' : 'Camera is paused'}</p><p className="max-w-xs text-xs text-white/40">Start the camera or use the secure token fallback below.</p></div>}</div>
           {cameraError && <div role="alert" aria-live="assertive" className="mt-4 flex flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 sm:flex-row sm:items-center"><div className="flex min-w-0 flex-1 items-start gap-2"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{cameraError}</span></div><button type="button" onClick={() => manualTokenRef.current?.focus()} className="shrink-0 rounded-lg bg-amber-900 px-3 py-2 text-xs font-bold text-white hover:bg-amber-950">Enter token manually</button></div>}
           <section id="manual-token-entry" aria-labelledby="manual-token-heading" className={`mt-5 rounded-2xl border-2 p-4 ${cameraError ? 'border-amber-300 bg-amber-50/60' : 'border-red-200 bg-red-50/40'}`}>
