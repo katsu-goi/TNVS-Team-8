@@ -13,12 +13,14 @@ import { ID_TYPES } from '../../types/visitors';
 import type {
   IdType, VisitorVerification, VisitorWatchlistEntry,
 } from '../../types/visitors';
-import { BrowserMultiFormatReader, type IScannerControls } from '@zxing/browser';
+import { BarcodeFormat, BrowserMultiFormatReader, type IScannerControls } from '@zxing/browser';
 import { reservationPortalService } from '../../api/reservationPortalService';
 import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
 import { DashboardHero } from '../ui/DashboardPrimitives';
-import { cameraFailureMessage } from './qrCamera';
+import {
+  cameraFailureMessage, cameraRecoverySteps, listVideoDevices, queryCameraPermission,
+} from './qrCamera';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -783,6 +785,8 @@ export const QrCheckInPage: React.FC = () => {
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
   const [cameraError, setCameraError] = useState('');
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [manualToken, setManualToken] = useState('');
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState('');
@@ -821,6 +825,7 @@ export const QrCheckInPage: React.FC = () => {
       delayBetweenScanAttempts: 150,
       delayBetweenScanSuccess: 500,
     });
+    reader.possibleFormats = [BarcodeFormat.QR_CODE];
     const controls = await reader.decodeFromVideoElement(video, (scanResult) => {
       if (scanResult) cameraScanHandlerRef.current(scanResult.getText());
     });
@@ -834,7 +839,11 @@ export const QrCheckInPage: React.FC = () => {
 
   const checkIn = useCallback(async (rawValue: string, source: 'camera' | 'manual' = 'manual') => {
     const token = qrTokenFromValue(rawValue);
-    if (!token || scanLockRef.current) return;
+    if (!token) {
+      setError('No guest-pass token was found in that QR code or entry. Scan a valid Hirna guest pass or paste its token.');
+      return;
+    }
+    if (scanLockRef.current) return;
 
     if (source === 'camera') {
       const lastScan = lastCameraScanRef.current;
@@ -875,8 +884,8 @@ export const QrCheckInPage: React.FC = () => {
 
   cameraScanHandlerRef.current = (value) => { void checkIn(value, 'camera'); };
 
-  const startCamera = useCallback(async () => {
-    if (!videoRef.current || cameraActive || cameraStarting) return;
+  const startCamera = useCallback(async (deviceId = selectedDeviceId, restarting = false) => {
+    if (!videoRef.current || (!restarting && (cameraActive || cameraStarting))) return;
     setCameraError('');
     setError('');
     setResult(null);
@@ -891,21 +900,34 @@ export const QrCheckInPage: React.FC = () => {
         throw new DOMException('This browser does not expose a camera API.', 'NotSupportedError');
       }
 
+      const permissionState = await queryCameraPermission();
+      if (permissionState === 'denied') {
+        throw new DOMException('Camera permission is already denied for this site.', 'NotAllowedError');
+      }
+
       const supportedConstraints = navigator.mediaDevices.getSupportedConstraints?.();
       const supportsFacingMode = supportedConstraints?.facingMode !== false;
+      const videoSize = { width: { ideal: 1280 }, height: { ideal: 720 } };
+      const preferredVideo: MediaTrackConstraints = deviceId
+        ? { deviceId: { exact: deviceId }, ...videoSize }
+        : supportsFacingMode
+          ? { facingMode: { ideal: 'environment' }, ...videoSize }
+          : videoSize;
       let stream: MediaStream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
-          video: supportsFacingMode ? { facingMode: { ideal: 'environment' } } : true,
+          video: preferredVideo,
         });
       } catch (preferredCameraError) {
-        const constraintName = preferredCameraError instanceof DOMException ? preferredCameraError.name : '';
-        const canRetryWithoutFacingMode = supportsFacingMode
+        const constraintName = typeof preferredCameraError === 'object' && preferredCameraError !== null && 'name' in preferredCameraError
+          ? String((preferredCameraError as { name?: unknown }).name ?? '')
+          : '';
+        const canRetryWithoutFacingMode = !deviceId && supportsFacingMode
           && (preferredCameraError instanceof TypeError
             || ['OverconstrainedError', 'ConstraintNotSatisfiedError'].includes(constraintName));
         if (!canRetryWithoutFacingMode) throw preferredCameraError;
-        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: videoSize });
       }
 
       if (cameraSessionRef.current !== session) {
@@ -921,6 +943,13 @@ export const QrCheckInPage: React.FC = () => {
 
       if (cameraSessionRef.current !== session) return;
       setCameraActive(true);
+      void listVideoDevices().then((devices) => {
+        setVideoDevices(devices);
+        const activeDeviceId = stream.getVideoTracks()[0]?.getSettings?.().deviceId;
+        if (!deviceId && activeDeviceId && devices.some((device) => device.deviceId === activeDeviceId)) {
+          setSelectedDeviceId(activeDeviceId);
+        }
+      });
     } catch (cameraException) {
       stopCamera();
       setCameraError(cameraFailureMessage(cameraException));
@@ -928,9 +957,23 @@ export const QrCheckInPage: React.FC = () => {
     } finally {
       setCameraStarting(false);
     }
-  }, [cameraActive, cameraStarting, startDecoder, stopCamera]);
+  }, [cameraActive, cameraStarting, selectedDeviceId, startDecoder, stopCamera]);
+
+  const switchCamera = useCallback((deviceId: string) => {
+    setSelectedDeviceId(deviceId);
+    if (cameraActive) {
+      stopCamera();
+      void startCamera(deviceId, true);
+    }
+  }, [cameraActive, startCamera, stopCamera]);
 
   useEffect(() => () => stopCamera(), [stopCamera]);
+
+  useEffect(() => {
+    let mounted = true;
+    void listVideoDevices().then((devices) => { if (mounted) setVideoDevices(devices); });
+    return () => { mounted = false; };
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -942,9 +985,50 @@ export const QrCheckInPage: React.FC = () => {
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-center justify-between gap-3"><div><h3 className="text-sm font-bold text-slate-900">Camera scanner</h3><p className="mt-1 text-xs text-slate-500">Current action: <span className="font-bold text-red-700">{scanMode === 'CHECK_IN' ? 'Check-In' : 'Check-Out'}</span></p></div>{cameraActive ? <button type="button" onClick={stopCamera} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"><XCircle className="h-4 w-4" />Stop camera</button> : <button type="button" onClick={() => void startCamera()} disabled={processing || cameraStarting} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-red-800 disabled:opacity-60">{cameraStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}{cameraStarting ? 'Camera starting...' : 'Start camera'}</button>}</div>
-          <div className="relative aspect-video overflow-hidden rounded-xl bg-slate-950"><video ref={videoRef} className={cameraActive ? 'h-full w-full object-cover' : 'hidden'} autoPlay muted playsInline />{cameraActive ? <div aria-live="polite" className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 bg-slate-950/70 px-3 py-2 text-xs font-semibold text-white"><ScanLine className={`h-4 w-4 ${processing ? '' : 'animate-pulse'}`} />{processing ? 'QR code detected — verifying pass...' : 'Camera active — scanning for a QR code'}</div> : <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center text-white/60"><ScanLine className="h-10 w-10 text-white/40" /><p className="text-sm">{cameraStarting ? 'Camera starting...' : 'Camera is paused'}</p><p className="max-w-xs text-xs text-white/40">Start the camera or use the secure token fallback below.</p></div>}</div>
-          {cameraError && <div role="alert" aria-live="assertive" className="mt-4 flex flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 sm:flex-row sm:items-center"><div className="flex min-w-0 flex-1 items-start gap-2"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{cameraError}</span></div><button type="button" onClick={() => manualTokenRef.current?.focus()} className="shrink-0 rounded-lg bg-amber-900 px-3 py-2 text-xs font-bold text-white hover:bg-amber-950">Enter token manually</button></div>}
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Camera scanner</h3>
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                <span>Current action: <span className="font-bold text-red-700">{scanMode === 'CHECK_IN' ? 'Check-In' : 'Check-Out'}</span></span>
+                <span className="inline-flex items-center gap-1.5" aria-live="polite">
+                  <span className={`h-2 w-2 rounded-full ${cameraError ? 'bg-amber-500' : cameraActive ? 'bg-emerald-500' : cameraStarting ? 'animate-pulse bg-slate-400' : 'bg-slate-300'}`} />
+                  {cameraError ? 'Camera needs attention' : cameraActive ? 'Camera active' : cameraStarting ? 'Camera starting' : 'Camera paused'}
+                </span>
+              </div>
+            </div>
+            <div className="flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-end">
+              {videoDevices.length > 0 && <label className="min-w-0 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                Camera
+                <select aria-label="Camera device" value={selectedDeviceId} onChange={(event) => switchCamera(event.target.value)} disabled={cameraStarting || processing} className="mt-1 block w-full max-w-[240px] rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs font-medium normal-case tracking-normal text-slate-700 outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10 disabled:opacity-60">
+                  <option value="">Automatic rear camera</option>
+                  {videoDevices.map((device, index) => <option key={`${device.deviceId || 'camera'}-${index}`} value={device.deviceId}>{device.label || `Camera ${index + 1}`}</option>)}
+                </select>
+              </label>}
+              {cameraActive
+                ? <button type="button" onClick={stopCamera} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"><XCircle className="h-4 w-4" />Stop camera</button>
+                : <button type="button" onClick={() => void startCamera()} disabled={processing || cameraStarting} className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-700 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-red-800 disabled:opacity-60">{cameraStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}{cameraStarting ? 'Camera starting...' : 'Start camera'}</button>}
+            </div>
+          </div>
+          <div className="relative aspect-video overflow-hidden rounded-xl bg-slate-950">
+            <video ref={videoRef} className={`absolute inset-0 h-full w-full object-cover transition-opacity ${cameraActive || cameraStarting ? 'opacity-100' : 'opacity-0'}`} autoPlay muted playsInline />
+            {cameraActive && <>
+              <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center p-10">
+                <div className="relative aspect-square max-h-[72%] max-w-[72%] flex-1">
+                  <span className="absolute left-0 top-0 h-10 w-10 rounded-tl-lg border-l-4 border-t-4 border-white drop-shadow" />
+                  <span className="absolute right-0 top-0 h-10 w-10 rounded-tr-lg border-r-4 border-t-4 border-white drop-shadow" />
+                  <span className="absolute bottom-0 left-0 h-10 w-10 rounded-bl-lg border-b-4 border-l-4 border-white drop-shadow" />
+                  <span className="absolute bottom-0 right-0 h-10 w-10 rounded-br-lg border-b-4 border-r-4 border-white drop-shadow" />
+                </div>
+              </div>
+              <div aria-live="polite" className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 bg-slate-950/70 px-3 py-2 text-center text-xs font-semibold text-white"><ScanLine className={`h-4 w-4 shrink-0 ${processing ? '' : 'animate-pulse'}`} />{processing ? 'QR code detected — verifying pass...' : 'Camera active — align the QR code inside the frame'}</div>
+            </>}
+            {cameraStarting && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-950/65 text-center text-white"><Loader2 className="h-9 w-9 animate-spin" /><p className="text-sm font-semibold">Starting camera...</p></div>}
+            {!cameraActive && !cameraStarting && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center text-white/60"><ScanLine className="h-10 w-10 text-white/40" /><p className="text-sm">Camera is paused</p><p className="max-w-xs px-4 text-xs text-white/40">Start the camera or use the secure token fallback below.</p></div>}
+          </div>
+          {cameraError && <>
+            <div role="alert" aria-live="assertive" className="mt-4 flex flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 sm:flex-row sm:items-center"><div className="flex min-w-0 flex-1 items-start gap-2"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{cameraError}</span></div><button type="button" onClick={() => manualTokenRef.current?.focus()} className="shrink-0 rounded-lg bg-amber-900 px-3 py-2 text-xs font-bold text-white hover:bg-amber-950">Enter token manually</button></div>
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-600"><p className="font-bold text-slate-800">Camera troubleshooting</p><ol className="mt-1 list-decimal space-y-1 pl-4"><li>{cameraRecoverySteps()}</li><li>Close video-call apps and other tabs that may already be using the camera.</li><li>Open this portal directly over HTTPS, refresh it, then click Start camera again.</li></ol></div>
+          </>}
           <section id="manual-token-entry" aria-labelledby="manual-token-heading" className={`mt-5 rounded-2xl border-2 p-4 ${cameraError ? 'border-amber-300 bg-amber-50/60' : 'border-red-200 bg-red-50/40'}`}>
             <div className="flex items-start gap-3"><div className="rounded-xl bg-white p-2 text-red-700 shadow-sm"><UserCheck className="h-5 w-5" /></div><div><h4 id="manual-token-heading" className="text-sm font-extrabold text-slate-900">Manual Token Entry</h4><p className="mt-1 text-xs leading-5 text-slate-600">Camera unavailable? Paste the guest pass URL or token to continue securely.</p></div></div>
             <form onSubmit={(event) => { event.preventDefault(); void checkIn(manualToken); }} className="mt-4 flex flex-col gap-3 sm:flex-row">
