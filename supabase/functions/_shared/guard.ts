@@ -1,3 +1,5 @@
+import { hasDirectSuperAdminAccess, isRouteAuthorized, type AuthorizationSubject, type RouteGuard } from "./authorization-policy.ts";
+export type { RouteGuard } from "./authorization-policy.ts";
 import { verifyAccessToken } from "./jwt.ts";
 import { findUserByEmail, findUserById, AuthUser, isAccountActive, userSummary } from "./auth-users.ts";
 import { applyCors, corsHeaders, isPreflight, jsonResponse, preflightResponse } from "./cors.ts";
@@ -374,13 +376,13 @@ async function terminateOversightForLogout(ctx: AuthContext, req: Request, body:
   }
 }
 
-export type RouteGuard =
-  | { kind: "public" }
-  | { kind: "auth" }
-  | { kind: "roles"; roles: string[] }
-  | { kind: "assignedRoles"; roles: string[] }
-  | { kind: "permissions"; permissions: string[] }
-  | { kind: "rolesOrPermissions"; roles: string[]; permissions: string[] };
+export function authorizationSubject(ctx: AuthContext): AuthorizationSubject {
+  return { assignedRoles: ctx.user.assignedRoles, roles: ctx.roles, permissions: ctx.permissions, oversightActive: Boolean(ctx.oversight) };
+}
+
+export function isDirectSuperAdmin(ctx: AuthContext | null): boolean {
+  return ctx !== null && hasDirectSuperAdminAccess(authorizationSubject(ctx));
+}
 
 export type RouteParams = Record<string, string>;
 
@@ -508,27 +510,7 @@ export function createHandler(routes: Route[], options: RouterOptions = {}): (re
       return finish(response);
     }
 
-    if (route.guard.kind === "roles" && !hasAnyRole(ctx, route.guard.roles)) {
-      const response = forbiddenResponse();
-      try { await writeOversightActionAudit(ctx, req, route, params, "COMPLETED", response.status); }
-      catch (e) { console.error("oversight completion audit failed:", (e as Error).message); }
-      return finish(response);
-    }
-    if (route.guard.kind === "assignedRoles" && !hasAnyAssignedRole(ctx, route.guard.roles)) {
-      const response = forbiddenResponse();
-      try { await writeOversightActionAudit(ctx, req, route, params, "COMPLETED", response.status); }
-      catch (e) { console.error("oversight completion audit failed:", (e as Error).message); }
-      return finish(response);
-    }
-    if (route.guard.kind === "permissions" && !hasAnyPermission(ctx, route.guard.permissions)) {
-      const response = forbiddenResponse();
-      try { await writeOversightActionAudit(ctx, req, route, params, "COMPLETED", response.status); }
-      catch (e) { console.error("oversight completion audit failed:", (e as Error).message); }
-      return finish(response);
-    }
-    if (route.guard.kind === "rolesOrPermissions"
-      && !hasAnyRole(ctx, route.guard.roles)
-      && !hasAnyPermission(ctx, route.guard.permissions)) {
+    if (!isRouteAuthorized(authorizationSubject(ctx), route.guard)) {
       const response = forbiddenResponse();
       try { await writeOversightActionAudit(ctx, req, route, params, "COMPLETED", response.status); }
       catch (e) { console.error("oversight completion audit failed:", (e as Error).message); }
