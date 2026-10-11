@@ -2,7 +2,7 @@ import { useOversightContext } from './hooks/useOversightContext';
 import { hasPortalAccess, hasDirectSuperAdminAccess } from './utils/portalAccess';
 import React, { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate, useParams } from 'react-router-dom';
-import { useAuthStore, getDashboardPath, isActorSuperAdmin, isActorSystemAdmin } from './stores/authStore';
+import { useAuthStore, getDashboardPath, isActorSuperAdmin } from './stores/authStore';
 import { OversightBanner } from './components/oversight';
 import { workspaceConfigs } from './components/workspaces/workspaceConfig';
 import type { WorkspaceConfig } from './components/workspaces/workspaceConfig';
@@ -34,6 +34,7 @@ const NotificationsPage = lazyNamed(() => import('./components/sysadmin/AdminPag
 const SystemHealthPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'SystemHealthPage');
 const SessionsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'SessionsPage');
 const AnalyticsPage = lazyNamed(() => import('./components/sysadmin/AnalyticsDashboard'), 'AnalyticsPage');
+const SystemAnalyticsPage = lazyNamed(() => import('./components/sysadmin/AnalyticsDashboard'), 'SystemAnalyticsPage');
 const RbacAdminPage = lazyNamed(() => import('./components/sysadmin/RbacAdminPage'), 'RbacAdminPage');
 const UserOversightPage = lazyNamed(() => import('./components/oversight/UserOversightPage'), 'UserOversightPage');
 const FacilitiesDashboard = lazyNamed(() => import('./components/facilities/FacilitiesDashboard'), 'FacilitiesDashboard');
@@ -279,6 +280,7 @@ export const AppRoutes: React.FC = () => (
           <Route index element={<DashboardRedirect />} />
           <Route path="super-admin" element={<SuperAdminRoute><SysAdminDashboard /></SuperAdminRoute>} />
           <Route path="system-admin" element={<SystemAdminRoute><SysAdminDashboard /></SystemAdminRoute>} />
+          <Route path="system-admin/analytics" element={<SystemAdminRoute><SystemAnalyticsPage /></SystemAdminRoute>} />
 
           {/* System Administrator infrastructure modules */}
           <Route path="admin/integrations" element={<SystemAdminRoute><IntegrationsPage /></SystemAdminRoute>} />

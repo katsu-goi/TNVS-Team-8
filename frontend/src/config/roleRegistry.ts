@@ -147,6 +147,7 @@ export function buildSuperAdminNavigation(registry: ReadonlyMap<CanonicalRole, R
   for (const [role,presentation] of registry) {
     if (role === 'SUPER_ADMIN') continue;
     const children = presentation.navigation.flatMap(item => [item, ...(item.children ?? [])])
+      .map(item => role === 'SYSTEM_ADMIN' && item.path === '/admin/analytics' ? { ...item, path: '/system-admin/analytics' } : item)
       .filter(item => !paths.has(item.path)).map(item => {
         paths.add(item.path);
         return {...item,id:`role-${role}-${item.id}`,group:undefined,children:undefined,badge:undefined};

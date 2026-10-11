@@ -1,3 +1,4 @@
+import { hasDirectSuperAdminAccess } from './authorization-policy.ts';
 export type DocumentAction =
   | "METADATA"
   | "VIEW"
@@ -13,6 +14,8 @@ export type DocumentAction =
   | "MANAGE_RETENTION";
 
 export type DocumentAccessContext = {
+  assignedRoles?: readonly string[];
+  oversightActive?: boolean;
   email: string;
   departmentId?: string | null;
   departmentName?: string | null;
@@ -112,7 +115,13 @@ function grantAllows(
 }
 
 function hasPermission(ctx: DocumentAccessContext, permission: string): boolean {
-  return upperSet(ctx.permissions).has(permission);
+  return canPerformDocumentAction(ctx,permission);
+}
+function directAdmin(ctx: DocumentAccessContext): boolean {
+  return hasDirectSuperAdminAccess({assignedRoles:ctx.assignedRoles ?? [],oversightActive:ctx.oversightActive ?? false});
+}
+export function canPerformDocumentAction(ctx: DocumentAccessContext, permission: string): boolean {
+  return directAdmin(ctx) || upperSet(ctx.permissions).has(permission.toUpperCase());
 }
 
 function isTechnicalAdministratorOnly(ctx: DocumentAccessContext): boolean {
@@ -131,7 +140,7 @@ export function canKnowDocument(
   document: DocumentAccessRecord,
   grants: DocumentGrantRecord[],
 ): boolean {
-  if (isOwner(ctx, document) || grantAllows(ctx, grants, "METADATA")) return true;
+  if (directAdmin(ctx) || isOwner(ctx, document) || grantAllows(ctx, grants, "METADATA")) return true;
   const classification = normalizeDocumentClassification(document.classification_level);
   if (classification === "PUBLIC") return true;
   // Technical administration is intentionally not a document-content role.
@@ -152,7 +161,7 @@ export function canViewDocumentContent(
   document: DocumentAccessRecord,
   grants: DocumentGrantRecord[],
 ): boolean {
-  if (isOwner(ctx, document) || grantAllows(ctx, grants, "VIEW")) return true;
+  if (directAdmin(ctx) || isOwner(ctx, document) || grantAllows(ctx, grants, "VIEW")) return true;
   const classification = normalizeDocumentClassification(document.classification_level);
   if (classification === "PUBLIC") return true;
   if (isTechnicalAdministratorOnly(ctx)) return false;
@@ -171,7 +180,7 @@ export function canDownloadDocumentContent(
   document: DocumentAccessRecord,
   grants: DocumentGrantRecord[],
 ): boolean {
-  if (isOwner(ctx, document) || grantAllows(ctx, grants, "DOWNLOAD")) return true;
+  if (directAdmin(ctx) || isOwner(ctx, document) || grantAllows(ctx, grants, "DOWNLOAD")) return true;
   if (!canViewDocumentContent(ctx, document, grants) || !hasPermission(ctx, "DOCUMENT_DOWNLOAD")) return false;
   return normalizeDocumentClassification(document.classification_level) !== "HIGHLY_RESTRICTED"
     || isDomainSpecialist(ctx, document);
@@ -187,12 +196,14 @@ export function canPrintDocumentContent(
 }
 
 export function canManageArchive(ctx: DocumentAccessContext, restore = false): boolean {
+  if (directAdmin(ctx)) return true;
   const roles = upperSet(ctx.roles);
   return roles.has("RECORDS_OFFICER")
     && hasPermission(ctx, restore ? "DOCUMENT_RESTORE" : "DOCUMENT_ARCHIVE");
 }
 
 export function canApproveDocumentAccess(ctx: DocumentAccessContext, document: DocumentAccessRecord): boolean {
+  if (directAdmin(ctx)) return true;
   const roles = upperSet(ctx.roles);
   if (!hasPermission(ctx, "DOCUMENT_APPROVE_ACCESS")) return false;
   const routedRole = accessRequestApproverRole(document);

@@ -11,7 +11,13 @@ export function useOversightContext(): PortalScope {
   const value = useSyncExternalStore(subscribe,snapshot,() => '[null,null]');
   return useMemo(() => {
     const [sessionId,raw] = JSON.parse(value) as [string|null,string|null];
-    try { return {sessionId,targetUser:raw ? JSON.parse(raw) : null}; }
+    try {
+      const target = raw ? JSON.parse(raw) : null;
+      const valid = target && typeof target === 'object' && typeof target.id === 'string'
+        && typeof target.email === 'string' && Array.isArray(target.assignedRoles ?? target.roles)
+        && (target.assignedRoles ?? target.roles).every((role: unknown) => typeof role === 'string');
+      return {sessionId:raw && !valid ? sessionId || 'invalid-oversight' : sessionId,targetUser:valid ? target : null};
+    }
     catch { return {sessionId:sessionId || 'invalid-oversight',targetUser:null}; }
   },[value]);
 }

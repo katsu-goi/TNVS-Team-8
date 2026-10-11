@@ -1,4 +1,4 @@
-import { createHandler, AuthContext, RouteParams } from "../_shared/guard.ts";
+import { createHandler, isDirectSuperAdmin, AuthContext, RouteParams } from "../_shared/guard.ts";
 import { jsonResponse, corsHeaders } from "../_shared/cors.ts";
 import { ok, fail } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
@@ -33,6 +33,7 @@ import {
   accessRequestApproverRole,
   canApproveDocumentAccess,
   canDownloadDocumentContent,
+  canPerformDocumentAction,
   canKnowDocument,
   canManageArchive,
   canViewDocumentContent,
@@ -133,6 +134,8 @@ function isOwner(userEmail: string, d: Record<string, unknown>): boolean {
 
 function accessContext(ctx: AuthContext | null): DocumentAccessContext {
   return {
+    assignedRoles: ctx?.user.assignedRoles ?? [],
+    oversightActive: Boolean(ctx?.oversight),
     email: ctx?.email ?? "",
     departmentId: ctx?.user.row.department_id ?? null,
     departmentName: ctx?.user.row.department ?? null,
@@ -378,6 +381,7 @@ async function loadDocumentRow(id: string): Promise<Record<string, unknown> | nu
   if (error) throw new Error(`document query failed: ${error.message}`);
   if (!data) return null;
   const row = data as unknown as Record<string, unknown>;
+  if (row.is_deleted === true || row.status === 'DELETED') return null;
   const categoryId = str(row.category_id);
   const folderId = str(row.folder_id);
   const [categoryResult, folderResult] = await Promise.all([
@@ -426,12 +430,10 @@ async function runDuplicateDetection(
   const { data, error } = await db.rpc("phase10_document_duplicate_candidates", {
     p_user_email: ctx?.email ?? "",
     p_user_department: str(ctx?.user.row.department),
-    // Technical administrator roles are deliberately excluded: they do not
-    // confer document-content visibility. Any separately assigned business
-    // role, ownership, department scope, or explicit grant still applies.
+    // Only a directly assigned administrator in its own context has full content access.
     p_roles: (ctx?.roles ?? [])
       .map((role) => role.toUpperCase())
-      .filter((role) => role !== "SUPER_ADMIN" && role !== "SYSTEM_ADMIN"),
+      .filter((role) => role !== "SYSTEM_ADMIN" && (role !== "SUPER_ADMIN" || isDirectSuperAdmin(ctx))),
     p_source_document_id: String(source.id),
     p_file_sha256: str(source.file_sha256),
     p_ocr_normalized_sha256: str(source.ocr_normalized_sha256),
@@ -566,8 +568,8 @@ async function handleArchiveDepartments(ctx: AuthContext | null) {
     if (!byDepartment.has(departmentId)) byDepartment.set(departmentId, []);
     byDepartment.get(departmentId)!.push(row);
   }
-  const isRecordsOfficer = hasRole(viewer.roles, "RECORDS_OFFICER")
-    && viewer.permissions.some((permission) => permission.toUpperCase() === "DOCUMENT_VIEW_METADATA");
+  const isRecordsOfficer = isDirectSuperAdmin(ctx) || hasRole(viewer.roles, "RECORDS_OFFICER")
+    && canPerformDocumentAction(viewer, "DOCUMENT_VIEW_METADATA");
   const departments = ((departmentsResult.data as unknown as Record<string, unknown>[]) ?? [])
     .filter((department) => isRecordsOfficer
       || str(department.id) === str(viewer.departmentId)
@@ -715,7 +717,7 @@ async function handleRequestDocumentAccess(ctx: AuthContext | null, req: Request
   const viewer = accessContext(ctx);
   if (!canKnowDocument(viewer, row, grants)) return jsonResponse(fail("Document not found.", "RESOURCE_NOT_FOUND"), 404);
   if (canViewDocumentContent(viewer, row, grants)) return jsonResponse(fail("You already have document-content access.", "BUSINESS_RULE_VIOLATION"), 409);
-  if (!ctx.permissions.some((permission) => permission.toUpperCase() === "DOCUMENT_REQUEST_ACCESS")) {
+  if (!canPerformDocumentAction(accessContext(ctx), "DOCUMENT_REQUEST_ACCESS")) {
     return jsonResponse(fail("You do not have permission to request document access.", "ACCESS_DENIED"), 403);
   }
   const value = (body ?? {}) as Record<string, unknown>;
@@ -817,7 +819,7 @@ async function handleDecideAccessRequest(ctx: AuthContext | null, req: Request, 
 }
 
 async function handleCreateDocument(ctx: AuthContext | null, _req: Request, body: unknown) {
-  if (!ctx?.permissions.some((permission) => permission.toUpperCase() === "DOCUMENT_UPLOAD")) {
+  if (!canPerformDocumentAction(accessContext(ctx), "DOCUMENT_UPLOAD")) {
     return jsonResponse(fail("Document upload permission is required.", "ACCESS_DENIED"), 403);
   }
   const b = (body ?? {}) as Record<string, unknown>;
@@ -903,7 +905,7 @@ async function handleCreateDocument(ctx: AuthContext | null, _req: Request, body
 }
 
 async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
-  if (!ctx?.permissions.some((permission) => permission.toUpperCase() === "DOCUMENT_UPLOAD")) {
+  if (!canPerformDocumentAction(accessContext(ctx), "DOCUMENT_UPLOAD")) {
     return jsonResponse(fail("Document upload permission is required.", "ACCESS_DENIED"), 403);
   }
   const url = new URL(req.url);
@@ -1148,7 +1150,7 @@ async function handleUploadDocument(ctx: AuthContext | null, req: Request) {
           p_user_department: str(ctx?.user.row.department),
           p_roles: (ctx?.roles ?? [])
             .map((role) => role.toUpperCase())
-            .filter((role) => role !== "SUPER_ADMIN" && role !== "SYSTEM_ADMIN"),
+            .filter((role) => role !== "SYSTEM_ADMIN" && (role !== "SUPER_ADMIN" || isDirectSuperAdmin(ctx))),
           p_source_document_id: crypto.randomUUID(),
           p_file_sha256: uploadedFileSha256,
           p_ocr_normalized_sha256: null,
@@ -1217,7 +1219,7 @@ async function handleClassificationReview(
   }
   const reviewGrants = (await loadGrants([p.id])).get(p.id) ?? [];
   const reviewContext = accessContext(ctx);
-  if (!reviewContext.permissions.some((permission) => permission.toUpperCase() === "DOCUMENT_CLASSIFY")
+  if (!canPerformDocumentAction(reviewContext, "DOCUMENT_CLASSIFY")
     || !canViewDocumentContent(reviewContext, row, reviewGrants)) {
     return jsonResponse(fail("You do not have permission to classify this document.", "ACCESS_DENIED"), 403);
   }
@@ -1344,7 +1346,7 @@ async function handleDuplicateReview(
   const roles = ctx?.roles ?? [];
   const grants = (await loadGrants([p.id])).get(p.id) ?? [];
   const viewer = accessContext(ctx);
-  const canReview = isOwner(userEmail, source)
+  const canReview = isDirectSuperAdmin(ctx) || isOwner(userEmail, source)
     || (REVIEW_ROLES.some((role) => hasRole(roles, role)) && canViewDocumentContent(viewer, source, grants));
   if (!canReview) {
     return jsonResponse(fail("You do not have permission to review this duplicate result.", "ACCESS_DENIED"), 403);
@@ -1444,8 +1446,12 @@ async function handleDeleteOwnedDocument(ctx: AuthContext | null, req: Request, 
   const row = await loadDocumentRow(p.id);
   if (!row) return jsonResponse(fail(`Document not found: ${p.id}`, "RESOURCE_NOT_FOUND"), 404);
   const owner = String(row.created_by ?? row.owner_email ?? "").toLowerCase();
-  if (!ctx || owner !== ctx.email.toLowerCase()) {
+  if (!ctx || (!isDirectSuperAdmin(ctx) && owner !== ctx.email.toLowerCase())) {
     return jsonResponse(fail("Only the document owner can delete an unlinked source document.", "ACCESS_DENIED"), 403);
+  }
+
+  if ((await loadActiveLegalHolds([p.id])).has(p.id)) {
+    return jsonResponse(fail("The document is under an active legal hold.", "LEGAL_HOLD_ACTIVE"), 409);
   }
 
   for (const [table, label] of [["contracts", "a contract"], ["contract_ai_analyses", "a contract analysis"], ["records_archives", "a records archive"]] as const) {

@@ -1,10 +1,15 @@
 import type { AuthContext, Route, RouteParams } from './guard.ts';
 type Phase = 'AUTHORIZED_ATTEMPT' | 'COMPLETED';
+export function withMutationAuditResource(response: Response, resourceId: string): Response {
+  if (/^[0-9a-f-]{36}$/i.test(resourceId)) response.headers.set('X-Audit-Resource-Id', resourceId);
+  return response;
+}
 export function buildDirectAdminAuditRecord(ctx: AuthContext, req: Request, route: Route, params: RouteParams, phase: Phase, status?: number): Record<string,unknown> {
+  const resourcePath = route.path.split('/:')[0].split('/').filter(Boolean);
   return {
     actor_user_id: ctx.userId, target_user_id: null, oversight_session_id: null,
     action: `SUPER_ADMIN_${req.method}_${route.path}`.replace(/[^A-Z0-9_]+/gi, '_').slice(0,100),
-    entity_type: (route.path.split('/').filter(Boolean).at(-2) ?? 'ApplicationResource').slice(0,100),
+    entity_type: (resourcePath.at(-1) ?? 'ApplicationResource').slice(0,100),
     entity_id: (params.id ?? Object.values(params)[0] ?? '').slice(0,100) || null,
     source_ip: ctx.ip, user_agent: ctx.userAgent?.slice(0,500) ?? null,
     occurred_at: new Date().toISOString(),
@@ -19,7 +24,9 @@ export async function writeDirectAdminActionAudit(ctx: AuthContext, req: Request
 export async function runDirectAdminMutation(ctx: AuthContext, req: Request, route: Route, params: RouteParams, run: () => Promise<Response>, write = writeDirectAdminActionAudit): Promise<Response> {
   await write(ctx,req,route,params,'AUTHORIZED_ATTEMPT');
   const response = await run();
-  try { await write(ctx,req,route,params,'COMPLETED',response.status); }
+  const resourceId = response.headers.get('X-Audit-Resource-Id');
+  const completionParams = !params.id && resourceId && /^[0-9a-f-]{36}$/i.test(resourceId) ? { ...params, id: resourceId } : params;
+  try { await write(ctx,req,route,completionParams,'COMPLETED',response.status); }
   catch (error) { console.error('Direct admin completion audit failed:', (error as Error).message); }
   return response;
 }

@@ -1,4 +1,6 @@
-import { createHandler, AuthContext } from "../_shared/guard.ts";
+import { withMutationAuditResource } from "../_shared/direct-admin-audit.ts";
+import { canAccessReservationPortal, canOperateReservations as canOperate } from "../_shared/reservation-portal-access.ts";
+import { createHandler, AuthContext, authorizationSubject, isDirectSuperAdmin } from "../_shared/guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
 import { ok, fail } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
@@ -15,13 +17,9 @@ function allowedDomains(): string[] {
   return configured?.length ? configured : DEFAULT_ALLOWED_DOMAINS;
 }
 
-function isAllowedTeam8Email(email: string): boolean {
-  const domain = email.trim().toLowerCase().split("@").pop() ?? "";
-  return allowedDomains().includes(domain);
-}
 
 function team8Only(ctx: AuthContext | null): Response | null {
-  if (!ctx || isAllowedTeam8Email(ctx.email)) return null;
+  if (ctx && canAccessReservationPortal(authorizationSubject(ctx), ctx.email, allowedDomains())) return null;
   return jsonResponse(
     fail("This portal is restricted to Team 8 internal email domains.", "TEAM8_DOMAIN_REQUIRED"),
     403,
@@ -29,9 +27,7 @@ function team8Only(ctx: AuthContext | null): Response | null {
 }
 
 function canOperateReservations(ctx: AuthContext): boolean {
-  return ctx.user.assignedRoles.some((role) =>
-    role === "FACILITIES_OFFICER" || role === "FACILITIES_MANAGER"
-  );
+  return canOperate(authorizationSubject(ctx));
 }
 
 function maskEmail(email: string): string {
@@ -297,14 +293,15 @@ async function handleUpdateReservation(ctx: AuthContext | null, _req: Request, b
   if (end <= start) return badRequest("End time must be after start time.", "INVALID_TIME_RANGE");
   if (start.getTime() < Date.now()) return badRequest("A reservation cannot start in the past.", "PAST_RESERVATION");
 
-  const { data: updated, error } = await db
+  let updateQuery = db
     .from("facility_reservations")
     .update({ title, start_time: start.toISOString(), end_time: end.toISOString(), notes })
     .eq("id", reservationId)
-    .eq("host_user_id", ctx!.userId)
     .neq("status", "CANCELLED")
     .select("id, facility_id, host_user_id, title, start_time, end_time, notes, status, created_at")
-    .maybeSingle();
+;
+  if (!isDirectSuperAdmin(ctx)) updateQuery = updateQuery.eq("host_user_id", ctx!.userId);
+  const { data: updated, error } = await updateQuery.maybeSingle();
   if (error) {
     if (error.code === "23P01") return conflict("The selected meeting space is already reserved for this time.");
     throw new Error(`reservation update failed: ${error.message}`);
@@ -318,8 +315,8 @@ async function handleUpdateReservation(ctx: AuthContext | null, _req: Request, b
     facilityId: updated.facility_id,
     facilityName: facility?.facility_name ?? facility?.name ?? "Meeting space",
     hostUserId: updated.host_user_id,
-    hostName: `${ctx!.user.row.first_name} ${ctx!.user.row.last_name}`.trim() || ctx!.email,
-    hostEmail: ctx!.email,
+    hostName: updated.host_user_id === ctx!.userId ? `${ctx!.user.row.first_name} ${ctx!.user.row.last_name}`.trim() || ctx!.email : "Team 8 member",
+    hostEmail: updated.host_user_id === ctx!.userId ? ctx!.email : null,
     title: updated.title,
     startTime: updated.start_time,
     endTime: updated.end_time,
@@ -335,13 +332,14 @@ async function handleCancelReservation(ctx: AuthContext | null, _req: Request, _
   const reservationId = params.id?.trim();
   if (!reservationId) return badRequest("A reservation id is required.");
 
-  const { data: deleted, error } = await db
+  let updateQuery = db
     .from("facility_reservations")
     .delete()
     .eq("id", reservationId)
-    .eq("host_user_id", ctx!.userId)
     .select("id")
-    .maybeSingle();
+;
+  if (!isDirectSuperAdmin(ctx)) updateQuery = updateQuery.eq("host_user_id", ctx!.userId);
+  const { data: deleted, error } = await updateQuery.maybeSingle();
   if (error) throw new Error(`reservation cancellation failed: ${error.message}`);
   if (!deleted) return notFound("Reservation not found or it is not owned by the current user.");
   return jsonResponse(ok({ id: deleted.id }, "Reservation cancelled and its time slot released"), 200);
@@ -456,7 +454,7 @@ async function handleCheckInPass(ctx: AuthContext | null, req: Request) {
   });
   if (auditError) console.error(`reservation QR check-in audit failed: ${auditError.message}`);
 
-  return jsonResponse(ok({
+  return withMutationAuditResource(jsonResponse(ok({
     inviteeId: checkedIn.id,
     inviteeEmail: maskEmail(checkedIn.email),
     checkedIn: checkedIn.check_in_status,
@@ -467,7 +465,7 @@ async function handleCheckInPass(ctx: AuthContext | null, req: Request) {
     endTime: reservation.end_time,
     status: reservation.status,
     facilityName: facility?.facility_name ?? facility?.name ?? "Meeting space",
-  }, "QR pass checked in successfully"), 200);
+  }, "QR pass checked in successfully"), 200), checkedIn.id);
 }
 
 async function handleCheckOutPass(ctx: AuthContext | null, req: Request) {
@@ -495,12 +493,12 @@ async function handleCheckOutPass(ctx: AuthContext | null, req: Request) {
     reason: `QR pass checked out for reservation ${reservation.id} at ${checkedOutAt}`,
   });
   if (auditError) console.error(`reservation QR check-out audit failed: ${auditError.message}`);
-  return jsonResponse(ok({
+  return withMutationAuditResource(jsonResponse(ok({
     inviteeId: updated.id, inviteeEmail: maskEmail(updated.email), checkedIn: false, checkedOutAt,
     reservationId: reservation.id, title: reservation.title, startTime: reservation.start_time,
     endTime: reservation.end_time, status: reservation.status,
     facilityName: facility?.facility_name ?? facility?.name ?? "Meeting space",
-  }, "QR pass checked out successfully"), 200);
+  }, "QR pass checked out successfully"), 200), updated.id);
 }
 
 async function handleCreateReservation(ctx: AuthContext | null, req: Request, body: unknown) {
@@ -626,7 +624,7 @@ async function handleCreateReservation(ctx: AuthContext | null, req: Request, bo
           ? "FAILED"
           : "PARTIAL";
 
-  return jsonResponse(ok({
+  return withMutationAuditResource(jsonResponse(ok({
     reservation: {
       id: reservation.id,
       facilityId: reservation.facility_id,
@@ -640,7 +638,7 @@ async function handleCreateReservation(ctx: AuthContext | null, req: Request, bo
     },
     invitations,
     emailDelivery,
-  }, "Reservation confirmed and invitation pipeline completed"), 201);
+  }, "Reservation confirmed and invitation pipeline completed"), 201), reservation.id);
 }
 
 const routes = [

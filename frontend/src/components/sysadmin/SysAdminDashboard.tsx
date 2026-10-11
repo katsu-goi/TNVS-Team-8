@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Activity, Users, Shield,
   RefreshCw, AlertCircle, Cpu,
@@ -21,7 +21,8 @@ import { PortalLoadingOverlay } from '../ui/PortalLoadingOverlay';
 export const SysAdminDashboard: React.FC = () => {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
-  const superAdministrator = isActorSuperAdmin(user);
+  const location = useLocation();
+  const superAdministrator = location.pathname !== '/system-admin' && isActorSuperAdmin(user);
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [overview, setOverview] = useState<NonNullable<AnalyticsData['enterprise']>['overview'] | null>(null);
   const [logs, setLogs] = useState<SecurityLog[]>([]);

@@ -1,3 +1,4 @@
+import { workflowActorRole } from "../_shared/workflow-actor.ts";
 import { createHandler, AuthContext, RouteParams } from "../_shared/guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
 import { ok, fail } from "../_shared/envelope.ts";
@@ -329,7 +330,7 @@ async function handleCheckIn(ctx: AuthContext | null, _req: Request, _body: unkn
     p_visitor_id: p.id,
     p_actor_id: ctx!.userId,
     p_actor_email: ctx!.email,
-    p_actor_role: "FACILITIES_OFFICER",
+    p_actor_role: workflowActorRole(ctx!, "FACILITIES_OFFICER"),
   });
   if (error) throw new Error(`visitor check-in transaction failed: ${error.message}`);
   const result = data as WorkflowRpcResult;
@@ -345,7 +346,7 @@ async function handleCheckOut(ctx: AuthContext | null, _req: Request, _body: unk
     p_visitor_id: p.id,
     p_actor_id: ctx!.userId,
     p_actor_email: ctx!.email,
-    p_actor_role: "FACILITIES_OFFICER",
+    p_actor_role: workflowActorRole(ctx!, "FACILITIES_OFFICER"),
   });
   if (error) throw new Error(`visitor check-out transaction failed: ${error.message}`);
   const result = data as WorkflowRpcResult;
@@ -421,7 +422,7 @@ async function handleVerify(ctx: AuthContext | null, _req: Request, body: unknow
     p_id_number: idNumber,
     p_actor_id: ctx!.userId,
     p_actor_email: ctx!.email,
-    p_actor_role: "FACILITIES_OFFICER",
+    p_actor_role: workflowActorRole(ctx!, "FACILITIES_OFFICER"),
   });
   if (error) throw new Error(`visitor verification transaction failed: ${error.message}`);
   const result = data as WorkflowRpcResult;
@@ -438,7 +439,7 @@ async function handleReview(ctx: AuthContext | null, _req: Request, body: unknow
     p_notes: String(b.notes ?? ""),
     p_actor_id: ctx!.userId,
     p_actor_email: ctx!.email,
-    p_actor_role: "FACILITIES_OFFICER",
+    p_actor_role: workflowActorRole(ctx!, "FACILITIES_OFFICER"),
   });
   if (error) throw new Error(`visitor review transaction failed: ${error.message}`);
   const result = data as WorkflowRpcResult;

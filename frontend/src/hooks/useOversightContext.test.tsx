@@ -22,4 +22,11 @@ describe('reactive oversight scope', () => {
     expect(hook.result.current.sessionId).toBe('s');
     expect(hook.result.current.targetUser).toBeNull();
   });
+  it.each(['null', '"employee"', '{}', '{"id":"employee"}'])('rejects a malformed target shape %s', raw => {
+    localStorage.setItem('oversightSessionId','s');
+    localStorage.setItem('oversightTargetUser',raw);
+    const hook=renderHook(useOversightContext);
+    expect(hook.result.current.targetUser).toBeNull();
+    expect(hook.result.current.sessionId).toBe('s');
+  });
 });

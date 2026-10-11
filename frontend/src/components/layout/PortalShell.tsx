@@ -28,6 +28,7 @@ export type PortalNavItem = {
 };
 
 type PortalShellProps = {
+  children?: React.ReactNode;
   portalLabel: string;
   roleLabel: string;
   searchPlaceholder: string;
@@ -49,6 +50,7 @@ const PortalShellFrame: React.FC<PortalShellProps> = ({
   profilePath,
   settingsPath,
   showSystemStatus = false,
+  children,
 }) => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -279,7 +281,7 @@ const PortalShellFrame: React.FC<PortalShellProps> = ({
           </div>
         </header>
         <div className="hirna-content p-4 sm:p-6 lg:p-8">
-          {contentSlots.map((slot) => {
+          {children ?? contentSlots.map((slot) => {
             const displayed = slot.key === displayedRouteKey;
             return (
               <div

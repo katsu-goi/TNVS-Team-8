@@ -1,3 +1,4 @@
+import { workflowActorRole } from "../_shared/workflow-actor.ts";
 import { createHandler, AuthContext, RouteParams } from "../_shared/guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
 import { ok, fail } from "../_shared/envelope.ts";
@@ -410,7 +411,7 @@ async function handleCreateReservation(ctx: AuthContext | null, _req: Request, b
     p_end: toUtcIso(String(req.endTime ?? "")),
     p_attendees: Number.isNaN(attendees) ? 0 : attendees,
     p_actor_email: ctx!.email,
-    p_actor_role: "EMPLOYEE",
+    p_actor_role: workflowActorRole(ctx!, "EMPLOYEE"),
   });
   if (error) throw new Error(`reservation submission transaction failed: ${error.message}`);
   return workflowResponse(data as WorkflowRpcResult, "Reservation request submitted for Facilities Officer review");
@@ -460,7 +461,7 @@ async function handleUpdateReservation(ctx: AuthContext | null, _req: Request, b
     p_reason: String(b.reason ?? "Requester updated the pending reservation schedule."),
     p_actor_id: ctx!.userId,
     p_actor_email: ctx!.email,
-    p_actor_role: "EMPLOYEE",
+    p_actor_role: workflowActorRole(ctx!, "EMPLOYEE"),
   });
   if (error) throw new Error(`reservation reschedule transaction failed: ${error.message}`);
   const result = data as WorkflowRpcResult;
@@ -485,7 +486,7 @@ async function handleCancelReservation(ctx: AuthContext | null, _req: Request, b
     p_reason: String(b.reason ?? "Cancelled by requester."),
     p_actor_id: ctx!.userId,
     p_actor_email: ctx!.email,
-    p_actor_role: "EMPLOYEE",
+    p_actor_role: workflowActorRole(ctx!, "EMPLOYEE"),
   });
   if (error) throw new Error(`reservation cancellation transaction failed: ${error.message}`);
   return workflowResponse(data as WorkflowRpcResult, "Reservation cancelled and slot released");
@@ -1052,9 +1053,10 @@ async function handleApprove(ctx: AuthContext | null, _req: Request, _body: unkn
   if (res.status === "rule") return businessRule("Only pending or in-review requests can be decided.");
   const r = res.row;
   const { data: saved, error } = await db.from("employee_requests")
-    .update({ status: "APPROVED", updated_by: ctx!.email }).eq("id", r.id)
-    .select("*, users(id, first_name, last_name)").single();
+    .update({ status: "APPROVED", updated_by: ctx!.email }).eq("id", r.id).eq("status", r.status).eq("is_deleted", false)
+    .select("*, users(id, first_name, last_name)").maybeSingle();
   if (error) throw new Error(`employee_request update failed: ${error.message}`);
+  if (!saved) return jsonResponse(fail("The request has already changed. Refresh and try again.", "WORKFLOW_CONFLICT"), 409);
 
   await writeAudit(ctx!.user, "APPROVE_REQUEST", "REQUEST_REVIEW", "EmployeeRequest", r.id,
     `Approved request: ${String(r.title ?? "")}`, resolveClientIp(_req).ip);
@@ -1076,9 +1078,10 @@ async function handleReject(ctx: AuthContext | null, _req: Request, body: unknow
   const fields: Record<string, unknown> = { status: "REJECTED", updated_by: ctx!.email };
   if (reason !== null && reason.trim() !== "") fields.decision_notes = reason;
   const { data: saved, error } = await db.from("employee_requests")
-    .update(fields).eq("id", r.id)
-    .select("*, users(id, first_name, last_name)").single();
+    .update(fields).eq("id", r.id).eq("status", r.status).eq("is_deleted", false)
+    .select("*, users(id, first_name, last_name)").maybeSingle();
   if (error) throw new Error(`employee_request update failed: ${error.message}`);
+  if (!saved) return jsonResponse(fail("The request has already changed. Refresh and try again.", "WORKFLOW_CONFLICT"), 409);
 
   const auditDesc = reason !== null && reason.trim() !== ""
     ? `Rejected request: ${String(r.title ?? "")} - ${reason}`
@@ -1103,9 +1106,10 @@ async function handleComplete(ctx: AuthContext | null, _req: Request, _body: unk
     return businessRule("Only approved requests can be completed.");
   }
   const { data: saved, error } = await db.from("employee_requests")
-    .update({ status: "COMPLETED", updated_by: ctx!.email }).eq("id", r.id)
-    .select("*, users(id, first_name, last_name)").single();
+    .update({ status: "COMPLETED", updated_by: ctx!.email }).eq("id", r.id).eq("status", r.status).eq("is_deleted", false)
+    .select("*, users(id, first_name, last_name)").maybeSingle();
   if (error) throw new Error(`employee_request update failed: ${error.message}`);
+  if (!saved) return jsonResponse(fail("The request has already changed. Refresh and try again.", "WORKFLOW_CONFLICT"), 409);
 
   await writeAudit(ctx!.user, "COMPLETE_REQUEST", "REQUEST_REVIEW", "EmployeeRequest", r.id,
     `Completed request: ${String(r.title ?? "")}`, resolveClientIp(_req).ip);

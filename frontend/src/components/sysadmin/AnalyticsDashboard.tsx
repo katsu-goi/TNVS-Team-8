@@ -35,7 +35,7 @@ export const SystemAnalyticsPage: React.FC = () => {
   const [retry, setRetry] = useState(0);
   const revision = useRealtimeSyncStore((state) => state.revision);
   const validationError = validateAnalyticsRange(range, customFrom, customTo);
-  const query = useMemo(() => buildAnalyticsQuery(range, customFrom, customTo), [range, customFrom, customTo]);
+  const query = useMemo(() => ({ ...buildAnalyticsQuery(range, customFrom, customTo), viewRole: 'SYSTEM_ADMIN' as const }), [range, customFrom, customTo]);
 
   const load = useCallback(async () => {
     if (validationError) { setLoading(false); return; }

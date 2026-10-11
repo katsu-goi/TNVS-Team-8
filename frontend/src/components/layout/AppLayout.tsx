@@ -3,7 +3,7 @@ import { isActorSuperAdmin, isActorSystemAdmin, useAuthStore } from '../../store
 import { usePortalPresentation } from '../../hooks/usePortalPresentation';
 import { PortalShell } from './PortalShell';
 
-export const AppLayout: React.FC = () => {
+export const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const user = useAuthStore((state) => state.user);
   const superAdministrator = isActorSuperAdmin(user);
   const systemAdministrator = isActorSystemAdmin(user);
@@ -16,6 +16,6 @@ export const AppLayout: React.FC = () => {
       searchPlaceholder={presentation.searchPlaceholder}
       navItems={presentation.navigation}
       showSystemStatus={presentation.showSystemStatus}
-    />
+    >{children}</PortalShell>
   );
 };
