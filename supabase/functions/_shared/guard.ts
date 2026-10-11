@@ -8,6 +8,7 @@ import { assertEnv } from "./config.ts";
 import { adminDb } from "./db.ts";
 import { resolveClientIp } from "./ip.ts";
 import { consumeRateLimit, tierFor } from "./rate-limit.ts";
+import { runDirectAdminMutation } from "./direct-admin-audit.ts";
 
 export type AuthContext = {
   user: AuthUser;
@@ -517,6 +518,10 @@ export function createHandler(routes: Route[], options: RouterOptions = {}): (re
       return finish(response);
     }
 
+    if (isDirectSuperAdmin(ctx) && MUTATING_METHODS.has(req.method)) {
+      try { return finish(await runDirectAdminMutation(ctx, req, route, params, () => safeRun(route.handler, ctx, req, body, params))); }
+      catch (error) { return finish(internalErrorResponse(error)); }
+    }
     const response = await safeRun(route.handler, ctx, req, body, params);
     try { await writeOversightActionAudit(ctx, req, route, params, "COMPLETED", response.status); }
     catch (e) { console.error("oversight completion audit failed:", (e as Error).message); }
