@@ -23,6 +23,8 @@ export type PortalNavItem = {
   badge?: string;
   group?: string;
   children?: PortalNavItem[];
+  disclosureOnly?: boolean;
+  activePaths?: string[];
 };
 
 type PortalShellProps = {
@@ -89,7 +91,7 @@ const PortalShellFrame: React.FC<PortalShellProps> = ({
   }, [connectSync, disconnectSync]);
 
   useEffect(() => {
-    const activeParent = navItems.find((item) => item.children?.some((child) => isPathActive(child.path, child.exact)));
+    const activeParent = navItems.find((item) => item.children?.some((child) => isItemActive(child)));
     if (activeParent) setExpandedMenus((current) => new Set(current).add(activeParent.id));
     setMobileOpen(false);
     // location.pathname intentionally drives this synchronization.
@@ -137,6 +139,7 @@ const PortalShellFrame: React.FC<PortalShellProps> = ({
     if (exact) return location.pathname === path;
     return location.pathname === path || location.pathname === `${path}/` || location.pathname.startsWith(`${path}/`);
   };
+  const isItemActive = (item: PortalNavItem) => isPathActive(item.path,item.exact) || (item.activePaths ?? []).some(path => isPathActive(path));
 
   const goTo = (path: string, label: string) => {
     if (!shouldStartPortalNavigation(location.pathname, path)) {
@@ -178,8 +181,8 @@ const PortalShellFrame: React.FC<PortalShellProps> = ({
       <nav className="hirna-sidebar-nav scrollbar-none min-h-0 flex-1 overflow-y-auto px-3 py-3" aria-label={`${portalLabel} navigation`}>
         {navItems.map((item, index) => {
           const Icon = item.icon;
-          const childActive = item.children?.some((child) => isPathActive(child.path, child.exact)) ?? false;
-          const active = childActive || isPathActive(item.path, item.exact);
+          const childActive = item.children?.some(child => isItemActive(child)) ?? false;
+          const active = childActive || (!item.disclosureOnly && isItemActive(item));
           const expanded = expandedMenus.has(item.id);
           const previousGroup = index > 0 ? navItems[index - 1].group : undefined;
           return (
@@ -189,12 +192,15 @@ const PortalShellFrame: React.FC<PortalShellProps> = ({
               )}
               <button
                 type="button"
+                aria-expanded={item.children ? expanded : undefined}
+                aria-controls={item.children ? `nav-${item.id}` : undefined}
+                aria-current={!item.disclosureOnly && active && !childActive ? 'page' : undefined}
                 onClick={(event) => {
                   if (item.children) {
                     toggleMenu(item.id);
                     const toggleOnly = event.target instanceof Element
                       && Boolean(event.target.closest('[data-menu-toggle]'));
-                    if (!toggleOnly && !childActive) goTo(item.path, item.label);
+                    if (!item.disclosureOnly && !toggleOnly && !childActive) goTo(item.path, item.label);
                   } else goTo(item.path, item.label);
                 }}
                 className={`hirna-nav-item mb-1 flex w-full items-center justify-between px-3 py-2.5 text-left text-sm font-medium ${active ? 'hirna-nav-item-active font-semibold' : ''}`}
@@ -213,13 +219,13 @@ const PortalShellFrame: React.FC<PortalShellProps> = ({
                 </span>
               </button>
               {item.children && (
-                <div className={`overflow-hidden transition-all duration-200 ${expanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'}`}>
+                <div id={`nav-${item.id}`} hidden={!expanded}>
                   <div className="mb-1 ml-4 space-y-1 border-l border-white/15 pl-2">
                     {item.children.map((child) => {
                       const ChildIcon = child.icon;
-                      const activeChild = isPathActive(child.path, child.exact);
+                      const activeChild = isItemActive(child);
                       return (
-                        <button key={child.id} type="button" onClick={() => goTo(child.path, child.label)} className={`hirna-nav-item flex w-full items-center gap-2 px-3 py-2 text-left text-xs ${activeChild ? 'hirna-nav-item-active font-semibold' : ''}`}>
+                        <button key={child.id} type="button" aria-current={activeChild ? 'page' : undefined} onClick={() => goTo(child.path, child.label)} className={`hirna-nav-item flex w-full items-center gap-2 px-3 py-2 text-left text-xs ${activeChild ? 'hirna-nav-item-active font-semibold' : ''}`}>
                           <ChildIcon className="hirna-nav-icon h-3.5 w-3.5 shrink-0" />
                           <span className="truncate">{child.label}</span>
                         </button>

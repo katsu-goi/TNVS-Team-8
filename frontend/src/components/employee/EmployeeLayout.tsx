@@ -1,8 +1,8 @@
 import React from 'react';
-import { getRolePresentation } from '../../config/roleRegistry';
+import { usePortalPresentation } from '../../hooks/usePortalPresentation';
 import { PortalShell } from '../layout/PortalShell';
 
 export const EmployeeLayout: React.FC = () => {
-  const config = getRolePresentation('EMPLOYEE')!;
-  return <PortalShell portalLabel={config.portalLabel} roleLabel={config.roleLabel} searchPlaceholder={config.searchPlaceholder} navItems={config.navigation} profilePath={config.profilePath} />;
+  const config = usePortalPresentation('EMPLOYEE');
+  return <PortalShell portalLabel={config.portalLabel} roleLabel={config.roleLabel} searchPlaceholder={config.searchPlaceholder} navItems={config.navigation} showSystemStatus={config.showSystemStatus} profilePath={config.profilePath} />;
 };

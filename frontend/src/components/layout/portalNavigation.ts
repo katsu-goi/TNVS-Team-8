@@ -7,7 +7,7 @@ export const shouldStartPortalNavigation = (currentPath: string, destinationPath
 );
 
 export const getPortalDestinations = (items: PortalNavItem[]): PortalNavItem[] => (
-  items.flatMap((item) => [item, ...(item.children ?? [])])
+  items.flatMap((item) => [...(item.disclosureOnly ? [] : [item]), ...(item.children ?? [])])
 );
 
 export const getPortalLoadingMessage = (label?: string): string => {

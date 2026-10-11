@@ -1,6 +1,8 @@
+import { useOversightContext } from './hooks/useOversightContext';
+import { hasPortalAccess, hasDirectSuperAdminAccess } from './utils/portalAccess';
 import React, { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate, useParams } from 'react-router-dom';
-import { useAuthStore, getDashboardPath, isActorSuperAdmin, isActorSystemAdmin, hasAssignedRole } from './stores/authStore';
+import { useAuthStore, getDashboardPath, isActorSuperAdmin, isActorSystemAdmin } from './stores/authStore';
 import { OversightBanner } from './components/oversight';
 import { workspaceConfigs } from './components/workspaces/workspaceConfig';
 import type { WorkspaceConfig } from './components/workspaces/workspaceConfig';
@@ -116,10 +118,11 @@ export const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ childr
 };
 
 const AdminPortalRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const scope = useOversightContext();
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  if (!isActorSuperAdmin(user) && !isActorSystemAdmin(user)) {
+  if (!hasDirectSuperAdminAccess(user, scope) && !hasPortalAccess(user, 'SYSTEM_ADMIN', scope)) {
     const destination = getDashboardPath(user);
     return <Navigate to={destination === '/' ? '/login' : destination} replace />;
   }
@@ -135,10 +138,11 @@ const SuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) 
 };
 
 const SystemAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const scope = useOversightContext();
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  if (!isActorSystemAdmin(user)) return <Navigate to={getDashboardPath(user)} replace />;
+  if (!hasPortalAccess(user, 'SYSTEM_ADMIN', scope)) return <Navigate to={getDashboardPath(user)} replace />;
   return <>{children}</>;
 };
 
@@ -149,10 +153,11 @@ const DashboardRedirect: React.FC = () => {
 };
 
 const AssignedRoleRoute: React.FC<{ role: string; children: React.ReactNode }> = ({ role, children }) => {
+  const scope = useOversightContext();
   const accessToken = useAuthStore((state) => state.accessToken);
   const user = useAuthStore((state) => state.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  if (!hasAssignedRole(user, role)) return <Navigate to={getDashboardPath(user)} replace />;
+  if (!hasPortalAccess(user, role, scope)) return <Navigate to={getDashboardPath(user)} replace />;
   return <>{children}</>;
 };
 
@@ -193,50 +198,56 @@ export const SessionBootstrap: React.FC<{ children: React.ReactNode }> = ({ chil
 };
 
 export const FacilitiesRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const scope = useOversightContext();
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  if (!hasAssignedRole(user, 'FACILITIES_MANAGER')) return <Navigate to={getDashboardPath(user)} replace />;
+  if (!hasPortalAccess(user, 'FACILITIES_MANAGER', scope)) return <Navigate to={getDashboardPath(user)} replace />;
   return <>{children}</>;
 };
 
 const FacilitiesOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const scope = useOversightContext();
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  if (!hasAssignedRole(user, 'FACILITIES_OFFICER')) return <Navigate to={getDashboardPath(user)} replace />;
+  if (!hasPortalAccess(user, 'FACILITIES_OFFICER', scope)) return <Navigate to={getDashboardPath(user)} replace />;
   return <>{children}</>;
 };
 
 const LegalOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const scope = useOversightContext();
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  if (!hasAssignedRole(user, 'LEGAL_OFFICER')) return <Navigate to={getDashboardPath(user)} replace />;
+  if (!hasPortalAccess(user, 'LEGAL_OFFICER', scope)) return <Navigate to={getDashboardPath(user)} replace />;
   return <>{children}</>;
 };
 
 const ContractOfficerRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const scope = useOversightContext();
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  if (!hasAssignedRole(user, 'CONTRACT_OFFICER')) return <Navigate to={getDashboardPath(user)} replace />;
+  if (!hasPortalAccess(user, 'CONTRACT_OFFICER', scope)) return <Navigate to={getDashboardPath(user)} replace />;
   return <>{children}</>;
 };
 
 const EmployeeRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const scope = useOversightContext();
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   if (!accessToken) return <Navigate to="/login" replace />;
-  if (!hasAssignedRole(user, 'EMPLOYEE')) return <Navigate to={getDashboardPath(user)} replace />;
+  if (!hasPortalAccess(user, 'EMPLOYEE', scope)) return <Navigate to={getDashboardPath(user)} replace />;
   return <>{children}</>;
 };
 
 const Team8PortalRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const scope = useOversightContext();
   const accessToken = useAuthStore((state) => state.accessToken);
   const user = useAuthStore((state) => state.user);
   if (!accessToken || !user) return <Navigate to="/reservation-portal/login" replace />;
-  if (!isTeam8Email(user.email)) return <Navigate to="/reservation-portal/login?error=domain" replace />;
+  if (!hasDirectSuperAdminAccess(user, scope) && !isTeam8Email((scope.targetUser ?? user).email)) return <Navigate to="/reservation-portal/login?error=domain" replace />;
   return <>{children}</>;
 };
 
