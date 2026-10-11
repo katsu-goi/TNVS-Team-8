@@ -58,13 +58,17 @@ export const FacilitiesAnalyticsPage: React.FC<Props> = ({ title, subtitle }) =>
   const [retry, setRetry] = useState(0);
   const revision = useRealtimeSyncStore((state) => state.revision);
   const validationError = validateAnalyticsRange(range, customFrom, customTo);
-  const query = useMemo(() => buildAnalyticsQuery(range, customFrom, customTo), [range, customFrom, customTo]);
+  const query = useMemo(() => ({ ...buildAnalyticsQuery(range, customFrom, customTo), viewRole: 'FACILITIES_MANAGER' as const }), [range, customFrom, customTo]);
 
   const load = useCallback(async () => {
     if (validationError) { setLoading(false); return; }
     setLoading(true);
     setError(null);
-    try { setData(await fetchAnalytics(query)); }
+    try {
+      const result = await fetchAnalytics(query);
+      if (!result.facilities) throw new Error('The server did not return facility analytics.');
+      setData(result);
+    }
     catch (requestError: any) { setError(requestError?.response?.data?.message || requestError?.message || 'Unable to load facility analytics.'); }
     finally { setLoading(false); }
   }, [query, validationError]);

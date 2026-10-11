@@ -1,4 +1,4 @@
-import { createHandler, AuthContext, RouteParams } from "../_shared/guard.ts";
+import { createHandler, AuthContext, RouteParams, isDirectSuperAdmin } from "../_shared/guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
 import { fail, ok } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
@@ -22,7 +22,7 @@ const WORKSPACE_ROLES = Object.keys(WORKSPACE_BY_ROLE);
 
 function validateWorkspace(ctx: AuthContext | null, workspace: string): Response | null {
   const hasWorkspaceRole = ctx
-    ? hasAssignedWorkspace(ctx.user.assignedRoles, workspace, WORKSPACE_BY_ROLE)
+    ? hasAssignedWorkspace(ctx.user.assignedRoles, workspace, WORKSPACE_BY_ROLE, Boolean(ctx.oversight))
     : false;
   if (!hasWorkspaceRole) {
     return jsonResponse(fail("This workspace is not assigned to the current account.", "ACCESS_DENIED"), 403);
@@ -63,6 +63,7 @@ async function usersById(userIds: Array<string | null | undefined>): Promise<Map
 }
 
 async function departmentAuditUserIds(ctx: AuthContext): Promise<string[]> {
+  if (isDirectSuperAdmin(ctx)) return (await rows("users", "id", query => query.eq("is_deleted", false))).map(user => String(user.id));
   const department = ctx.user.row.department?.trim();
   if (!department) return [ctx.userId];
   const departmentUsers = await rows("users", "id", (query) => query
@@ -433,13 +434,14 @@ async function handleManagerSignoff(ctx: AuthContext | null, _req: Request, body
   if (!approve && comments.length < 5) {
     return jsonResponse(fail("Revision comments must contain at least 5 characters.", "VALIDATION_ERROR"), 400);
   }
-  const { error } = await db.from("management_signoffs").update({
+  const { data: updated, error } = await db.from("management_signoffs").update({
     status: approve ? "MANAGER_APPROVED" : "REJECTED_REVISION",
     manager_comments: comments || null,
     decided_by: ctx?.userId,
     decided_at: new Date().toISOString(),
-  }).eq("id", params.id).eq("status", "AWAITING_MANAGER_SIGNOFF");
+  }).eq("id", params.id).eq("status", "AWAITING_MANAGER_SIGNOFF").select("id").maybeSingle();
   if (error) throw new Error(`management sign-off failed: ${error.message}`);
+  if (!updated) return jsonResponse(fail("The record has already changed. Refresh and try again.", "WORKFLOW_CONFLICT"), 409);
   return jsonResponse(ok(approve ? "Management sign-off approved." : "Item returned for revision."), 200);
 }
 
@@ -453,13 +455,14 @@ async function handleDepartmentDecision(ctx: AuthContext | null, _req: Request, 
   if (decision !== "APPROVED" && comments.length < 5) {
     return jsonResponse(fail("Decision comments must contain at least 5 characters.", "VALIDATION_ERROR"), 400);
   }
-  const { error } = await db.from("department_approvals").update({
+  const { data: updated, error } = await db.from("department_approvals").update({
     status: decision,
     decision_comments: comments || null,
     decided_by: ctx?.userId,
     decided_at: new Date().toISOString(),
-  }).eq("id", params.id).eq("status", "PENDING_DEPARTMENT_HEAD");
+  }).eq("id", params.id).eq("status", "PENDING_DEPARTMENT_HEAD").select("id").maybeSingle();
   if (error) throw new Error(`department decision failed: ${error.message}`);
+  if (!updated) return jsonResponse(fail("The record has already changed. Refresh and try again.", "WORKFLOW_CONFLICT"), 409);
   return jsonResponse(ok("Department decision recorded."), 200);
 }
 
@@ -496,12 +499,13 @@ async function handleCctvDecision(ctx: AuthContext | null, _req: Request, body: 
   if (justification.length < 10) {
     return jsonResponse(fail("A justification of at least 10 characters is required.", "VALIDATION_ERROR"), 400);
   }
-  const { error } = await db.from("cctv_export_requests").update({
+  const { data: updated, error } = await db.from("cctv_export_requests").update({
     status: approve ? "PENDING_CUSTODY_APPROVAL" : "REJECTED",
     privacy_approved_by: approve ? ctx?.userId : null,
     updated_at: new Date().toISOString(),
-  }).eq("id", params.id).eq("status", "PENDING_PRIVACY_APPROVAL");
+  }).eq("id", params.id).eq("status", "PENDING_PRIVACY_APPROVAL").select("id").maybeSingle();
   if (error) throw new Error(`CCTV decision failed: ${error.message}`);
+  if (!updated) return jsonResponse(fail("The record has already changed. Refresh and try again.", "WORKFLOW_CONFLICT"), 409);
   return jsonResponse(ok(approve ? "CCTV export sent for Records custody approval." : "CCTV export rejected."), 200);
 }
 
@@ -514,23 +518,25 @@ async function handleCctvCustody(ctx: AuthContext | null, _req: Request, body: u
   if (approve && request.privacy_approved_by === ctx?.userId) {
     return jsonResponse(fail("Privacy and custody approvals must be performed by different users.", "SOD_VIOLATION"), 422);
   }
-  const { error } = await db.from("cctv_export_requests").update({
+  const { data: updated, error } = await db.from("cctv_export_requests").update({
     status: approve ? "APPROVED" : "REJECTED",
     custody_approved_by: approve ? ctx?.userId : null,
     updated_at: new Date().toISOString(),
-  }).eq("id", params.id).eq("status", "PENDING_CUSTODY_APPROVAL");
+  }).eq("id", params.id).eq("status", "PENDING_CUSTODY_APPROVAL").select("id").maybeSingle();
   if (error) throw new Error(`CCTV custody decision failed: ${error.message}`);
+  if (!updated) return jsonResponse(fail("The record has already changed. Refresh and try again.", "WORKFLOW_CONFLICT"), 409);
   return jsonResponse(ok(approve ? "CCTV export approved under dual custody." : "CCTV export rejected by Records custody."), 200);
 }
 
 async function handleVaultArchive(ctx: AuthContext | null, _req: Request, _body: unknown, params: RouteParams) {
-  const { error } = await db.from("records_archives").update({
+  const { data: updated, error } = await db.from("records_archives").update({
     archive_status: "VAULTED",
     custodian_user_id: ctx?.userId,
     vaulted_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  }).eq("id", params.id).eq("archive_status", "PENDING_VALIDATION");
+  }).eq("id", params.id).eq("archive_status", "PENDING_VALIDATION").select("id").maybeSingle();
   if (error) throw new Error(`archive vaulting failed: ${error.message}`);
+  if (!updated) return jsonResponse(fail("The record has already changed. Refresh and try again.", "WORKFLOW_CONFLICT"), 409);
   const { error: eventError } = await db.from("records_custody_events").insert({
     archive_id: params.id,
     actor_user_id: ctx?.userId,

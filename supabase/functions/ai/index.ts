@@ -1,4 +1,5 @@
-import { createHandler, AuthContext } from "../_shared/guard.ts";
+import { canUseChatModule as hasChatModuleAccess } from "../_shared/module-scope.ts";
+import { createHandler, AuthContext, authorizationSubject } from "../_shared/guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
 import { fail, ok } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
@@ -1039,8 +1040,7 @@ const CHAT_MODULE_ROLES: Record<string, string[]> = {
 function canUseChatModule(ctx: AuthContext | null, module: string): boolean {
   if (module === "global") return true;
   if (!ctx) return false;
-  const allowed = CHAT_MODULE_ROLES[module] ?? [];
-  return allowed.some((role) => ctx.roles.includes(role));
+  return hasChatModuleAccess(authorizationSubject(ctx), module, CHAT_MODULE_ROLES);
 }
 
 async function chatCompose(ctx: AuthContext | null, message: string, module: string | null, relatedModules: string[] | null, route: string | null): Promise<any> {

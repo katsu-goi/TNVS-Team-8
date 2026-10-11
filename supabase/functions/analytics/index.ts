@@ -1,4 +1,5 @@
-import { createHandler, AuthContext } from "../_shared/guard.ts";
+import { resolveAnalyticsRole } from "../_shared/module-scope.ts";
+import { createHandler, AuthContext, authorizationSubject, isDirectSuperAdmin } from "../_shared/guard.ts";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { fail, ok } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
@@ -80,10 +81,8 @@ function analyticsWindow(req: Request): AnalyticsWindow | Response {
   return { from, to, preset };
 }
 
-function selectedRole(ctx: AuthContext): string | null {
-  const assigned = new Set(ctx.user.assignedRoles.map((role) => role.toUpperCase()));
-  const granted = new Set(ctx.roles.map((role) => role.toUpperCase()));
-  return ANALYTICS_ROLES.find((role) => assigned.has(role) || granted.has(role)) ?? null;
+function selectedRole(ctx: AuthContext, req: Request): string | null {
+  return resolveAnalyticsRole(authorizationSubject(ctx), ANALYTICS_ROLES, new URL(req.url).searchParams.get("viewRole"));
 }
 
 async function runtimeCheck(name: string, action: () => Promise<{ empty?: boolean; detail: string }>) {
@@ -132,7 +131,7 @@ async function operationalHealth() {
 async function handleAnalytics(ctx: AuthContext | null, req: Request) {
   const window = analyticsWindow(req);
   if (window instanceof Response) return window;
-  const role = selectedRole(ctx!);
+  const role = selectedRole(ctx!, req);
   if (!role) return jsonResponse(fail("This role has no analytics scope.", "ACCESS_DENIED"), 403);
   const rpc = role === "SUPER_ADMIN"
     ? db.rpc("phase9_super_admin_enterprise_analytics", {
@@ -283,7 +282,7 @@ async function exportRows(ctx: AuthContext, role: string, from: Date, to: Date, 
 async function handleCsvExport(ctx: AuthContext | null, req: Request) {
   const window = analyticsWindow(req);
   if (window instanceof Response) return window;
-  const role = selectedRole(ctx!);
+  const role = selectedRole(ctx!, req);
   if (!role) return jsonResponse(fail("This role cannot export analytics.", "ACCESS_DENIED"), 403);
   const status = new URL(req.url).searchParams.get("status")?.trim().toUpperCase() || null;
   if (status && !/^[A-Z][A-Z0-9_]{0,49}$/.test(status)) return jsonResponse(fail("Invalid status filter.", "INVALID_FILTER"), 400);
@@ -291,11 +290,11 @@ async function handleCsvExport(ctx: AuthContext | null, req: Request) {
   const exported = await exportRows(ctx!, role, window.from, window.to, status);
   if ("error" in exported) return exported.error!;
   const generatedAt = new Date().toISOString();
-  const filters = { preset: window.preset, ...(status ? { status } : {}) };
+  const filters = { viewRole: role, preset: window.preset, ...(status ? { status } : {}) };
   const { error: auditError } = await db.from("analytics_export_audit").insert({
     generated_by: ctx!.userId,
     generated_by_email: ctx!.email,
-    generated_by_role: role,
+    generated_by_role: isDirectSuperAdmin(ctx) ? "SUPER_ADMIN" : role,
     report_type: exported.reportType,
     range_from: window.from.toISOString(),
     range_to: window.to.toISOString(),

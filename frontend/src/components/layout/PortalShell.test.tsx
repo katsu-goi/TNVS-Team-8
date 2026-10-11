@@ -23,6 +23,17 @@ import { PortalShell } from './PortalShell';
 describe('PortalShell route loading', () => {
   afterEach(cleanup);
 
+  it('keeps all privacy destinations reachable and disclosure headers do not navigate', () => {
+    render(<MemoryRouter initialEntries={['/dashboard']}><PortalShell portalLabel="Super Administration" roleLabel="Super Admin" searchPlaceholder="Search" navItems={[{id:'privacy',label:'Privacy',path:'/workspace/privacy/dashboard',icon:LayoutDashboard,disclosureOnly:true,children:Array.from({length:12},(_,index)=>({id:`privacy-${index}`,label:`Privacy module ${index}`,path:`/workspace/privacy/${index}`,icon:LayoutDashboard}))}]}><h2>Current page</h2></PortalShell></MemoryRouter>);
+    expect(screen.queryByRole('button',{name:'Privacy module 11'})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:/^Privacy.*Expand/}));
+    expect(screen.getByRole('button',{name:'Privacy module 11'})).toBeVisible();
+    expect(screen.getByText('Current page')).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:/^Privacy.*Collapse/}));
+    expect(screen.queryByRole('button',{name:'Privacy module 11'})).not.toBeInTheDocument();
+  });
+
   it('retains the current page under a viewport overlay until the destination is ready', async () => {
     let resolveRoute: (() => void) | undefined;
     const LazyDestination = lazy(() => new Promise<{ default: React.ComponentType }>((resolve) => {

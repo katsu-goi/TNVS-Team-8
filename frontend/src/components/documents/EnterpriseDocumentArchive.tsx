@@ -9,6 +9,8 @@ import {
   DocumentViewerError, documentArchiveService,
 } from '../../api/documentArchiveService';
 import { hasPermission, useAuthStore } from '../../stores/authStore';
+import { hasDirectSuperAdminAccess } from '../../utils/portalAccess';
+import { useOversightContext } from '../../hooks/useOversightContext';
 import {
   Button, Card, EmptyState, ErrorState, FormField, LoadingState, Modal, PageHeader,
   ResponsiveTableContainer, SelectField, StatusBadge, TextAreaField,
@@ -69,7 +71,8 @@ const EMPTY_FILTERS: ArchiveFilters = {
 
 export const EnterpriseDocumentArchive: React.FC<{ initialView?: ArchiveView }> = ({ initialView = 'archive' }) => {
   const user = useAuthStore((state) => state.user);
-  const canApprove = hasPermission(user, 'DOCUMENT_APPROVE_ACCESS');
+  const scope = useOversightContext();
+  const canApprove = hasDirectSuperAdminAccess(user, scope) || hasPermission(user, 'DOCUMENT_APPROVE_ACCESS');
   const [view, setView] = useState<ArchiveView>(initialView);
   const [departments, setDepartments] = useState<ArchiveDepartment[]>([]);
   const [selectedDepartment, setSelectedDepartment] = useState<ArchiveDepartment | null>(null);

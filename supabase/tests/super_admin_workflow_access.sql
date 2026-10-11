@@ -1,0 +1,62 @@
+-- Disposable database only. Transaction restores every fixture.
+begin;
+do $$
+declare
+  actor uuid := gen_random_uuid();
+  room uuid := gen_random_uuid();
+  booking uuid;
+  result jsonb;
+  signature text;
+  visitor uuid := gen_random_uuid();
+  verification uuid;
+begin
+  insert into users(id,email,first_name,last_name,password_hash) values(actor,'sql-super@test.invalid','SQL','Admin','test-only');
+  insert into rooms(id,name,room_number,capacity,status,is_available) values(room,'SQL test room','SQL-ADMIN',20,'AVAILABLE',true);
+  result := phase5_submit_reservation(room,actor,'Regression booking','Verification','Test fixture',now()+interval '2 days',now()+interval '2 days 1 hour',5,'sql-super@test.invalid','SUPER_ADMIN');
+  booking := (result->'data'->>'id')::uuid;
+  if booking is null then raise exception 'submission returned no booking: %',result; end if;
+  result := phase5_officer_review_reservation(booking,'Verified request',actor,'sql-super@test.invalid','SUPER_ADMIN');
+  if not (result->>'ok')::boolean then raise exception 'officer review rejected: %',result; end if;
+  result := phase5_manager_decide_reservation(booking,'APPROVE','Approved after review',actor,'sql-super@test.invalid','SUPER_ADMIN');
+  if not (result->>'ok')::boolean then raise exception 'manager rejected: %',result; end if;
+  if (select status from reservations where id=booking) <> 'APPROVED' then raise exception 'not approved'; end if;
+  if not exists(select 1 from reservation_approvals where reservation_id=booking and approved_by=actor and actor_role='SUPER_ADMIN') then raise exception 'false actor audit'; end if;
+  result := phase5_manager_decide_reservation(booking,'APPROVE','Stale decision',actor,'sql-super@test.invalid','SUPER_ADMIN');
+  if (result->>'ok')::boolean then raise exception 'stale decision accepted'; end if;
+  result := phase5_submit_reservation(room,actor,'Over capacity','Verification','Test fixture',now()+interval '3 days',now()+interval '3 days 1 hour',99,'sql-super@test.invalid','SUPER_ADMIN');
+  if (result->>'ok')::boolean then raise exception 'capacity bypassed'; end if;
+  result := phase5_confirm_reservation(booking,actor,'sql-super@test.invalid','SUPER_ADMIN');
+  if not (result->>'ok')::boolean or (select status from reservations where id=booking) <> 'CONFIRMED' then raise exception 'confirmation failed: %',result; end if;
+  perform phase5_reschedule_reservation(booking,now()+interval '4 days',now()+interval '4 days 1 hour',5,'Schedule change',actor,'sql-super@test.invalid','SUPER_ADMIN');
+  if (select status from reservations where id=booking) <> 'PENDING' then raise exception 'reschedule failed to reset approval'; end if;
+  result := phase5_cancel_reservation(booking,'Cancelled test fixture',actor,'sql-super@test.invalid','SUPER_ADMIN');
+  if not (result->>'ok')::boolean or (select status from reservations where id=booking) <> 'CANCELLED' then raise exception 'cancellation failed: %',result; end if;
+  result := phase5_submit_reservation(room,actor,'Completion booking','Verification','Test fixture',now()+interval '5 days',now()+interval '5 days 1 hour',5,'sql-super@test.invalid','SUPER_ADMIN');
+  booking := (result->'data'->>'id')::uuid;
+  if booking is null then raise exception 'completion fixture failed: %',result; end if;
+  perform phase5_officer_review_reservation(booking,'Verified completion fixture',actor,'sql-super@test.invalid','SUPER_ADMIN');
+  perform phase5_manager_decide_reservation(booking,'APPROVE','Approved completion fixture',actor,'sql-super@test.invalid','SUPER_ADMIN');
+  result := phase5_complete_reservation(booking,actor,'sql-super@test.invalid','SUPER_ADMIN',now());
+  if result->>'errorCode' <> 'RESERVATION_NOT_COMPLETABLE' then raise exception 'early completion accepted: %',result; end if;
+  result := phase5_complete_reservation(booking,actor,'sql-super@test.invalid','SUPER_ADMIN',now()+interval '6 days');
+  if not (result->>'ok')::boolean or (select status from reservations where id=booking) <> 'COMPLETED' then raise exception 'completion failed: %',result; end if;
+  if not exists(select 1 from reservation_approvals where reservation_id=booking and approved_by=actor and actor_role='SUPER_ADMIN' and action='COMPLETE') then raise exception 'completion actor audit wrong'; end if;
+  insert into visitors(id,full_name,purpose_of_visit,host_id,status,created_by) values(visitor,'SQL regression visitor','Local verification',actor,'REGISTERED','sql-super@test.invalid');
+  result := phase5_check_in_visitor(visitor,actor,'sql-super@test.invalid','SUPER_ADMIN',now());
+  if result->>'errorCode' <> 'VISITOR_VERIFICATION_REQUIRED' then raise exception 'clearance bypassed: %',result; end if;
+  perform phase5_verify_visitor(visitor,'OTHER','x',actor,'sql-super@test.invalid','SUPER_ADMIN');
+  select current_verification_id into verification from visitors where id=visitor;
+  result := phase5_check_in_visitor(visitor,actor,'sql-super@test.invalid','SUPER_ADMIN',now());
+  if result->>'errorCode' <> 'VISITOR_REVIEW_REQUIRED' then raise exception 'review bypassed: %',result; end if;
+  result := phase5_review_visitor(visitor,verification,'CLEAR','Identity confirmed independently',actor,'sql-super@test.invalid','SUPER_ADMIN');
+  if not (result->>'ok')::boolean then raise exception 'visitor review denied: %',result; end if;
+  result := phase5_check_in_visitor(visitor,actor,'sql-super@test.invalid','SUPER_ADMIN',now());
+  if not (result->>'ok')::boolean then raise exception 'check in denied: %',result; end if;
+  result := phase5_check_out_visitor(visitor,actor,'sql-super@test.invalid','SUPER_ADMIN',now()+interval '1 hour');
+  if not (result->>'ok')::boolean then raise exception 'check out denied: %',result; end if;
+  if not exists(select 1 from visitor_workflow_events where visitor_id=visitor and actor_id=actor and actor_role='SUPER_ADMIN' and event_type='CHECK_OUT') then raise exception 'visitor actor audit wrong'; end if;
+  for signature in select p.oid::regprocedure::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'phase5_%' loop
+    if has_function_privilege('authenticated',signature,'execute') or has_function_privilege('anon',signature,'execute') then raise exception 'workflow exposed: %',signature; end if;
+  end loop;
+end $$;
+rollback;

@@ -51,6 +51,13 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Super Admin dashboard response contract', () => {
+  it('opens the operational System Admin dashboard when Super Admin selects that module',async()=>{
+    vi.mocked(fetchAnalytics).mockResolvedValue({ ...enterprise(),scope:'SYSTEM_ADMIN',enterprise:undefined,operational:{activeSessions:7,failedEvents:2,blockedIps:1,activeSecurityAlerts:3} as AnalyticsData['operational'] });
+    render(<MemoryRouter initialEntries={['/system-admin']}><SysAdminDashboard/></MemoryRouter>);
+    expect(await screen.findByText('System Administrator')).toBeInTheDocument();
+    expect(fetchAnalytics).toHaveBeenCalledWith({preset:'today',viewRole:'SYSTEM_ADMIN'});
+    expect(securityService.getMetrics).not.toHaveBeenCalled();
+  });
   it('renders enterprise data without requiring an operational field', async () => {
     render(<MemoryRouter><SysAdminDashboard /></MemoryRouter>);
     expect(await screen.findByText('Enterprise Analytics')).toBeInTheDocument();

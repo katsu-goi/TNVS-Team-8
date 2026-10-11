@@ -64,7 +64,7 @@ const explicitRoles: RolePresentation[] = [
       { id: 'dashboard', label: 'Dashboard', path: '/facilities', icon: LayoutDashboard, exact },
       { id: 'reservations', label: 'TNVS Hub Reservations', path: '/facilities/reservations', icon: Calendar },
       { id: 'approval', label: 'Hub Capacity Allocation', path: '/facilities/approval', icon: CheckSquare },
-      { id: 'rooms', label: 'Facility Management', path: '/facilities/rooms', icon: Building2 },
+      { id: 'rooms', label: 'Facility Management', path: '/facilities/rooms', activePaths: ['/facilities/management'], icon: Building2 },
       { id: 'calendar', label: 'Facility Calendar', path: '/facilities/calendar', icon: Calendar },
       { id: 'assets', label: 'Merchandise & Supply Logistics', path: '/facilities/assets', icon: ClipboardList },
       { id: 'reports', label: 'Peak Hub Reports', path: '/facilities/reports', icon: BarChart3 },
@@ -140,6 +140,24 @@ const workspaceRoles: RolePresentation[] = workspaceConfigs.map((config) => ({
 export const roleRegistry = new Map<CanonicalRole, RolePresentation>(
   [...explicitRoles, ...workspaceRoles].map((entry) => [entry.role, entry]),
 );
+
+export function buildSuperAdminNavigation(registry: ReadonlyMap<CanonicalRole, RolePresentation>, base: PortalNavItem[]): PortalNavItem[] {
+  const paths = new Set(base.flatMap(item => [item.path, ...(item.children ?? []).map(child => child.path)]));
+  const groups: PortalNavItem[] = [];
+  for (const [role,presentation] of registry) {
+    if (role === 'SUPER_ADMIN') continue;
+    const children = presentation.navigation.flatMap(item => [item, ...(item.children ?? [])])
+      .map(item => role === 'SYSTEM_ADMIN' && item.path === '/admin/analytics' ? { ...item, path: '/system-admin/analytics' } : item)
+      .filter(item => !paths.has(item.path)).map(item => {
+        paths.add(item.path);
+        return {...item,id:`role-${role}-${item.id}`,group:undefined,children:undefined,badge:undefined};
+      });
+    groups.push({id:`role-${role}`,label:presentation.roleLabel,path:presentation.dashboardPath,icon:LayoutDashboard,exact:true,group:'All Role Modules',disclosureOnly:true,children});
+  }
+  return [...base,...groups,{id:'team8-reservation-portal',label:'Team 8 Reservation Portal',path:'/reservation-portal',icon:CalendarClock,exact:true,group:'Facility Booking & Guest Passes'}];
+}
+const superAdminPresentation = roleRegistry.get('SUPER_ADMIN')!;
+superAdminPresentation.navigation = buildSuperAdminNavigation(roleRegistry,superAdminPresentation.navigation);
 
 export const normalizeRole = (role: string) => role.trim().toUpperCase().replace(/^ROLE_/, '') as CanonicalRole;
 export const getRolePresentation = (role: string) => roleRegistry.get(normalizeRole(role));

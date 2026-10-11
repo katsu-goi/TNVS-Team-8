@@ -1436,7 +1436,7 @@ const LegacyReportsPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      setData(await fetchAnalytics({ preset: 'last_30_days' }));
+      setData(await fetchAnalytics({ preset: 'last_30_days', viewRole: 'FACILITIES_MANAGER' }));
     } catch (e: any) { setError(e?.response?.data?.message || e?.message || 'Failed to load facility report.'); }
     finally { setLoading(false); }
   }, [retry]);
@@ -1457,7 +1457,7 @@ const LegacyReportsPage: React.FC = () => {
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setRetry(r => r + 1)} aria-label="Refresh report" className="p-2 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"><RefreshCw className="w-4 h-4 text-slate-400" /></button>
-          <button disabled={exporting} onClick={async () => { setExporting(true); setError(null); try { await exportAnalyticsCsv({ preset: 'last_30_days' }); } catch (e: any) { setError(e?.response?.data?.message || e?.message || 'CSV export failed.'); } finally { setExporting(false); } }} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{exporting ? 'Exporting…' : 'Export CSV'}</button>
+          <button disabled={exporting} onClick={async () => { setExporting(true); setError(null); try { await exportAnalyticsCsv({ preset: 'last_30_days', viewRole: 'FACILITIES_MANAGER' }); } catch (e: any) { setError(e?.response?.data?.message || e?.message || 'CSV export failed.'); } finally { setExporting(false); } }} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{exporting ? 'Exporting…' : 'Export CSV'}</button>
         </div>
       </div>
 

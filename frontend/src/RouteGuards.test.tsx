@@ -12,6 +12,12 @@ describe('route guards', () => {
 
   afterEach(() => cleanup());
 
+  it('allows a directly assigned Super Admin into facilities without assigning business roles', () => {
+    useAuthStore.setState({accessToken:'verified',refreshToken:'refresh',user:{id:'admin',email:'admin@test.invalid',assignedRoles:['SUPER_ADMIN'],roles:['SUPER_ADMIN']}});
+    render(<MemoryRouter><FacilitiesRoute><div>Admin facility workspace</div></FacilitiesRoute></MemoryRouter>);
+    expect(screen.getByText('Admin facility workspace')).toBeInTheDocument();
+  });
+
   it('redirects an unauthenticated protected route to login', () => {
     render(
       <MemoryRouter initialEntries={['/protected']}>

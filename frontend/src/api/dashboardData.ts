@@ -4,7 +4,7 @@ import { securityService } from './securityService';
 
 export async function loadDashboardAnalytics(superAdministrator: boolean) {
   const [analytics, security] = await Promise.all([
-    fetchAnalytics({ preset: 'today' }),
+    fetchAnalytics(superAdministrator ? { preset: 'today' } : { preset: 'today', viewRole: 'SYSTEM_ADMIN' }),
     superAdministrator ? securityService.getMetrics() : Promise.resolve(null),
   ]);
   if (superAdministrator) {

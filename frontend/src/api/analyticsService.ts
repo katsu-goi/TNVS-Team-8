@@ -2,6 +2,7 @@ import { apiClient } from './client';
 import type { AnalyticsData } from '../types';
 
 export type AnalyticsQuery = {
+  viewRole?: 'SYSTEM_ADMIN' | 'FACILITIES_MANAGER';
   preset?: 'today' | 'last_7_days' | 'last_30_days' | 'this_month' | 'previous_month' | 'custom';
   from?: string;
   to?: string;

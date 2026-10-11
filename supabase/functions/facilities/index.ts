@@ -1,3 +1,4 @@
+import { workflowActorRole } from "../_shared/workflow-actor.ts";
 import { createHandler, AuthContext, RouteParams } from "../_shared/guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
 import { ok, fail } from "../_shared/envelope.ts";
@@ -351,7 +352,7 @@ async function handleApproveReservation(ctx: AuthContext | null, _req: Request, 
     p_notes: String(b.comments ?? "Final availability and operational review confirmed."),
     p_actor_id: ctx!.userId,
     p_actor_email: ctx!.email,
-    p_actor_role: "FACILITIES_MANAGER",
+    p_actor_role: workflowActorRole(ctx!, "FACILITIES_MANAGER"),
   });
   if (error) throw new Error(`manager approval transaction failed: ${error.message}`);
   return workflowResponse(data as WorkflowRpcResult, "Reservation approved after final conflict re-check");
@@ -365,7 +366,7 @@ async function handleRejectReservation(ctx: AuthContext | null, _req: Request, b
     p_notes: String(b.reason ?? ""),
     p_actor_id: ctx!.userId,
     p_actor_email: ctx!.email,
-    p_actor_role: "FACILITIES_MANAGER",
+    p_actor_role: workflowActorRole(ctx!, "FACILITIES_MANAGER"),
   });
   if (error) throw new Error(`manager rejection transaction failed: ${error.message}`);
   return workflowResponse(data as WorkflowRpcResult, "Reservation rejected with reason recorded");
@@ -1209,7 +1210,7 @@ async function handleOfficerCreateReservation(ctx: AuthContext | null, _req: Req
     p_end: toUtcIso(String(req.endTime ?? "")),
     p_attendees: Number.isNaN(attendees) ? 0 : attendees,
     p_actor_email: ctx!.email,
-    p_actor_role: "FACILITIES_OFFICER",
+    p_actor_role: workflowActorRole(ctx!, "FACILITIES_OFFICER"),
   });
   if (error) throw new Error(`reservation submission transaction failed: ${error.message}`);
   return workflowResponse(data as WorkflowRpcResult, "Reservation submitted for operational review");
@@ -1222,7 +1223,7 @@ async function handleOfficerCancelReservation(ctx: AuthContext | null, _req: Req
     p_reason: String(b.reason ?? "Cancelled by Facilities Officer."),
     p_actor_id: ctx!.userId,
     p_actor_email: ctx!.email,
-    p_actor_role: "FACILITIES_OFFICER",
+    p_actor_role: workflowActorRole(ctx!, "FACILITIES_OFFICER"),
   });
   if (error) throw new Error(`reservation cancellation transaction failed: ${error.message}`);
   return workflowResponse(data as WorkflowRpcResult, "Reservation cancelled and slot released");
@@ -1235,7 +1236,7 @@ async function handleOfficerReviewReservation(ctx: AuthContext | null, _req: Req
     p_notes: String(b.notes ?? ""),
     p_actor_id: ctx!.userId,
     p_actor_email: ctx!.email,
-    p_actor_role: "FACILITIES_OFFICER",
+    p_actor_role: workflowActorRole(ctx!, "FACILITIES_OFFICER"),
   });
   if (error) throw new Error(`operational review transaction failed: ${error.message}`);
   return workflowResponse(data as WorkflowRpcResult, "Operational review completed and forwarded to Facilities Manager");
@@ -1252,7 +1253,7 @@ async function handleOfficerRescheduleReservation(ctx: AuthContext | null, _req:
     p_reason: String(b.reason ?? ""),
     p_actor_id: ctx!.userId,
     p_actor_email: ctx!.email,
-    p_actor_role: "FACILITIES_OFFICER",
+    p_actor_role: workflowActorRole(ctx!, "FACILITIES_OFFICER"),
   });
   if (error) throw new Error(`reservation reschedule transaction failed: ${error.message}`);
   return workflowResponse(data as WorkflowRpcResult, "Reservation rescheduled; review and approval reset");
@@ -1263,7 +1264,7 @@ async function handleConfirmReservation(ctx: AuthContext | null, _req: Request, 
     p_reservation_id: p.id,
     p_actor_id: ctx!.userId,
     p_actor_email: ctx!.email,
-    p_actor_role: "FACILITIES_OFFICER",
+    p_actor_role: workflowActorRole(ctx!, "FACILITIES_OFFICER"),
   });
   if (error) throw new Error(`reservation confirmation transaction failed: ${error.message}`);
   return workflowResponse(data as WorkflowRpcResult, "Reservation confirmed for facility use");
@@ -1275,7 +1276,7 @@ async function handleCompleteReservation(ctx: AuthContext | null, _req: Request,
     p_reservation_id: p.id,
     p_actor_id: ctx!.userId,
     p_actor_email: ctx!.email,
-    p_actor_role: actorRole,
+    p_actor_role: workflowActorRole(ctx!, actorRole),
   });
   if (error) throw new Error(`reservation completion transaction failed: ${error.message}`);
   return workflowResponse(data as WorkflowRpcResult, "Reservation completed");
@@ -1440,7 +1441,7 @@ async function handleCreateReservationFacility(ctx: AuthContext | null, _req: Re
     p_end: toUtcIso(String(b.endTime ?? "")),
     p_attendees: Number.isNaN(attendees) ? 0 : attendees,
     p_actor_email: ctx!.email,
-    p_actor_role: actorRole,
+    p_actor_role: workflowActorRole(ctx!, actorRole),
   });
   if (error) throw new Error(`reservation submission transaction failed: ${error.message}`);
   return workflowResponse(data as WorkflowRpcResult, "Reservation submitted for operational review");

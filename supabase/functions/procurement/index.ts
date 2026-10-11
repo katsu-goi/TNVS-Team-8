@@ -1,3 +1,4 @@
+import { isDirectSuperAdmin } from "../_shared/guard.ts";
 import { createHandler, AuthContext, RouteParams } from "../_shared/guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
 import { ok, fail } from "../_shared/envelope.ts";
@@ -1291,7 +1292,7 @@ async function handleListDocuments(ctx: AuthContext | null, req: Request) {
   const userEmail = ctx ? ctx.email : "";
   const userRoles = ctx ? ctx.roles : [];
   const userDept = ctx ? str(ctx.user.row.department) : null;
-  const visible = rows.filter((d) => canViewDocument(userEmail, userRoles, userDept, d, grantsByDoc.get(String(d.id ?? "")) ?? []));
+  const visible = rows.filter((d) => isDirectSuperAdmin(ctx) || canViewDocument(userEmail, userRoles, userDept, d, grantsByDoc.get(String(d.id ?? "")) ?? []));
   const result = (visible as unknown as Row[]).map(toDocumentDto);
   return jsonResponse(ok(result, "Documents retrieved"), 200);
 }
