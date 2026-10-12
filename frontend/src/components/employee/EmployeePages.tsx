@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   AlertCircle, RefreshCw, Plus, X, Pencil, Ban, CheckCircle2,
@@ -10,6 +10,7 @@ import { DocumentUploadPanel } from '../documents/DocumentUploadPanel';
 import { useNotificationRealtimeStore } from '../../stores/notificationRealtimeStore';
 import { ConfirmDialog, Modal as SharedModal } from '../ui/SharedUI';
 import { DashboardHero } from '../ui/DashboardPrimitives';
+import { getRoomStatusGuidance } from '../layout/pageGuidance';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -51,32 +52,37 @@ const ActionButton: React.FC<{
   variant?: ActionVariant; disabled?: boolean;
 }> = ({ onClick, icon: Icon, children, variant = 'neutral', disabled }) => (
   <button onClick={onClick} disabled={disabled}
-    className={`inline-flex items-center space-x-1.5 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${actionClasses[variant]}`}>
+    className={`inline-flex items-center space-x-1.5 min-h-11 text-sm font-semibold px-3 py-2 rounded-lg border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${actionClasses[variant]}`}>
     {Icon && <Icon className="w-3.5 h-3.5" />}<span>{children}</span>
   </button>
 );
 
 const Toast: React.FC<{ message: string; kind: 'ok' | 'err'; onClose: () => void }> = ({ message, kind, onClose }) => (
-  <div className={`fixed bottom-6 right-6 z-50 flex items-center space-x-2 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${
+  <div role={kind === 'ok' ? 'status' : undefined} className={`fixed bottom-6 right-6 z-50 flex items-center space-x-2 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${
     kind === 'ok' ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'
   }`}>
     {kind === 'ok' ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
     <span>{message}</span>
-    <button onClick={onClose} className="ml-2 opacity-80 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>
+    <button aria-label="Dismiss message" onClick={onClose} className="ml-2 opacity-80 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>
   </div>
 );
 
 const useToast = () => {
   const [toast, setToast] = useState<{ message: string; kind: 'ok' | 'err' } | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const clear = useCallback(() => { window.clearTimeout(timer.current); setToast(null); }, []);
   const show = useCallback((message: string, kind: 'ok' | 'err' = 'ok') => {
+    window.clearTimeout(timer.current);
     setToast({ message, kind });
-    window.setTimeout(() => setToast(null), 3200);
+    if (kind === 'ok') timer.current = window.setTimeout(() => setToast(null), 6000);
   }, []);
   const node = toast ? <Toast message={toast.message} kind={toast.kind} onClose={() => setToast(null)} /> : null;
-  return { show, node };
+  const feedback = toast?.kind === 'err' ? <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{toast.message}</p> : null;
+  return { show, node, feedback, clear };
 };
 const inputCls = 'mt-1 w-full text-sm bg-white text-slate-900 placeholder-slate-400 border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-200';
-const labelCls = 'text-[11px] font-semibold text-slate-500 uppercase';
+const labelCls = 'text-xs font-semibold text-slate-500 uppercase';
 
 const reservationStatusBadge = (status?: string) => {
   switch ((status || '').toUpperCase()) {
@@ -151,7 +157,7 @@ export const EmpReservationsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
-  const { show, node } = useToast();
+  const { show, node, feedback, clear } = useToast();
 
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
@@ -159,6 +165,12 @@ export const EmpReservationsPage: React.FC = () => {
   const [room, setRoom] = useState<AvailableRoom | null>(null);
   const [rooms, setRooms] = useState<AvailableRoom[]>([]);
   const [roomsLoading, setRoomsLoading] = useState(false);
+  const roomSearchVersion = useRef(0);
+  useEffect(() => () => { roomSearchVersion.current += 1; }, []);
+  const resetRoomSearch = () => {
+    roomSearchVersion.current += 1;
+    setRoom(null); setRooms([]); setRoomsLoading(false); clear();
+  };
   const [saving, setSaving] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<any | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -172,6 +184,7 @@ export const EmpReservationsPage: React.FC = () => {
   useEffect(() => { load(); }, [load]);
 
   const openNew = () => {
+    resetRoomSearch();
     setEditing(null); setRoom(null); setRooms([]);
     setForm({ date: '', startTime: '10:00', endTime: '11:00', title: '', description: '', expectedAttendees: '' });
     setShowModal(true);
@@ -183,6 +196,7 @@ export const EmpReservationsPage: React.FC = () => {
   }, [searchParams]);
 
   const openEdit = (r: any) => {
+    resetRoomSearch();
     setEditing(r);
     const s = r.startTime ? new Date(r.startTime) : null;
     const e = r.endTime ? new Date(r.endTime) : null;
@@ -194,13 +208,20 @@ export const EmpReservationsPage: React.FC = () => {
   };
 
   const searchRooms = async () => {
-    if (!form.date || !form.startTime || !form.endTime) { show('Pick a date and time first.', 'err'); return; }
+    if (!form.date) { show('Choose a date before searching for rooms.', 'err'); return; }
+    if (!form.startTime || !form.endTime || form.endTime <= form.startTime) { show('Choose an end time later than the start time.', 'err'); return; }
+    const version = ++roomSearchVersion.current;
+    setRoom(null); setRooms([]); clear();
     setRoomsLoading(true);
     try {
       const data = await employeeService.getAvailableRooms({ date: form.date, startTime: form.startTime, endTime: form.endTime, availability: 'AVAILABLE' });
-      setRooms((data.rooms ?? []).map((r: any) => ({ ...r })));
-    } catch (e: any) { show(e?.response?.data?.message || 'Failed to search rooms', 'err'); }
-    finally { setRoomsLoading(false); }
+      if (version !== roomSearchVersion.current) return;
+      const available = (data.rooms ?? []).map((r: any) => ({ ...r }));
+      setRooms(available);
+      if (!available.length) show('No rooms are available for this time. Try another date or time.', 'err');
+      else clear();
+    } catch (e: any) { if (version === roomSearchVersion.current) show(e?.response?.data?.message || 'Failed to search rooms', 'err'); }
+    finally { if (version === roomSearchVersion.current) setRoomsLoading(false); }
   };
 
   const submitCreate = async () => {
@@ -213,7 +234,7 @@ export const EmpReservationsPage: React.FC = () => {
         startTime: `${form.date}T${form.startTime}:00`, endTime: `${form.date}T${form.endTime}:00`,
         expectedAttendees: form.expectedAttendees ? Number(form.expectedAttendees) : undefined,
       });
-      show('Reservation request submitted.'); setShowModal(false); setRetry(r => r + 1);
+      show('Room request submitted. The Facilities Officer will review it before manager approval and confirmation.'); setShowModal(false); setRetry(r => r + 1);
     } catch (e: any) { show(e?.response?.data?.message || 'Failed to create reservation', 'err'); }
     finally { setSaving(false); }
   };
@@ -243,7 +264,7 @@ export const EmpReservationsPage: React.FC = () => {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Facilities Reservation" subtitle="Book rooms and track approval status"
+      <PageHeader title="Facilities Reservation" subtitle="Request a room, then track officer review, manager approval and confirmation"
         action={<ActionButton onClick={openNew} icon={Plus} variant="primary">New Reservation</ActionButton>} />
 
       {rows.length === 0 ? (
@@ -259,9 +280,10 @@ export const EmpReservationsPage: React.FC = () => {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-semibold text-slate-900">{r.title}</p>
-                      <Badge text={r.status} className={reservationStatusBadge(r.status)} />
+                      <Badge text={getRoomStatusGuidance(r.status).label} className={reservationStatusBadge(r.status)} />
                     </div>
                     <p className="text-xs text-slate-500 mt-0.5">{r.roomName || '—'} · {fmtDateTime(r.startTime)} – {fmtDateTime(r.endTime)}</p>
+                    <p className="mt-1 text-sm text-slate-600">{getRoomStatusGuidance(r.status).next}</p>
                     {r.rejectionReason && <p className="text-[11px] text-rose-500 mt-0.5">Rejected: {r.rejectionReason}</p>}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -276,14 +298,15 @@ export const EmpReservationsPage: React.FC = () => {
       )}
 
       {showModal && (
-        <Modal title={editing ? 'Edit Reservation' : 'New Reservation'} onClose={() => setShowModal(false)}>
+        <Modal title={editing ? 'Edit Reservation' : 'New Reservation'} onClose={() => { resetRoomSearch(); setShowModal(false); }}>
           <div className="space-y-4">
+            <p className="text-sm text-slate-600">{editing ? 'Update the meeting details, then save your changes.' : 'Choose a date and time, find a room, then enter your meeting details. Submitting requests a room; confirmation follows review and approval.'}</p>
             {!editing && (
               <>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  <div><label className={labelCls}>Date</label><input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} className={inputCls} /></div>
-                  <div><label className={labelCls}>Start</label><input type="time" value={form.startTime} onChange={e => setForm({ ...form, startTime: e.target.value })} className={inputCls} /></div>
-                  <div><label className={labelCls}>End</label><input type="time" value={form.endTime} onChange={e => setForm({ ...form, endTime: e.target.value })} className={inputCls} /></div>
+                  <div><label htmlFor="employee-field-1" className={labelCls}>Date</label><input id="employee-field-1" type="date" value={form.date} onChange={e => { setForm({ ...form, date: e.target.value }); resetRoomSearch(); }} className={inputCls} /></div>
+                  <div><label htmlFor="employee-field-2" className={labelCls}>Start time</label><input id="employee-field-2" type="time" value={form.startTime} onChange={e => { setForm({ ...form, startTime: e.target.value }); resetRoomSearch(); }} className={inputCls} /></div>
+                  <div><label htmlFor="employee-field-3" className={labelCls}>End time</label><input id="employee-field-3" type="time" value={form.endTime} onChange={e => { setForm({ ...form, endTime: e.target.value }); resetRoomSearch(); }} className={inputCls} /></div>
                 </div>
                 <button onClick={searchRooms} disabled={roomsLoading} className="w-full text-xs font-semibold px-3 py-2 rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 inline-flex items-center justify-center gap-2 disabled:opacity-50">
                   <Building2 className="w-4 h-4" />{roomsLoading ? 'Searching…' : 'Find Available Rooms'}
@@ -307,11 +330,12 @@ export const EmpReservationsPage: React.FC = () => {
                 )}
               </>
             )}
-            <div><label className={labelCls}>Title</label><input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} className={inputCls} placeholder="Meeting title" /></div>
-            <div><label className={labelCls}>Description</label><textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} className={inputCls} rows={2} /></div>
-            <div><label className={labelCls}>Expected Attendees</label><input type="number" min={0} value={form.expectedAttendees} onChange={e => setForm({ ...form, expectedAttendees: e.target.value })} className={inputCls} /></div>
+            <div><label htmlFor="employee-field-4" className={labelCls}>Meeting title (required)</label><input id="employee-field-4" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} className={inputCls} placeholder="Meeting title" /></div>
+            <div><label htmlFor="employee-field-5" className={labelCls}>Description (optional)</label><textarea id="employee-field-5" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} className={inputCls} rows={2} /></div>
+            <div><label htmlFor="employee-field-6" className={labelCls}>Expected attendees (optional)</label><input id="employee-field-6" type="number" min={0} value={form.expectedAttendees} onChange={e => setForm({ ...form, expectedAttendees: e.target.value })} className={inputCls} /></div>
+            {feedback}
             <div className="flex justify-end gap-2 pt-2">
-              <ActionButton onClick={() => setShowModal(false)}>Cancel</ActionButton>
+              <ActionButton onClick={() => { resetRoomSearch(); setShowModal(false); }}>Cancel</ActionButton>
               <ActionButton onClick={editing ? submitEdit : submitCreate} icon={CheckCircle2} variant="primary" disabled={saving}>{saving ? 'Saving…' : (editing ? 'Save Changes' : 'Submit Request')}</ActionButton>
             </div>
           </div>
@@ -341,7 +365,7 @@ export const EmpVisitorsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
-  const { show, node } = useToast();
+  const { show, node, feedback, clear } = useToast();
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
   const [saving, setSaving] = useState(false);
@@ -355,7 +379,7 @@ export const EmpVisitorsPage: React.FC = () => {
   }, [retry]);
   useEffect(() => { load(); }, [load]);
 
-  const openNew = () => {
+  const openNew = () => { clear();
     setEditing(null);
     setForm({ fullName: '', email: '', phoneNumber: '', company: '', purposeOfVisit: '', expectedArrival: '' });
     setShowModal(true);
@@ -425,14 +449,16 @@ export const EmpVisitorsPage: React.FC = () => {
       {showModal && (
         <Modal title={editing ? 'Edit Visitor' : 'Register Visitor'} onClose={() => setShowModal(false)}>
           <div className="space-y-4">
-            <div><label className={labelCls}>Full Name</label><input value={form.fullName} onChange={e => setForm({ ...form, fullName: e.target.value })} className={inputCls} /></div>
+            <p className="text-sm text-slate-600">Register the visitor details first. Screening and any required review happen before check-in. Phone and company are optional.</p>
+            <div><label htmlFor="employee-field-7" className={labelCls}>Full Name</label><input id="employee-field-7" value={form.fullName} onChange={e => setForm({ ...form, fullName: e.target.value })} className={inputCls} /></div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div><label className={labelCls}>Email</label><input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className={inputCls} /></div>
-              <div><label className={labelCls}>Phone</label><input value={form.phoneNumber} onChange={e => setForm({ ...form, phoneNumber: e.target.value })} className={inputCls} /></div>
+              <div><label htmlFor="employee-field-8" className={labelCls}>Email</label><input id="employee-field-8" type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className={inputCls} /></div>
+              <div><label htmlFor="employee-field-9" className={labelCls}>Phone</label><input id="employee-field-9" value={form.phoneNumber} onChange={e => setForm({ ...form, phoneNumber: e.target.value })} className={inputCls} /></div>
             </div>
-            <div><label className={labelCls}>Company</label><input value={form.company} onChange={e => setForm({ ...form, company: e.target.value })} className={inputCls} /></div>
-            <div><label className={labelCls}>Purpose of Visit</label><input value={form.purposeOfVisit} onChange={e => setForm({ ...form, purposeOfVisit: e.target.value })} className={inputCls} /></div>
-            <div><label className={labelCls}>Expected Arrival</label><input type="datetime-local" value={form.expectedArrival} onChange={e => setForm({ ...form, expectedArrival: e.target.value })} className={inputCls} /></div>
+            <div><label htmlFor="employee-field-10" className={labelCls}>Company</label><input id="employee-field-10" value={form.company} onChange={e => setForm({ ...form, company: e.target.value })} className={inputCls} /></div>
+            <div><label htmlFor="employee-field-11" className={labelCls}>Purpose of Visit</label><input id="employee-field-11" value={form.purposeOfVisit} onChange={e => setForm({ ...form, purposeOfVisit: e.target.value })} className={inputCls} /></div>
+            <div><label htmlFor="employee-field-12" className={labelCls}>Expected Arrival</label><input id="employee-field-12" type="datetime-local" value={form.expectedArrival} onChange={e => setForm({ ...form, expectedArrival: e.target.value })} className={inputCls} /></div>
+            {feedback}
             <div className="flex justify-end gap-2 pt-2">
               <ActionButton onClick={() => setShowModal(false)}>Cancel</ActionButton>
               <ActionButton onClick={submit} icon={CheckCircle2} variant="primary" disabled={saving}>{saving ? 'Saving…' : (editing ? 'Save Changes' : 'Register')}</ActionButton>
@@ -523,13 +549,13 @@ export const EmpDocumentsPage: React.FC = () => {
       {showModal && (
         <Modal title="Upload Document" onClose={() => setShowModal(false)}>
           <div className="space-y-4">
-            <div><label className={labelCls}>Title</label><input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} className={inputCls} /></div>
-            <div><label className={labelCls}>File Name</label><input value={form.fileName} onChange={e => setForm({ ...form, fileName: e.target.value })} className={inputCls} placeholder="e.g. report.pdf" /></div>
+            <div><label htmlFor="employee-field-13" className={labelCls}>Title</label><input id="employee-field-13" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} className={inputCls} /></div>
+            <div><label htmlFor="employee-field-14" className={labelCls}>File Name</label><input id="employee-field-14" value={form.fileName} onChange={e => setForm({ ...form, fileName: e.target.value })} className={inputCls} placeholder="e.g. report.pdf" /></div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div><label className={labelCls}>File Type</label><input value={form.fileType} onChange={e => setForm({ ...form, fileType: e.target.value })} className={inputCls} /></div>
+              <div><label htmlFor="employee-field-15" className={labelCls}>File Type</label><input id="employee-field-15" value={form.fileType} onChange={e => setForm({ ...form, fileType: e.target.value })} className={inputCls} /></div>
               <div>
-                <label className={labelCls}>Classification</label>
-                <select value={form.classificationLevel} onChange={e => setForm({ ...form, classificationLevel: e.target.value })} className={inputCls}>
+                <label htmlFor="employee-field-16" className={labelCls}>Classification</label>
+                <select id="employee-field-16" value={form.classificationLevel} onChange={e => setForm({ ...form, classificationLevel: e.target.value })} className={inputCls}>
                   {['PUBLIC', 'INTERNAL', 'CONFIDENTIAL', 'RESTRICTED'].map(c => <option key={c} value={c} className="bg-white text-slate-900">{c}</option>)}
                 </select>
               </div>
@@ -556,7 +582,7 @@ export const EmpRequestsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
-  const { show, node } = useToast();
+  const { show, node, feedback, clear } = useToast();
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<any | null>(null);
@@ -571,7 +597,7 @@ export const EmpRequestsPage: React.FC = () => {
   }, [retry]);
   useEffect(() => { load(); }, [load]);
 
-  const openNew = () => { setForm({ type: 'CONTRACT', title: '', description: '' }); setShowModal(true); };
+  const openNew = () => { clear(); setForm({ type: 'CONTRACT', title: '', description: '' }); setShowModal(true); };
   useEffect(() => {
     if (searchParams.get('new') === '1') { openNew(); searchParams.delete('new'); setSearchParams(searchParams, { replace: true }); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -629,15 +655,17 @@ export const EmpRequestsPage: React.FC = () => {
       {showModal && (
         <Modal title="Submit Request" onClose={() => setShowModal(false)}>
           <div className="space-y-4">
+            <p className="text-sm text-slate-600">Choose Contract or Legal, enter a clear title, and describe what you need. The relevant team reviews your submitted request.</p>
             <div>
-              <label className={labelCls}>Type</label>
-              <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} className={inputCls}>
+              <label htmlFor="employee-field-17" className={labelCls}>Request type</label>
+              <select id="employee-field-17" value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} className={inputCls}>
                 <option value="CONTRACT" className="bg-white text-slate-900">Contract</option>
                 <option value="LEGAL" className="bg-white text-slate-900">Legal</option>
               </select>
             </div>
-            <div><label className={labelCls}>Title</label><input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} className={inputCls} /></div>
-            <div><label className={labelCls}>Description</label><textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} className={inputCls} rows={3} /></div>
+            <div><label htmlFor="employee-field-18" className={labelCls}>Title (required)</label><input id="employee-field-18" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} className={inputCls} /></div>
+            <div><label htmlFor="employee-field-19" className={labelCls}>Description (optional)</label><textarea id="employee-field-19" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} className={inputCls} rows={3} /></div>
+            {feedback}
             <div className="flex justify-end gap-2 pt-2">
               <ActionButton onClick={() => setShowModal(false)}>Cancel</ActionButton>
               <ActionButton onClick={submit} icon={CheckCircle2} variant="primary" disabled={saving}>{saving ? 'Submitting…' : 'Submit'}</ActionButton>
@@ -792,11 +820,11 @@ export const EmpProfilePage: React.FC = () => {
           </div>
         </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div><label className={labelCls}>First Name</label><input value={form.firstName} onChange={e => setForm({ ...form, firstName: e.target.value })} className={inputCls} /></div>
-          <div><label className={labelCls}>Last Name</label><input value={form.lastName} onChange={e => setForm({ ...form, lastName: e.target.value })} className={inputCls} /></div>
-          <div><label className={labelCls}>Phone</label><input value={form.phoneNumber} onChange={e => setForm({ ...form, phoneNumber: e.target.value })} className={inputCls} /></div>
-          <div><label className={labelCls}>Department</label><input value={form.department} onChange={e => setForm({ ...form, department: e.target.value })} className={inputCls} /></div>
-          <div><label className={labelCls}>Position</label><input value={form.position} onChange={e => setForm({ ...form, position: e.target.value })} className={inputCls} /></div>
+          <div><label htmlFor="employee-field-20" className={labelCls}>First Name</label><input id="employee-field-20" value={form.firstName} onChange={e => setForm({ ...form, firstName: e.target.value })} className={inputCls} /></div>
+          <div><label htmlFor="employee-field-21" className={labelCls}>Last Name</label><input id="employee-field-21" value={form.lastName} onChange={e => setForm({ ...form, lastName: e.target.value })} className={inputCls} /></div>
+          <div><label htmlFor="employee-field-22" className={labelCls}>Phone</label><input id="employee-field-22" value={form.phoneNumber} onChange={e => setForm({ ...form, phoneNumber: e.target.value })} className={inputCls} /></div>
+          <div><label htmlFor="employee-field-23" className={labelCls}>Department</label><input id="employee-field-23" value={form.department} onChange={e => setForm({ ...form, department: e.target.value })} className={inputCls} /></div>
+          <div><label htmlFor="employee-field-24" className={labelCls}>Position</label><input id="employee-field-24" value={form.position} onChange={e => setForm({ ...form, position: e.target.value })} className={inputCls} /></div>
         </div>
         <div className="flex justify-end pt-2">
           <ActionButton onClick={save} icon={CheckCircle2} variant="primary" disabled={saving}>{saving ? 'Saving…' : 'Save Changes'}</ActionButton>
