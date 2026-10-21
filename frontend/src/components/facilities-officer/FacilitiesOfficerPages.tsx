@@ -77,7 +77,9 @@ const VisitorVerificationSection: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      setRows(await visitorService.listVisitors());
+      // Kiosk requests use the explicit manual-review + approval workflow
+      // below. They must never enter the legacy verify-and-immediate-check-in path.
+      setRows((await visitorService.listVisitors()).filter((row) => row.registrationSource !== 'KIOSK'));
     } catch (err: any) {
       setError(err?.message || 'Failed to load visitors');
     } finally {
@@ -457,6 +459,50 @@ const VisitorWatchlistSection: React.FC = () => {
   );
 };
 
+const KioskRequestReview: React.FC<{ visitors: any[]; onChanged: () => Promise<void> }> = ({ visitors, onChanged }) => {
+  const kioskVisitors = visitors.filter((visitor) => visitor.registrationSource === 'KIOSK');
+  const [selected, setSelected] = useState<any | null>(null);
+  const [artifacts, setArtifacts] = useState<Array<{ id: string; type: string; signedUrl: string }>>([]);
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const open = async (visitor: any) => {
+    setSelected(visitor); setArtifacts([]); setNotes(''); setError('');
+    try { setArtifacts(await visitorService.getIdentityArtifacts(visitor.id)); }
+    catch (loadError) { setError(extractErrorMessage(loadError)); }
+  };
+
+  const perform = async (action: 'IDENTITY_APPROVE' | 'IDENTITY_REJECT' | 'APPROVE' | 'DECLINE' | 'RETRY') => {
+    if (!selected) return;
+    if (action !== 'RETRY' && notes.trim().length < 5) { setError('Enter review notes or a decision reason of at least 5 characters.'); return; }
+    setBusy(true); setError('');
+    try {
+      if (action === 'IDENTITY_APPROVE' || action === 'IDENTITY_REJECT') {
+        await visitorService.manualIdentityReview(selected.id, action === 'IDENTITY_APPROVE' ? 'APPROVE' : 'REJECT', notes.trim());
+      } else if (action === 'APPROVE' || action === 'DECLINE') {
+        await visitorService.decideApproval(selected.id, action, notes.trim());
+      } else {
+        await visitorService.retryPassEmail(selected.id);
+      }
+      await onChanged();
+      const refreshed = (await visitorService.listVisitors()).find((visitor) => visitor.id === selected.id);
+      if (refreshed) setSelected(refreshed);
+      setNotes('');
+    } catch (actionError) { setError(extractErrorMessage(actionError)); }
+    finally { setBusy(false); }
+  };
+
+  return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-black text-slate-900">Self-service kiosk approval queue</h3><p className="mt-1 text-xs text-slate-500">Identity review, visit approval, pass issuance, and provider-confirmed email status remain separate.</p></div><span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">{kioskVisitors.filter((visitor) => visitor.approvalStatus === 'PENDING').length} pending</span></div>
+    {kioskVisitors.length === 0 ? <p className="mt-5 rounded-xl bg-slate-50 p-5 text-center text-xs text-slate-500">No kiosk requests have been submitted.</p> : <div className="mt-4 overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b border-slate-100 text-left"><th className="p-2 text-[10px] uppercase text-slate-500">Reference / visitor</th><th className="p-2 text-[10px] uppercase text-slate-500">Purpose / destination</th><th className="p-2 text-[10px] uppercase text-slate-500">Identity</th><th className="p-2 text-[10px] uppercase text-slate-500">Approval</th><th className="p-2 text-[10px] uppercase text-slate-500">QR / email</th><th className="p-2 text-[10px] uppercase text-slate-500">Action</th></tr></thead><tbody>{kioskVisitors.map((visitor) => <tr key={visitor.id} className="border-b border-slate-50 align-top"><td className="p-2"><p className="font-mono text-[11px] font-bold text-red-700">{visitor.referenceNumber}</p><p className="mt-1 font-semibold">{visitor.fullName}</p><p className="text-xs text-slate-500">{visitor.email}</p></td><td className="p-2 text-xs text-slate-600"><p>{visitor.purposeOfVisit}</p><p className="mt-1 font-semibold">{visitor.host?.fullName || visitor.receivingDepartment}</p></td><td className="p-2"><span className="rounded-full bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700">{String(visitor.identityVerificationStatus || 'PENDING').replace(/_/g, ' ')}</span></td><td className="p-2"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${visitor.approvalStatus === 'APPROVED' ? 'bg-emerald-50 text-emerald-700' : visitor.approvalStatus === 'DECLINED' ? 'bg-rose-50 text-rose-700' : 'bg-blue-50 text-blue-700'}`}>{visitor.approvalStatus}</span></td><td className="p-2 text-xs"><p>{visitor.accessStatus}</p><p className="mt-1 text-slate-500">Email: {visitor.emailDeliveryStatus}</p></td><td className="p-2"><button type="button" onClick={() => void open(visitor)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"><Eye className="h-3.5 w-3.5" />Review</button></td></tr>)}</tbody></table></div>}
+
+    {selected && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"><div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between gap-4"><div><p className="font-mono text-xs font-bold text-red-700">{selected.referenceNumber}</p><h3 className="mt-1 text-xl font-black">{selected.fullName}</h3><p className="text-sm text-slate-500">{selected.purposeOfVisit} · {selected.host?.fullName || selected.receivingDepartment}</p></div><button onClick={() => setSelected(null)} aria-label="Close review" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><XCircle className="h-5 w-5" /></button></div>
+      <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_330px]"><div><p className="mb-2 text-xs font-bold uppercase text-slate-500">Private ID artifact</p>{artifacts.length ? <img src={artifacts[0].signedUrl} alt={`ID submitted by ${selected.fullName}`} className="max-h-[440px] w-full rounded-xl border border-slate-200 bg-slate-950 object-contain" /> : <div className="flex min-h-56 items-center justify-center rounded-xl bg-slate-100 text-sm text-slate-500">No accessible identity artifact</div>}<p className="mt-2 text-[11px] text-slate-500">This signed link expires after five minutes. Do not download or redistribute unless policy expressly requires it.</p></div><div className="space-y-3"><div className="rounded-xl bg-slate-50 p-4 text-xs leading-5"><p><strong>ID type:</strong> {selected.idType}</p><p><strong>Retained ID:</strong> {selected.idNumberLast4 ? `last four ••••${selected.idNumberLast4}` : 'none'}</p><p><strong>Identity:</strong> {selected.identityVerificationStatus}</p><p><strong>Approval:</strong> {selected.approvalStatus}</p><p><strong>Access:</strong> {selected.accessStatus}</p><p><strong>Email:</strong> {selected.emailDeliveryStatus}</p>{selected.emailDeliveryError && <p className="mt-2 text-rose-700"><strong>Delivery detail:</strong> {selected.emailDeliveryError}</p>}</div><label><span className="mb-1 block text-xs font-bold uppercase text-slate-500">Review notes / reason</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={4} maxLength={1000} className="w-full rounded-xl border border-slate-300 p-3 text-sm outline-none focus:border-red-700" /></label>{error && <p className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}<div className="grid gap-2">{!['MANUAL_REVIEW_APPROVED', 'VERIFIED', 'FAILED'].includes(selected.identityVerificationStatus) && <><button disabled={busy || artifacts.length === 0} onClick={() => void perform('IDENTITY_APPROVE')} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-bold text-white disabled:opacity-40">Approve manual identity review</button><button disabled={busy || artifacts.length === 0} onClick={() => void perform('IDENTITY_REJECT')} className="rounded-xl border border-rose-300 px-4 py-2.5 text-xs font-bold text-rose-700 disabled:opacity-40">Reject identity review</button></>}{selected.approvalStatus === 'PENDING' && <><button disabled={busy || !['MANUAL_REVIEW_APPROVED', 'VERIFIED'].includes(selected.identityVerificationStatus)} onClick={() => void perform('APPROVE')} className="rounded-xl bg-red-700 px-4 py-2.5 text-xs font-bold text-white disabled:opacity-40">Approve visit and issue pass</button><button disabled={busy} onClick={() => void perform('DECLINE')} className="rounded-xl border border-slate-300 px-4 py-2.5 text-xs font-bold text-slate-700 disabled:opacity-40">Decline visit</button></>}{selected.approvalStatus === 'APPROVED' && ['FAILED', 'NOT_CONFIGURED'].includes(selected.emailDeliveryStatus) && <button disabled={busy} onClick={() => void perform('RETRY')} className="rounded-xl bg-blue-700 px-4 py-2.5 text-xs font-bold text-white disabled:opacity-40">Replace pass and retry email</button>}{busy && <p className="flex items-center justify-center gap-2 text-xs text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Saving authorized action…</p>}</div></div></div>
+    </div></div>}
+  </section>;
+};
+
 export const FoVisitorManagementPage: React.FC = () => {
   const [visitors, setVisitors] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -509,6 +555,8 @@ export const FoVisitorManagementPage: React.FC = () => {
         <Eye className="w-4 h-4 text-amber-500" />
         <span>Server-validated clearance, entry, departure, and visitor audit workflow</span>
       </div>
+
+      <KioskRequestReview visitors={visitors} onChanged={load} />
 
       {visitors.length === 0 ? (
         <EmptyState icon={Eye} title="No Visitors" desc="No facility-linked visitors found." />
@@ -748,22 +796,27 @@ type QrCheckInResult = {
   startTime: string;
   status: string;
   facilityName: string;
+  credentialType?: 'RESERVATION' | 'VISITOR';
 };
 
 type QrScanRecord = QrCheckInResult & { scannedAt: string };
 
-function qrTokenFromValue(rawValue: string): string {
+function qrCredentialFromValue(rawValue: string): { token: string; kind: 'RESERVATION' | 'VISITOR' } {
   const value = rawValue.trim();
-  if (!value) return '';
+  if (!value) return { token: '', kind: 'RESERVATION' };
   try {
     const url = new URL(value);
     const queryToken = url.searchParams.get('token')?.trim();
-    if (queryToken) return queryToken;
+    if (queryToken) return { token: queryToken, kind: queryToken.startsWith('vst_') ? 'VISITOR' : 'RESERVATION' };
     const segments = url.pathname.split('/').filter(Boolean);
+    const visitorPassIndex = segments.findIndex((segment) => segment.toLowerCase() === 'visitor-pass');
+    if (visitorPassIndex >= 0) return { token: decodeURIComponent(segments[visitorPassIndex + 1] ?? '').trim(), kind: 'VISITOR' };
     const guestPassIndex = segments.findIndex((segment) => segment.toLowerCase() === 'guest-pass');
-    return guestPassIndex >= 0 ? decodeURIComponent(segments[guestPassIndex + 1] ?? '').trim() : value;
+    return guestPassIndex >= 0
+      ? { token: decodeURIComponent(segments[guestPassIndex + 1] ?? '').trim(), kind: 'RESERVATION' }
+      : { token: value, kind: value.startsWith('vst_') ? 'VISITOR' : 'RESERVATION' };
   } catch {
-    return value;
+    return { token: value, kind: value.startsWith('vst_') ? 'VISITOR' : 'RESERVATION' };
   }
 }
 
@@ -838,9 +891,9 @@ export const QrCheckInPage: React.FC = () => {
   }, []);
 
   const checkIn = useCallback(async (rawValue: string, source: 'camera' | 'manual' = 'manual') => {
-    const token = qrTokenFromValue(rawValue);
+    const { token, kind } = qrCredentialFromValue(rawValue);
     if (!token) {
-      setError('No guest-pass token was found in that QR code or entry. Scan a valid Hirna guest pass or paste its token.');
+      setError('No guest-pass token was found, and no visitor-pass token was found. Scan a valid Hirna visitor or reservation pass, or paste its token.');
       return;
     }
     if (scanLockRef.current) return;
@@ -857,9 +910,26 @@ export const QrCheckInPage: React.FC = () => {
     setProcessing(true);
     setError('');
     try {
-      const scanResult = (scanMode === 'CHECK_IN'
-        ? await reservationPortalService.checkInPass(token)
-        : await reservationPortalService.checkOutPass(token)) as QrCheckInResult;
+      let scanResult: QrCheckInResult;
+      if (kind === 'VISITOR') {
+        const visitor = await visitorService.scanVisitorPass(token, scanMode);
+        scanResult = {
+          inviteeEmail: visitor.email,
+          checkedIn: visitor.status === 'CHECKED_IN',
+          checkedInAt: visitor.actualArrival,
+          checkedOutAt: visitor.actualDeparture,
+          title: visitor.purposeOfVisit,
+          startTime: visitor.expectedArrival,
+          status: visitor.status,
+          facilityName: visitor.host?.fullName || visitor.receivingDepartment || 'Visitor reception',
+          credentialType: 'VISITOR',
+        };
+      } else {
+        const reservation = (scanMode === 'CHECK_IN'
+          ? await reservationPortalService.checkInPass(token)
+          : await reservationPortalService.checkOutPass(token)) as QrCheckInResult;
+        scanResult = { ...reservation, credentialType: 'RESERVATION' };
+      }
       setResult(scanResult);
       setHistory((current) => [{ ...scanResult, scannedAt: new Date().toISOString() }, ...current].slice(0, 8));
       setManualToken('');
@@ -977,7 +1047,7 @@ export const QrCheckInPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <DashboardHero title="QR Guest Check-in" subtitle="Scan a Team 8 digital pass to record guest arrival or departure." actions={
+      <DashboardHero title="QR Guest Check-in" subtitle="Scan an approved visitor pass or Team 8 reservation pass to record arrival or departure." actions={
         <div className="portal-header-badge flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-semibold"><ShieldCheck className="h-3.5 w-3.5" />Facilities Officer control</div>
       } />
 
@@ -1032,7 +1102,7 @@ export const QrCheckInPage: React.FC = () => {
           <section id="manual-token-entry" aria-labelledby="manual-token-heading" className={`mt-5 rounded-2xl border-2 p-4 ${cameraError ? 'border-amber-300 bg-amber-50/60' : 'border-red-200 bg-red-50/40'}`}>
             <div className="flex items-start gap-3"><div className="rounded-xl bg-white p-2 text-red-700 shadow-sm"><UserCheck className="h-5 w-5" /></div><div><h4 id="manual-token-heading" className="text-sm font-extrabold text-slate-900">Manual Token Entry</h4><p className="mt-1 text-xs leading-5 text-slate-600">Camera unavailable? Paste the guest pass URL or token to continue securely.</p></div></div>
             <form onSubmit={(event) => { event.preventDefault(); void checkIn(manualToken); }} className="mt-4 flex flex-col gap-3 sm:flex-row">
-              <label className="min-w-0 flex-1"><span className="sr-only">Guest pass URL or token</span><input ref={manualTokenRef} value={manualToken} onChange={(event) => setManualToken(event.target.value)} placeholder="Paste QR pass URL or token" autoComplete="off" spellCheck={false} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10" /></label>
+              <label className="min-w-0 flex-1"><span className="sr-only">Guest pass URL or token</span><input ref={manualTokenRef} value={manualToken} onChange={(event) => setManualToken(event.target.value)} placeholder="Paste visitor or reservation pass URL/token" autoComplete="off" spellCheck={false} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10" /></label>
               <button type="submit" disabled={processing || !manualToken.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-xs font-bold text-white shadow-sm hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50">{processing ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4" />}{scanMode === 'CHECK_IN' ? 'Check in pass' : 'Check out pass'}</button>
             </form>
           </section>

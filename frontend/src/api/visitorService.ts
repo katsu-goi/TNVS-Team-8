@@ -6,6 +6,49 @@ import type {
   WatchlistEntryStatus,
 } from '../types/visitors';
 
+export type KioskHost = { id: string; name: string; department: string; position?: string | null };
+export type KioskPurpose = { value: string; label: string; department?: string | null };
+export type KioskConfig = {
+  privacy: {
+    controllerName: string;
+    controllerContact: string;
+    dpoContact: string;
+    lawfulBasis: string;
+    retentionPolicy: string;
+    rightsProcess: string;
+    processors: string;
+    safeguards: string;
+    alternativeVerification: string;
+    noticeVersion: string;
+    acceptedIdTypes: string[];
+    ready: boolean;
+    missing: string[];
+    ocr: { status: 'NOT_CONFIGURED'; message: string };
+    identityVerification: { status: 'NOT_CONFIGURED'; livenessSupported: false; message: string };
+  };
+  purposes: KioskPurpose[];
+  hosts: KioskHost[];
+  departments: string[];
+};
+
+export type KioskRegistration = {
+  idempotencyKey: string;
+  privacyNoticeVersion: string;
+  privacyAcknowledged: true;
+  fullName: string;
+  email: string;
+  phoneNumber?: string;
+  company?: string;
+  idType: string;
+  idNumberLast4?: string;
+  idImage: { dataUrl: string; confirmedReadable: true };
+  purposeCategory: string;
+  otherPurpose?: string;
+  hostId?: string;
+  receivingDepartment?: string;
+  expectedArrival: string;
+};
+
 /**
  * Visitor verification + watchlist API (Task 4).
  *
@@ -13,6 +56,57 @@ import type {
  * service modules in this directory.
  */
 export const visitorService = {
+  async getKioskConfig(): Promise<KioskConfig> {
+    const { data } = await apiClient.get('/visitor-kiosk/config');
+    return data?.data;
+  },
+
+  async submitKioskRegistration(payload: KioskRegistration): Promise<{
+    id: string;
+    referenceNumber: string;
+    approvalStatus: string;
+    identityVerificationStatus: string;
+    duplicate?: boolean;
+  }> {
+    const { data } = await apiClient.post('/visitor-kiosk/register', payload);
+    return data?.data;
+  },
+
+  async inspectVisitorPass(token: string): Promise<any> {
+    const { data } = await apiClient.post('/visitor-pass/inspect', { token });
+    return data?.data;
+  },
+
+  async scanVisitorPass(token: string, mode: 'CHECK_IN' | 'CHECK_OUT'): Promise<any> {
+    const path = mode === 'CHECK_IN' ? '/visitor-passes/check-in' : '/visitor-passes/check-out';
+    const { data } = await apiClient.post(path, { token });
+    return data?.data;
+  },
+
+  async getIdentityArtifacts(id: string): Promise<Array<{
+    id: string;
+    type: string;
+    signedUrl: string;
+    expiresInSeconds: number;
+  }>> {
+    const { data } = await apiClient.get(`/visitors/${id}/identity-artifacts`);
+    return data?.data ?? [];
+  },
+
+  async manualIdentityReview(id: string, decision: 'APPROVE' | 'REJECT', notes: string): Promise<VisitorVerification> {
+    const { data } = await apiClient.post(`/visitors/${id}/manual-identity-review`, { decision, notes });
+    return data?.data;
+  },
+
+  async decideApproval(id: string, decision: 'APPROVE' | 'DECLINE', reason?: string): Promise<any> {
+    const { data } = await apiClient.post(`/visitors/${id}/approval`, { decision, reason });
+    return data?.data;
+  },
+
+  async retryPassEmail(id: string): Promise<any> {
+    const { data } = await apiClient.post(`/visitors/${id}/email-retry`);
+    return data?.data;
+  },
   async listVisitors(): Promise<any[]> {
     const { data } = await apiClient.get('/visitors');
     return data?.data ?? [];

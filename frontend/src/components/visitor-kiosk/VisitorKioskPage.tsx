@@ -1,0 +1,234 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useParams } from 'react-router-dom';
+import {
+  AlertCircle, ArrowLeft, ArrowRight, Camera, Check, CheckCircle2,
+  IdCard, Loader2, LockKeyhole, Mail, RefreshCw, ShieldCheck, Upload, UserRound,
+} from 'lucide-react';
+import { extractErrorMessage } from '../../api/client';
+import { visitorService, type KioskConfig, type KioskRegistration } from '../../api/visitorService';
+
+type Step = 'welcome' | 'privacy' | 'id' | 'verification' | 'details' | 'review' | 'submitted';
+
+export type VisitorKioskFormState = {
+  fullName: string;
+  email: string;
+  phoneNumber: string;
+  company: string;
+  idType: string;
+  idNumberLast4: string;
+  idImage: string;
+  imageConfirmed: boolean;
+  purposeCategory: string;
+  otherPurpose: string;
+  hostId: string;
+  receivingDepartment: string;
+  expectedArrival: string;
+};
+
+const emptyForm: VisitorKioskFormState = {
+  fullName: '', email: '', phoneNumber: '', company: '', idType: '', idNumberLast4: '',
+  idImage: '', imageConfirmed: false, purposeCategory: '', otherPurpose: '', hostId: '',
+  receivingDepartment: '', expectedArrival: '',
+};
+
+const steps: Array<{ key: Step; label: string }> = [
+  { key: 'privacy', label: 'Privacy' },
+  { key: 'id', label: 'ID capture' },
+  { key: 'verification', label: 'Verification' },
+  { key: 'details', label: 'Visit details' },
+  { key: 'review', label: 'Review' },
+];
+
+const inputClass = 'w-full rounded-xl border border-slate-300 bg-white px-3.5 py-3 text-sm text-slate-900 outline-none transition focus:border-red-700 focus:ring-2 focus:ring-red-700/10';
+const labelClass = 'mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-600';
+
+function errorMessage(error: unknown): string {
+  return extractErrorMessage(error);
+}
+
+export function visitorDetailsAreValid(form: VisitorKioskFormState): boolean {
+  const otherValid = form.purposeCategory !== 'OTHER' || form.otherPurpose.trim().length >= 3;
+  const hostValid = form.purposeCategory !== 'MEETING_EMPLOYEE' || Boolean(form.hostId);
+  const destinationValid = Boolean(form.hostId || form.receivingDepartment);
+  const organizationValid = form.purposeCategory !== 'GOVERNMENT_REGULATORY' || form.company.trim().length >= 2;
+  return form.fullName.trim().length >= 2 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())
+    && Boolean(form.purposeCategory) && Boolean(form.expectedArrival) && otherValid && hostValid && destinationValid && organizationValid;
+}
+
+function cameraMessage(error: unknown): string {
+  const name = typeof error === 'object' && error && 'name' in error ? String((error as { name?: unknown }).name) : '';
+  if (name === 'NotAllowedError') return 'Camera permission was denied. Allow camera access in browser settings, or upload a clear photo instead.';
+  if (name === 'NotFoundError') return 'No camera was found. Connect a camera or upload a clear photo instead.';
+  if (!window.isSecureContext) return 'Camera capture requires HTTPS or localhost. Upload a clear photo instead.';
+  return 'The camera is unavailable. You can upload a clear photo instead.';
+}
+
+async function validateImage(file: File): Promise<string> {
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new Error('Use a JPEG, PNG, or WebP image.');
+  if (file.size <= 0 || file.size > 5 * 1024 * 1024) throw new Error('The image must be no larger than 5 MB.');
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error('The image could not be read.'));
+    reader.readAsDataURL(file);
+  });
+  await new Promise<void>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => image.naturalWidth >= 640 && image.naturalHeight >= 400
+      ? resolve()
+      : reject(new Error('The ID image is too small. Use an image at least 640 × 400 pixels.'));
+    image.onerror = () => reject(new Error('The selected file is not a readable image.'));
+    image.src = dataUrl;
+  });
+  return dataUrl;
+}
+
+const KioskShell: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,#fee2e2,transparent_34%),linear-gradient(145deg,#f8fafc,#fff)] text-slate-900">
+    <header className="border-b border-white/70 bg-white/85 px-4 py-3 shadow-sm backdrop-blur sm:px-8">
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
+        <div className="flex items-center gap-3"><img src="/hirna-logo.png" alt="Hirna TNVS" className="h-11 w-11 object-contain" /><div><p className="text-sm font-black tracking-tight">HIRNA TNVS</p><p className="text-xs text-slate-500">Visitor Registration Kiosk</p></div></div>
+        <div className="hidden items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 sm:flex"><LockKeyhole className="h-3.5 w-3.5" />Secure visitor workflow</div>
+      </div>
+    </header>
+    {children}
+  </main>
+);
+
+const NoticeRow: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs font-extrabold uppercase tracking-wide text-slate-700">{title}</p><div className="mt-1.5 text-sm leading-6 text-slate-600">{children}</div></div>
+);
+
+export const VisitorKioskPage: React.FC = () => {
+  const [step, setStep] = useState<Step>('welcome');
+  const [config, setConfig] = useState<KioskConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
+  const [form, setForm] = useState<VisitorKioskFormState>(emptyForm);
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<{ referenceNumber: string; approvalStatus: string } | null>(null);
+  const [cameraStarting, setCameraStarting] = useState(false);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const loadConfig = useCallback(async () => {
+    setLoading(true); setError('');
+    try { setConfig(await visitorService.getKioskConfig()); }
+    catch (loadError) { setError(errorMessage(loadError)); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { void loadConfig(); }, [loadConfig]);
+
+  const stopCamera = useCallback(() => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setCameraActive(false); setCameraStarting(false);
+  }, []);
+  useEffect(() => () => stopCamera(), [stopCamera]);
+  useEffect(() => { if (step !== 'id') stopCamera(); }, [step, stopCamera]);
+
+  const startCamera = async () => {
+    setCameraStarting(true); setCameraError('');
+    try {
+      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) throw new DOMException('Camera unavailable', 'NotSupportedError');
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1600 }, height: { ideal: 1000 } } });
+      streamRef.current = stream;
+      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
+      setCameraActive(true);
+    } catch (cameraFailure) { stopCamera(); setCameraError(cameraMessage(cameraFailure)); }
+    finally { setCameraStarting(false); }
+  };
+
+  const capture = () => {
+    const video = videoRef.current;
+    if (!video || video.videoWidth < 640 || video.videoHeight < 400) { setCameraError('Wait for the camera image to become clear, then try again.'); return; }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    canvas.getContext('2d')?.drawImage(video, 0, 0);
+    setForm((current) => ({ ...current, idImage: canvas.toDataURL('image/jpeg', 0.86), imageConfirmed: false }));
+    stopCamera();
+  };
+
+  const onFile = async (file?: File) => {
+    if (!file) return;
+    setCameraError('');
+    try {
+      const idImage = await validateImage(file);
+      setForm((current) => ({ ...current, idImage, imageConfirmed: false }));
+    }
+    catch (fileError) { setCameraError(fileError instanceof Error ? fileError.message : 'The image is invalid.'); }
+  };
+
+  const selectedHost = config?.hosts.find((host) => host.id === form.hostId);
+  const selectedPurpose = config?.purposes.find((purpose) => purpose.value === form.purposeCategory);
+  const detailsValid = useMemo(() => visitorDetailsAreValid(form), [form]);
+
+  const reset = () => {
+    stopCamera(); setStep('welcome'); setPrivacyAcknowledged(false); setForm(emptyForm); setResult(null); setError(''); setCameraError(''); setIdempotencyKey(crypto.randomUUID());
+  };
+
+  const submit = async () => {
+    if (!config || !detailsValid || !form.idImage || !form.imageConfirmed) return;
+    setSubmitting(true); setError('');
+    const payload: KioskRegistration = {
+      idempotencyKey,
+      privacyNoticeVersion: config.privacy.noticeVersion,
+      privacyAcknowledged: true,
+      fullName: form.fullName.trim(), email: form.email.trim(), phoneNumber: form.phoneNumber.trim() || undefined,
+      company: form.company.trim() || undefined, idType: form.idType, idNumberLast4: form.idNumberLast4.trim() || undefined,
+      idImage: { dataUrl: form.idImage, confirmedReadable: true }, purposeCategory: form.purposeCategory,
+      otherPurpose: form.otherPurpose.trim() || undefined, hostId: form.hostId || undefined,
+      receivingDepartment: selectedHost?.department || form.receivingDepartment || undefined,
+      expectedArrival: new Date(form.expectedArrival).toISOString(),
+    };
+    try {
+      const saved = await visitorService.submitKioskRegistration(payload);
+      setResult(saved); setForm((current) => ({ ...current, idImage: '', idNumberLast4: '' })); setStep('submitted');
+    } catch (submitError) { setError(errorMessage(submitError)); }
+    finally { setSubmitting(false); }
+  };
+
+  if (loading) return <KioskShell><div className="flex min-h-[75vh] items-center justify-center"><Loader2 className="h-9 w-9 animate-spin text-red-700" /><span className="ml-3 text-sm font-semibold text-slate-600">Preparing secure registration…</span></div></KioskShell>;
+
+  if (!config || error && step === 'welcome') return <KioskShell><div className="mx-auto flex min-h-[75vh] max-w-xl items-center p-6"><div className="w-full rounded-3xl border border-rose-200 bg-white p-8 text-center shadow-xl"><AlertCircle className="mx-auto h-10 w-10 text-rose-600" /><h1 className="mt-4 text-xl font-black">Kiosk unavailable</h1><p className="mt-2 text-sm text-slate-600">{error || 'The kiosk configuration could not be loaded.'}</p><button onClick={() => void loadConfig()} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white"><RefreshCw className="h-4 w-4" />Try again</button></div></div></KioskShell>;
+
+  const currentIndex = steps.findIndex((item) => item.key === step);
+  return (
+    <KioskShell>
+      {step !== 'welcome' && step !== 'submitted' && <div className="mx-auto max-w-5xl px-4 pt-6 sm:px-8"><ol className="grid grid-cols-5 gap-1" aria-label="Registration progress">{steps.map((item, index) => <li key={item.key} className="text-center"><div className={`mx-auto flex h-8 w-8 items-center justify-center rounded-full text-xs font-black ${index < currentIndex ? 'bg-emerald-600 text-white' : index === currentIndex ? 'bg-red-700 text-white' : 'bg-slate-200 text-slate-500'}`}>{index < currentIndex ? <Check className="h-4 w-4" /> : index + 1}</div><span className="mt-1 hidden text-[11px] font-semibold text-slate-500 sm:block">{item.label}</span></li>)}</ol></div>}
+      <div className="mx-auto flex min-h-[calc(100vh-76px)] max-w-5xl items-center px-4 py-8 sm:px-8">
+        {step === 'welcome' && <section className="w-full overflow-hidden rounded-[2rem] border border-white bg-white shadow-2xl"><div className="grid lg:grid-cols-[1.15fr_.85fr]"><div className="p-8 sm:p-12"><div className="inline-flex items-center gap-2 rounded-full bg-red-50 px-3 py-1.5 text-xs font-extrabold text-red-700"><ShieldCheck className="h-4 w-4" />Reception self-service</div><h1 className="mt-6 max-w-2xl text-4xl font-black leading-tight tracking-tight sm:text-5xl">Welcome to Hirna TNVS</h1><p className="mt-5 max-w-xl text-base leading-7 text-slate-600">Register your visit, provide an approved ID for authorized review, and submit your request. A QR pass is emailed only after identity clearance and visit approval.</p>{!config.privacy.ready && <div className="mt-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"><p className="font-extrabold">Registration is not yet enabled.</p><p className="mt-1">The organization must configure its privacy controller, DPO contact, lawful basis, retention policy, approved ID types, safeguards, processors, rights process, and alternative verification procedure.</p></div>}<button disabled={!config.privacy.ready} onClick={() => setStep('privacy')} className="mt-8 inline-flex min-h-14 items-center gap-3 rounded-2xl bg-red-700 px-7 py-4 text-base font-black text-white shadow-lg shadow-red-700/20 hover:bg-red-800 disabled:cursor-not-allowed disabled:bg-slate-300">Start Visitor Registration <ArrowRight className="h-5 w-5" /></button></div><div className="flex min-h-72 items-center justify-center bg-slate-950 p-10 text-white"><div className="max-w-sm"><IdCard className="h-16 w-16 text-red-400" /><p className="mt-6 text-xl font-black">Before you begin</p><ul className="mt-4 space-y-3 text-sm leading-6 text-slate-300"><li>• Have an accepted ID ready.</li><li>• Know your employee host or receiving department.</li><li>• Provide an email address for approval updates and the QR pass.</li></ul></div></div></div></section>}
+
+        {step === 'privacy' && <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-8"><div className="flex items-start gap-4"><div className="rounded-2xl bg-red-50 p-3 text-red-700"><LockKeyhole className="h-7 w-7" /></div><div><h1 className="text-2xl font-black">Privacy notice</h1><p className="mt-1 text-sm text-slate-500">Read this notice before any ID image or personal information is collected.</p></div></div><div className="mt-6 grid gap-3 md:grid-cols-2"><NoticeRow title="Personal information controller">{config.privacy.controllerName}<br />Contact: {config.privacy.controllerContact}</NoticeRow><NoticeRow title="DPO and privacy concerns">{config.privacy.dpoContact}</NoticeRow><NoticeRow title="Purposes and information collected">Visitor registration, authorization, facility security, identity review, communications, and audit logging. We collect contact and visit details, an approved ID image, and the minimum approved identifier details.</NoticeRow><NoticeRow title="Lawful basis">{config.privacy.lawfulBasis}</NoticeRow><NoticeRow title="Access and service providers">Authorized Facilities/Security personnel and the intended host or department, subject to role restrictions. Processors: {config.privacy.processors}</NoticeRow><NoticeRow title="Retention">{config.privacy.retentionPolicy}</NoticeRow><NoticeRow title="Your rights">{config.privacy.rightsProcess}</NoticeRow><NoticeRow title="Safeguards">{config.privacy.safeguards}</NoticeRow></div><p className="mt-5 text-xs leading-5 text-slate-500">This notice supports transparency but does not by itself establish legal compliance. Processing must follow the approved lawful basis and policy. See the <a className="font-bold text-red-700 underline" href="https://privacy.gov.ph/data-privacy-act-/" target="_blank" rel="noreferrer">Philippine Data Privacy Act of 2012</a> and its <a className="font-bold text-red-700 underline" href="https://privacy.gov.ph/implementing-rules%20regulations-data-privacy-act-2012/" target="_blank" rel="noreferrer">Implementing Rules and Regulations</a>.</p><label className="mt-6 flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 p-4"><input type="checkbox" checked={privacyAcknowledged} onChange={(event) => setPrivacyAcknowledged(event.target.checked)} className="mt-1 h-5 w-5 accent-red-700" /><span className="text-sm leading-6 text-slate-700">I acknowledge that I have read this notice and understand how my information will be used. This acknowledgement is not presented as blanket consent for every processing activity.</span></label><div className="mt-6 flex justify-between"><button onClick={() => setStep('welcome')} className="inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-slate-600"><ArrowLeft className="h-4 w-4" />Back</button><button disabled={!privacyAcknowledged} onClick={() => setStep('id')} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Continue <ArrowRight className="h-4 w-4" /></button></div></section>}
+
+        {step === 'id' && <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-8"><h1 className="text-2xl font-black">Capture an approved ID</h1><p className="mt-1 text-sm text-slate-500">Use a well-lit image showing the complete ID. OCR and authenticity verification are not configured; staff will review the image.</p><div className="mt-6 grid gap-6 lg:grid-cols-[320px_1fr]"><div><label className={labelClass}>ID type</label><select value={form.idType} onChange={(event) => setForm((current) => ({ ...current, idType: event.target.value }))} className={inputClass}><option value="">Select an approved ID</option>{config.privacy.acceptedIdTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select><label className="mt-4 block"><span className={labelClass}>Last 4 ID characters (optional)</span><input maxLength={4} value={form.idNumberLast4} onChange={(event) => setForm((current) => ({ ...current, idNumberLast4: event.target.value.replace(/[^A-Za-z0-9]/g, '') }))} className={inputClass} autoComplete="off" /><span className="mt-1 block text-xs text-slate-500">Only the last four are requested to reduce retained ID data.</span></label><div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-xs leading-5 text-blue-800"><strong>OCR status:</strong> Not configured. No claim of ID authenticity or automated extraction will be made.</div></div><div><div className="relative flex min-h-72 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-slate-300 bg-slate-950">{form.idImage ? <img src={form.idImage} alt="Captured ID preview" className="max-h-[420px] w-full object-contain" /> : cameraActive ? <video ref={videoRef} muted playsInline className="max-h-[420px] w-full object-contain" /> : <div className="p-8 text-center text-slate-300"><Camera className="mx-auto h-12 w-12" /><p className="mt-3 text-sm font-bold">Camera preview appears here</p><p className="mt-1 text-xs text-slate-400">You can also upload a photo.</p></div>}</div><input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(event) => void onFile(event.target.files?.[0])} /><div className="mt-3 flex flex-wrap gap-2">{form.idImage ? <><button onClick={() => setForm((current) => ({ ...current, idImage: '', imageConfirmed: false }))} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold"><RefreshCw className="h-4 w-4" />Retake</button></> : cameraActive ? <button onClick={capture} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-bold text-white"><Camera className="h-4 w-4" />Capture</button> : <button disabled={cameraStarting} onClick={() => void startCamera()} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-bold text-white">{cameraStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}Use camera</button>}<button onClick={() => fileRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold"><Upload className="h-4 w-4" />Upload photo</button></div>{cameraError && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{cameraError}</p>}{form.idImage && <label className="mt-4 flex items-start gap-3 rounded-xl border border-slate-200 p-4"><input type="checkbox" checked={form.imageConfirmed} onChange={(event) => setForm((current) => ({ ...current, imageConfirmed: event.target.checked }))} className="mt-1 h-5 w-5 accent-red-700" /><span className="text-sm text-slate-700">I confirm the ID is complete, readable, in focus, and not obscured by glare.</span></label>}</div></div><div className="mt-6 flex justify-between"><button onClick={() => setStep('privacy')} className="inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-slate-600"><ArrowLeft className="h-4 w-4" />Back</button><button disabled={!form.idType || !form.idImage || !form.imageConfirmed} onClick={() => setStep('verification')} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Continue <ArrowRight className="h-4 w-4" /></button></div></section>}
+
+        {step === 'verification' && <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-10"><div className="mx-auto max-w-2xl text-center"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-100 text-amber-700"><UserRound className="h-8 w-8" /></div><h1 className="mt-5 text-2xl font-black">Identity verification requires manual review</h1><p className="mt-3 text-sm leading-7 text-slate-600">{config.privacy.identityVerification.message}</p><div className="mt-6 rounded-xl border border-amber-300 bg-amber-50 p-5 text-left text-sm leading-6 text-amber-900"><p className="font-extrabold">No face image will be collected in this configuration.</p><p className="mt-1">Ordinary camera detection is not identity verification, and no successful face match, liveness result, or confidence score will be fabricated.</p><p className="mt-3"><strong>Approved alternative:</strong> {config.privacy.alternativeVerification}</p></div></div><div className="mt-8 flex justify-between"><button onClick={() => setStep('id')} className="inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-slate-600"><ArrowLeft className="h-4 w-4" />Back</button><button onClick={() => setStep('details')} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white">Continue for manual review <ArrowRight className="h-4 w-4" /></button></div></section>}
+
+        {step === 'details' && <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-8"><h1 className="text-2xl font-black">Visitor and visit details</h1><p className="mt-1 text-sm text-slate-500">Provide only the information needed to route and approve this visit.</p><div className="mt-6 grid gap-4 sm:grid-cols-2"><label><span className={labelClass}>Full name</span><input value={form.fullName} onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value }))} className={inputClass} autoComplete="name" maxLength={150} /></label><label><span className={labelClass}>Email for QR pass</span><input type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className={inputClass} autoComplete="email" /></label><label><span className={labelClass}>Phone number (optional)</span><input value={form.phoneNumber} onChange={(event) => setForm((current) => ({ ...current, phoneNumber: event.target.value }))} className={inputClass} autoComplete="tel" maxLength={30} /></label><label><span className={labelClass}>Organization (required for government visits)</span><input value={form.company} onChange={(event) => setForm((current) => ({ ...current, company: event.target.value }))} className={inputClass} maxLength={150} /></label><label className="sm:col-span-2"><span className={labelClass}>Purpose of visit</span><select value={form.purposeCategory} onChange={(event) => { const purpose = config.purposes.find((item) => item.value === event.target.value); setForm((current) => ({ ...current, purposeCategory: event.target.value, hostId: '', receivingDepartment: purpose?.department ?? '', otherPurpose: '' })); }} className={inputClass}><option value="">Select a purpose</option>{config.purposes.map((purpose) => <option key={purpose.value} value={purpose.value}>{purpose.label}</option>)}</select></label>{form.purposeCategory === 'OTHER' && <label className="sm:col-span-2"><span className={labelClass}>Explain the other purpose</span><textarea value={form.otherPurpose} onChange={(event) => setForm((current) => ({ ...current, otherPurpose: event.target.value }))} className={inputClass} rows={3} minLength={3} maxLength={500} /><span className="mt-1 block text-right text-xs text-slate-400">{form.otherPurpose.length}/500</span></label>}{form.purposeCategory === 'MEETING_EMPLOYEE' || form.purposeCategory === 'BUSINESS_MEETING' ? <label className="sm:col-span-2"><span className={labelClass}>{form.purposeCategory === 'MEETING_EMPLOYEE' ? 'Employee host' : 'Intended host (if applicable)'}</span><select value={form.hostId} onChange={(event) => setForm((current) => ({ ...current, hostId: event.target.value, receivingDepartment: config.hosts.find((host) => host.id === event.target.value)?.department ?? '' }))} className={inputClass}><option value="">Select an active employee</option>{config.hosts.map((host) => <option key={host.id} value={host.id}>{host.name} — {host.department}</option>)}</select></label> : selectedPurpose?.department ? <div className="sm:col-span-2"><span className={labelClass}>Receiving department</span><div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800">Automatically routed to {selectedPurpose.department}</div></div> : <label className="sm:col-span-2"><span className={labelClass}>Receiving department</span><select value={form.receivingDepartment} onChange={(event) => setForm((current) => ({ ...current, receivingDepartment: event.target.value }))} className={inputClass}><option value="">Select a department</option>{config.departments.map((department) => <option key={department} value={department}>{department}</option>)}</select></label>}<label className="sm:col-span-2"><span className={labelClass}>Expected arrival</span><input type="datetime-local" value={form.expectedArrival} onChange={(event) => setForm((current) => ({ ...current, expectedArrival: event.target.value }))} min={new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16)} className={inputClass} /></label></div><div className="mt-6 flex justify-between"><button onClick={() => setStep('verification')} className="inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-slate-600"><ArrowLeft className="h-4 w-4" />Back</button><button disabled={!detailsValid} onClick={() => setStep('review')} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Review request <ArrowRight className="h-4 w-4" /></button></div></section>}
+
+        {step === 'review' && <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-8"><h1 className="text-2xl font-black">Review and submit</h1><p className="mt-1 text-sm text-slate-500">Submitting creates a pending request. It does not authorize entry or activate a QR pass.</p><div className="mt-6 grid gap-3 sm:grid-cols-2"><NoticeRow title="Visitor">{form.fullName}<br />{form.email}{form.phoneNumber && <><br />{form.phoneNumber}</>}</NoticeRow><NoticeRow title="Identity">{form.idType}{form.idNumberLast4 && <> ending in ••••{form.idNumberLast4}</>}<br /><span className="font-bold text-amber-700">Manual review required</span></NoticeRow><NoticeRow title="Purpose">{selectedPurpose?.label}{form.otherPurpose && <><br />{form.otherPurpose}</>}</NoticeRow><NoticeRow title="Destination">{selectedHost ? `${selectedHost.name} — ${selectedHost.department}` : form.receivingDepartment}<br />{new Date(form.expectedArrival).toLocaleString()}</NoticeRow></div>{error && <div className="mt-5 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}<div className="mt-6 flex justify-between"><button disabled={submitting} onClick={() => setStep('details')} className="inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-slate-600"><ArrowLeft className="h-4 w-4" />Edit details</button><button disabled={submitting} onClick={() => void submit()} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-6 py-3 text-sm font-bold text-white disabled:opacity-50">{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}{submitting ? 'Submitting securely…' : 'Submit pending request'}</button></div></section>}
+
+        {step === 'submitted' && result && <section className="mx-auto w-full max-w-2xl rounded-3xl border border-emerald-200 bg-white p-8 text-center shadow-2xl sm:p-12"><div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><CheckCircle2 className="h-10 w-10" /></div><h1 className="mt-6 text-3xl font-black">Request received</h1><p className="mt-3 text-sm leading-6 text-slate-600">Your visit is <strong>Pending Approval</strong> and identity requires authorized manual review. You are not yet authorized to enter.</p><div className="mt-6 rounded-2xl bg-slate-950 p-5 text-white"><p className="text-xs font-bold uppercase tracking-widest text-slate-400">Reference number</p><p className="mt-2 font-mono text-2xl font-black tracking-wide">{result.referenceNumber}</p></div><div className="mt-6 flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4 text-left text-sm leading-6 text-blue-900"><Mail className="mt-0.5 h-5 w-5 shrink-0" /><p>If approved and cleared, a visit-specific QR pass will be sent to the email address you provided. “Email sent” is shown to staff only after the provider accepts it.</p></div><button onClick={reset} className="mt-8 inline-flex items-center gap-2 rounded-xl bg-red-700 px-6 py-3 text-sm font-bold text-white"><RefreshCw className="h-4 w-4" />Reset kiosk</button></section>}
+      </div>
+    </KioskShell>
+  );
+};
+
+export const VisitorPassPage: React.FC = () => {
+  const { token = '' } = useParams();
+  const [state, setState] = useState<{ loading: boolean; data?: any; error?: string }>({ loading: true });
+  useEffect(() => {
+    let active = true;
+    void visitorService.inspectVisitorPass(token).then((data) => { if (active) setState({ loading: false, data }); })
+      .catch((error) => { if (active) setState({ loading: false, error: errorMessage(error) }); });
+    return () => { active = false; };
+  }, [token]);
+  return <KioskShell><div className="mx-auto flex min-h-[75vh] max-w-xl items-center p-5"><section className="w-full rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-xl">{state.loading ? <><Loader2 className="mx-auto h-10 w-10 animate-spin text-red-700" /><p className="mt-4 text-sm font-bold">Validating pass…</p></> : state.error ? <><AlertCircle className="mx-auto h-12 w-12 text-rose-600" /><h1 className="mt-4 text-2xl font-black">Pass unavailable</h1><p className="mt-2 text-sm text-slate-600">{state.error}</p></> : <><ShieldCheck className="mx-auto h-12 w-12 text-emerald-600" /><h1 className="mt-4 text-2xl font-black">Active visitor pass</h1><p className="mt-2 text-sm text-slate-600">Present the QR code from your email to authorized security staff.</p><div className="mt-6 space-y-2 rounded-xl bg-slate-50 p-5 text-left text-sm"><p><strong>Reference:</strong> {state.data.referenceNumber}</p><p><strong>Visitor:</strong> {state.data.visitorName}</p><p><strong>Destination:</strong> {state.data.destination}</p><p><strong>Expected:</strong> {new Date(state.data.expectedArrival).toLocaleString()}</p><p><strong>Valid until:</strong> {new Date(state.data.expiresAt).toLocaleString()}</p></div></>}</section></div></KioskShell>;
+};

@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { checkInPass, checkOutPass } = vi.hoisted(() => ({ checkInPass: vi.fn(), checkOutPass: vi.fn() }));
+const { checkInPass, checkOutPass, scanVisitorPass } = vi.hoisted(() => ({ checkInPass: vi.fn(), checkOutPass: vi.fn(), scanVisitorPass: vi.fn() }));
 const scanner = vi.hoisted(() => ({
   callback: undefined as undefined | ((result: { getText(): string } | undefined) => void),
   decodeFromVideoElement: vi.fn(),
@@ -21,6 +21,9 @@ vi.mock('@zxing/browser', () => ({
 vi.mock('../../api/reservationPortalService', () => ({
   reservationPortalService: { checkInPass, checkOutPass },
 }));
+vi.mock('../../api/visitorService', () => ({
+  visitorService: { scanVisitorPass },
+}));
 vi.mock('../../stores/realtimeSyncStore', () => ({
   useRealtimeSyncStore: (selector: (state: { revision: number }) => unknown) => selector({ revision: 0 }),
 }));
@@ -35,6 +38,7 @@ describe('QR check-in camera fallback', () => {
   beforeEach(() => {
     checkInPass.mockReset();
     checkOutPass.mockReset();
+    scanVisitorPass.mockReset();
     scanner.callback = undefined;
     scanner.possibleFormats = [];
     scanner.stop.mockReset();
@@ -85,6 +89,24 @@ describe('QR check-in camera fallback', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Check in pass' }));
 
     await waitFor(() => expect(checkInPass).toHaveBeenCalledWith('guest-token-123'));
+    expect(await screen.findByText('Pass checked in')).toBeInTheDocument();
+  });
+
+  it('routes visitor credentials to visitor validation without changing reservation passes', async () => {
+    scanVisitorPass.mockResolvedValue({
+      email: 'visitor@example.com', status: 'CHECKED_IN', actualArrival: '2026-10-21T02:00:00Z',
+      purposeOfVisit: 'Meeting an Employee', expectedArrival: '2026-10-21T02:00:00Z',
+      receivingDepartment: 'Operations', host: null,
+    });
+    render(<QrCheckInPage />);
+
+    fireEvent.change(screen.getByLabelText('Guest pass URL or token'), {
+      target: { value: 'https://hirna.example/visitor-pass/vst_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Check in pass' }));
+
+    await waitFor(() => expect(scanVisitorPass).toHaveBeenCalledWith('vst_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG', 'CHECK_IN'));
+    expect(checkInPass).not.toHaveBeenCalled();
     expect(await screen.findByText('Pass checked in')).toBeInTheDocument();
   });
 

@@ -67,6 +67,9 @@ const SUPABASE_FUNCTION_ALIASES: Record<string, string> = {
   rbac: 'auth',
   security: 'security',
   visitor: 'visitor',
+  'visitor-kiosk': 'visitor',
+  'visitor-pass': 'visitor',
+  'visitor-passes': 'visitor',
 };
 
 function normalizeApiPath(url: string): string {
