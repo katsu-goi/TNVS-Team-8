@@ -9,6 +9,8 @@ import { adminDb } from "./db.ts";
 import { resolveClientIp } from "./ip.ts";
 import { consumeRateLimit, tierFor } from "./rate-limit.ts";
 import { runDirectAdminMutation } from "./direct-admin-audit.ts";
+import { matchPath, type RouteParams } from "./route-path.ts";
+export type { RouteParams } from "./route-path.ts";
 
 export type AuthContext = {
   user: AuthUser;
@@ -385,8 +387,6 @@ export function isDirectSuperAdmin(ctx: AuthContext | null): boolean {
   return ctx !== null && hasDirectSuperAdminAccess(authorizationSubject(ctx));
 }
 
-export type RouteParams = Record<string, string>;
-
 export type Route = {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   /**
@@ -403,25 +403,6 @@ export type Route = {
     params: RouteParams,
   ) => Promise<Response> | Response;
 };
-
-/** True if the actual path matches the route's path template (suffix match, segment-wise). */
-function matchPath(actual: string, template: string): RouteParams | null {
-  const actualSegs = actual.split("/").filter(Boolean);
-  const templateSegs = template.split("/").filter(Boolean);
-  if (templateSegs.length > actualSegs.length) return null;
-  const offset = actualSegs.length - templateSegs.length;
-  const params: RouteParams = {};
-  for (let i = 0; i < templateSegs.length; i++) {
-    const t = templateSegs[i];
-    const a = actualSegs[offset + i];
-    if (t.startsWith(":")) {
-      params[t.slice(1)] = a;
-    } else if (t !== a) {
-      return null;
-    }
-  }
-  return params;
-}
 
 export type RouterOptions = {
   /** Custom prefix used only for the 404 message; function name is appended by the platform. */

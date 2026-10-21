@@ -25,9 +25,11 @@ const configured: KioskConfig = {
 describe('VisitorKioskPage', () => {
   beforeEach(() => vi.mocked(visitorService.getKioskConfig).mockResolvedValue(configured));
 
-  it('shows the privacy notice before enabling ID capture', async () => {
+  it('loads backend configuration and shows the privacy notice before enabling ID capture', async () => {
     render(<MemoryRouter><VisitorKioskPage /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole('button', { name: /start visitor registration/i }));
+    expect(await screen.findByRole('heading', { name: /welcome to hirna tnvs/i })).toBeInTheDocument();
+    expect(visitorService.getKioskConfig).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: /start visitor registration/i }));
     expect(screen.getByRole('heading', { name: /privacy notice/i })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /capture an approved id/i })).not.toBeInTheDocument();
     const continueButton = screen.getByRole('button', { name: /continue/i });

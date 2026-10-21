@@ -19,6 +19,12 @@ describe('Supabase Edge Function routing', () => {
     expect(getApiUrl('/visitors/occupancy')).toMatch(/\/visitor\/visitors\/occupancy$/);
   });
 
+  it('builds the full function-prefixed pathname for the public kiosk configuration', () => {
+    expect(getApiUrl('/visitor-kiosk/config')).toBe(
+      'https://dunijfrvfozwlykpkfhy.supabase.co/functions/v1/visitor/visitor-kiosk/config',
+    );
+  });
+
   it('does not duplicate an API prefix that already matches its function', () => {
     const url = getApiUrl('/facilities/management');
     expect(url).toMatch(/\/facilities\/management$/);
