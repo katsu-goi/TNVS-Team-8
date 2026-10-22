@@ -1,12 +1,12 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { VisitorKioskPage, visitorDetailsAreValid, type VisitorKioskFormState } from './VisitorKioskPage';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { VisitorKioskPage, VisitorStatusPage, visitorDetailsAreValid, type VisitorKioskFormState } from './VisitorKioskPage';
 import { visitorService, type KioskConfig } from '../../api/visitorService';
 
 vi.mock('../../api/visitorService', async () => {
   const actual = await vi.importActual<typeof import('../../api/visitorService')>('../../api/visitorService');
-  return { ...actual, visitorService: { ...actual.visitorService, getKioskConfig: vi.fn(), submitKioskRegistration: vi.fn() } };
+  return { ...actual, visitorService: { ...actual.visitorService, getKioskConfig: vi.fn(), submitKioskRegistration: vi.fn(), inspectVisitorStatus: vi.fn() } };
 });
 
 const configured: KioskConfig = {
@@ -26,6 +26,8 @@ const configured: KioskConfig = {
   purposes: [{ value: 'MEETING_EMPLOYEE', label: 'Meeting an Employee' }, { value: 'OTHER', label: 'Other Purpose' }],
   hosts: [{ id: 'host-1', name: 'Active Host', department: 'Operations' }], departments: ['Operations'],
 };
+
+afterEach(() => cleanup());
 
 describe('VisitorKioskPage', () => {
   beforeEach(() => vi.mocked(visitorService.getKioskConfig).mockResolvedValue(configured));
@@ -67,5 +69,33 @@ describe('visitorDetailsAreValid', () => {
   it('requires a real backend host selection for employee meetings', () => {
     expect(visitorDetailsAreValid({ ...base, purposeCategory: 'MEETING_EMPLOYEE', otherPurpose: '' })).toBe(false);
     expect(visitorDetailsAreValid({ ...base, purposeCategory: 'MEETING_EMPLOYEE', otherPurpose: '', hostId: 'host-1' })).toBe(true);
+  });
+});
+
+describe('VisitorStatusPage', () => {
+  it.each([
+    ['PENDING', 'No entry credential is active.'],
+    ['APPROVED', 'Use only the QR pass delivered'],
+    ['DECLINED', 'No entry credential was issued.'],
+  ] as const)('displays a token-protected %s status without personal data', async (status, message) => {
+    vi.mocked(visitorService.inspectVisitorStatus).mockResolvedValue({
+      referenceNumber: 'HV-20261022-TEST',
+      status,
+      message: `Status message: ${message}`,
+      updatedAt: '2026-10-22T01:00:00.000Z',
+    });
+    render(<MemoryRouter initialEntries={['/visitor-status/vss_secure_token']}><Routes><Route path="/visitor-status/:token" element={<VisitorStatusPage />} /></Routes></MemoryRouter>);
+    expect(await screen.findByText(status)).toBeInTheDocument();
+    expect(screen.getByText('HV-20261022-TEST')).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(message, 'i'))).toBeInTheDocument();
+    expect(visitorService.inspectVisitorStatus).toHaveBeenCalledWith('vss_secure_token');
+    expect(screen.queryByText(/visitor@example/i)).not.toBeInTheDocument();
+  });
+
+  it('shows a safe error for an invalid or expired status token', async () => {
+    vi.mocked(visitorService.inspectVisitorStatus).mockRejectedValue(new Error('This visitor status link has expired.'));
+    render(<MemoryRouter initialEntries={['/visitor-status/vss_expired']}><Routes><Route path="/visitor-status/:token" element={<VisitorStatusPage />} /></Routes></MemoryRouter>);
+    expect(await screen.findByRole('heading', { name: 'Status unavailable' })).toBeInTheDocument();
+    expect(screen.getByText('This visitor status link has expired.')).toBeInTheDocument();
   });
 });

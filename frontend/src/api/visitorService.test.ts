@@ -57,4 +57,10 @@ describe('visitor kiosk API integration', () => {
     await visitorService.inspectVisitorPass('vst_test_token');
     expect(api.post).toHaveBeenCalledWith('/visitor-pass/inspect', { token: 'vst_test_token' });
   });
+
+  it('checks pre-approval status with a high-entropy token instead of a reference number', async () => {
+    api.post.mockResolvedValueOnce({ data: { data: { referenceNumber: 'HV-1', status: 'PENDING' } } });
+    await visitorService.inspectVisitorStatus('vss_secure_status_token');
+    expect(api.post).toHaveBeenCalledWith('/visitor-status/inspect', { token: 'vss_secure_status_token' });
+  });
 });

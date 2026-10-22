@@ -6,6 +6,7 @@ import { adminDb } from "../_shared/db.ts";
 import { naiveIso } from "../_shared/auth-users.ts";
 import { writeAudit } from "../_shared/lockout.ts";
 import { resolveClientIp } from "../_shared/ip.ts";
+import { config } from "../_shared/config.ts";
 import {
   evaluateVisitorKioskReadiness,
   parsePurposeDepartmentRoutes,
@@ -115,6 +116,22 @@ async function sha256(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+async function signedVisitorToken(prefix: "vst_" | "vss_", purpose: string, visitorId: string, issuedAt: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(config.jwtSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`${purpose}:${visitorId}:${issuedAt}`),
+  );
+  return `${prefix}${base64Url(new Uint8Array(signature))}`;
+}
+
 function referenceNumber(): string {
   const bytes = new Uint8Array(5);
   crypto.getRandomValues(bytes);
@@ -201,6 +218,9 @@ type VisitorRow = {
   email_provider_id?: string | null;
   email_delivery_error?: string | null;
   email_attempted_at?: string | null;
+  status_token_hash?: string | null;
+  status_token_issued_at?: string | null;
+  status_token_expires_at?: string | null;
   users?: HostUser | null;
 };
 
@@ -448,6 +468,14 @@ async function loadKioskDestinations() {
   return { hosts, departments };
 }
 
+function visitorStatusExpiresAt(expectedArrival: Date): string {
+  const now = Date.now();
+  const thirtyDays = now + 30 * 24 * 60 * 60_000;
+  const sevenDaysAfterVisit = expectedArrival.getTime() + 7 * 24 * 60 * 60_000;
+  const oneYear = now + 365 * 24 * 60 * 60_000;
+  return new Date(Math.min(Math.max(thirtyDays, sevenDaysAfterVisit), oneYear)).toISOString();
+}
+
 async function handleKioskConfig() {
   const { hosts, departments } = await loadKioskDestinations();
   const { policy, privacy } = await kioskPrivacyConfig(departments);
@@ -533,15 +561,26 @@ async function handleKioskRegister(_ctx: AuthContext | null, req: Request, body:
 
   const submissionKeyHash = await sha256(idempotencyKey);
   const { data: existing, error: duplicateError } = await db.from("visitors")
-    .select("reference_number, approval_status").eq("submission_key_hash", submissionKeyHash).maybeSingle();
+    .select("id, reference_number, approval_status, email_delivery_status, status_token_issued_at")
+    .eq("submission_key_hash", submissionKeyHash).maybeSingle();
   if (duplicateError) throw new Error(`kiosk duplicate lookup failed: ${duplicateError.message}`);
-  if (existing) return jsonResponse(ok({
-    referenceNumber: existing.reference_number,
-    approvalStatus: existing.approval_status,
-    duplicate: true,
-  }, "This registration was already received"), 200);
+  if (existing) {
+    const statusToken = existing.status_token_issued_at
+      ? await signedVisitorToken("vss_", "visitor-status", existing.id, existing.status_token_issued_at)
+      : null;
+    return jsonResponse(ok({
+      referenceNumber: existing.reference_number,
+      approvalStatus: existing.approval_status,
+      emailDeliveryStatus: existing.email_delivery_status,
+      statusToken,
+      duplicate: true,
+    }, "This registration was already received"), 200);
+  }
 
   const visitorId = crypto.randomUUID();
+  const statusTokenIssuedAt = new Date().toISOString();
+  const statusToken = await signedVisitorToken("vss_", "visitor-status", visitorId, statusTokenIssuedAt);
+  const statusTokenHash = await sha256(statusToken);
   const storagePath = `${visitorId}/id-front-${crypto.randomUUID()}.${image.extension}`;
   const { error: uploadError } = await db.storage.from(IMAGE_BUCKET).upload(storagePath, image.bytes, {
     contentType: image.mime,
@@ -581,16 +620,31 @@ async function handleKioskRegister(_ctx: AuthContext | null, req: Request, body:
     access_status: "NOT_AUTHORIZED",
     email_delivery_status: "NOT_REQUESTED",
     submission_key_hash: submissionKeyHash,
+    status_token_hash: statusTokenHash,
+    status_token_issued_at: statusTokenIssuedAt,
+    status_token_expires_at: visitorStatusExpiresAt(expectedArrival),
     qr_code_token: null,
     created_by: "visitor-kiosk",
     updated_at: naiveIso(),
-  }).select("id, reference_number, approval_status").single();
+  }).select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)").single();
   if (insertError) {
     await db.storage.from(IMAGE_BUCKET).remove([storagePath]);
     if (insertError.code === "23505") {
-      const { data: retry } = await db.from("visitors").select("reference_number, approval_status")
+      const { data: retry } = await db.from("visitors")
+        .select("id, reference_number, approval_status, email_delivery_status, status_token_issued_at")
         .eq("submission_key_hash", submissionKeyHash).maybeSingle();
-      if (retry) return jsonResponse(ok({ referenceNumber: retry.reference_number, approvalStatus: retry.approval_status, duplicate: true }, "This registration was already received"), 200);
+      if (retry) {
+        const retryStatusToken = retry.status_token_issued_at
+          ? await signedVisitorToken("vss_", "visitor-status", retry.id, retry.status_token_issued_at)
+          : null;
+        return jsonResponse(ok({
+          referenceNumber: retry.reference_number,
+          approvalStatus: retry.approval_status,
+          emailDeliveryStatus: retry.email_delivery_status,
+          statusToken: retryStatusToken,
+          duplicate: true,
+        }, "This registration was already received"), 200);
+      }
     }
     throw new Error(`kiosk visitor registration failed: ${insertError.message}`);
   }
@@ -626,13 +680,16 @@ async function handleKioskRegister(_ctx: AuthContext | null, req: Request, body:
     });
     if (notificationError && notificationError.code !== "23505") console.error(`visitor host notification failed: ${notificationError.message}`);
   }
+  const acknowledgment = await sendRegistrationAcknowledgment(saved as unknown as VisitorRow, statusToken);
   await writeAudit(null, "KIOSK_VISITOR_SUBMITTED", MODULE, "Visitor", visitorId,
-    `Kiosk request ${reference} submitted pending identity review and approval.`, resolveClientIp(req).ip, "INFO");
+    `Kiosk request ${reference} submitted pending identity review and approval; acknowledgment status ${acknowledgment.status}.`, resolveClientIp(req).ip, "INFO");
   return jsonResponse(ok({
     id: saved.id,
     referenceNumber: saved.reference_number,
     approvalStatus: saved.approval_status,
     identityVerificationStatus: "PROVIDER_NOT_CONFIGURED",
+    emailDeliveryStatus: acknowledgment.status,
+    statusToken,
   }, "Visitor request submitted for approval"), 201);
 }
 
@@ -728,30 +785,181 @@ async function handleManualIdentityReview(ctx: AuthContext | null, req: Request,
   return jsonResponse(ok(toVerificationDto(verification as unknown as VerificationRow), "Manual identity review recorded"), 200);
 }
 
+type VisitorEmailType = "REGISTRATION_ACKNOWLEDGMENT" | "APPROVAL_PASS" | "DECLINE";
 type PassEmailResult = { status: "ACCEPTED" | "FAILED" | "NOT_CONFIGURED"; providerId?: string; error?: string };
+type ResendPayload = {
+  subject: string;
+  text: string;
+  html: string;
+  attachments?: Array<{ filename: string; content: string }>;
+};
 
 function visitorSiteUrl(): string {
   return (envText("PORTAL_PUBLIC_URL") || envText("VISITOR_KIOSK_PUBLIC_URL")).replace(/\/+$/, "");
 }
 
-async function sendVisitorPassEmail(visitor: VisitorRow, token: string): Promise<PassEmailResult> {
+function brandedEmail(title: string, content: string, action?: { label: string; url: string }): string {
+  const button = action
+    ? `<p style="margin:28px 0"><a href="${htmlEscape(action.url)}" style="display:inline-block;background:#b91c1c;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:700">${htmlEscape(action.label)}</a></p>`
+    : "";
+  return `<div style="margin:0;background:#f8fafc;padding:24px;font-family:Arial,sans-serif;color:#172033"><div style="max-width:640px;margin:0 auto;overflow:hidden;border:1px solid #e2e8f0;border-radius:16px;background:#fff"><div style="background:#0f172a;padding:20px 24px;color:#fff"><div style="font-size:12px;font-weight:800;letter-spacing:.12em;color:#fca5a5">HIRNA TNVS</div><div style="margin-top:6px;font-size:22px;font-weight:800">${htmlEscape(title)}</div></div><div style="padding:24px;font-size:15px;line-height:1.65">${content}${button}<p style="margin-top:28px;padding-top:18px;border-top:1px solid #e2e8f0;color:#64748b;font-size:12px">This is an automated visitor workflow message. Do not forward status links or QR passes.</p></div></div></div>`;
+}
+
+function notificationKey(visitorId: string, type: VisitorEmailType): string {
+  return `visitor/${type.toLowerCase()}/${visitorId}`;
+}
+
+async function syncVisitorEmailResult(visitorId: string, result: PassEmailResult) {
+  const { error } = await db.from("visitors").update({
+    email_delivery_status: result.status,
+    email_provider_id: result.providerId ?? null,
+    email_delivery_error: result.error?.slice(0, 500) ?? null,
+    email_attempted_at: new Date().toISOString(),
+    updated_at: naiveIso(),
+  }).eq("id", visitorId);
+  if (error) throw new Error(`visitor email delivery status failed: ${error.message}`);
+}
+
+async function sendTrackedVisitorEmail(
+  visitor: VisitorRow,
+  type: VisitorEmailType,
+  payload: ResendPayload,
+  preflightFailure?: PassEmailResult,
+): Promise<PassEmailResult> {
+  const idempotencyKey = notificationKey(visitor.id, type);
+  const { error: seedError } = await db.from("visitor_email_notifications").upsert({
+    visitor_id: visitor.id,
+    notification_type: type,
+    delivery_status: "NOT_REQUESTED",
+    idempotency_key: idempotencyKey,
+  }, { onConflict: "visitor_id,notification_type", ignoreDuplicates: true });
+  if (seedError) throw new Error(`visitor email ledger initialization failed: ${seedError.message}`);
+
+  const { data: existing, error: existingError } = await db.from("visitor_email_notifications")
+    .select("id, delivery_status, provider_id, attempt_count").eq("visitor_id", visitor.id)
+    .eq("notification_type", type).single();
+  if (existingError) throw new Error(`visitor email ledger load failed: ${existingError.message}`);
+  if (existing.delivery_status === "ACCEPTED") {
+    const accepted = { status: "ACCEPTED" as const, providerId: existing.provider_id ?? undefined };
+    await syncVisitorEmailResult(visitor.id, accepted);
+    return accepted;
+  }
+
+  const attemptedAt = new Date().toISOString();
+  const { error: pendingError } = await db.from("visitor_email_notifications").update({
+    delivery_status: "PENDING",
+    attempt_count: Number(existing.attempt_count ?? 0) + 1,
+    last_attempted_at: attemptedAt,
+    delivery_error: null,
+    updated_at: attemptedAt,
+  }).eq("id", existing.id).neq("delivery_status", "ACCEPTED");
+  if (pendingError) throw new Error(`visitor email attempt could not be recorded: ${pendingError.message}`);
+
+  let result: PassEmailResult;
   const apiKey = envText("RESEND_API_KEY");
   const from = envText("RESEND_FROM_EMAIL");
+  if (preflightFailure) {
+    result = preflightFailure;
+  } else if (!apiKey || !from) {
+    result = { status: "NOT_CONFIGURED", error: "Resend sender credentials are not configured." };
+  } else {
+    try {
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify({ from, to: [visitor.email], ...payload }),
+      });
+      const responseBody = await response.json().catch(() => ({})) as { id?: string; message?: string };
+      result = response.ok
+        ? { status: "ACCEPTED", providerId: responseBody.id }
+        : { status: "FAILED", error: responseBody.message || `Resend returned HTTP ${response.status}` };
+    } catch (error) {
+      result = { status: "FAILED", error: error instanceof Error ? error.message : "Email provider request failed" };
+    }
+  }
+
+  const completedAt = new Date().toISOString();
+  const { error: ledgerError } = await db.from("visitor_email_notifications").update({
+    delivery_status: result.status,
+    provider_id: result.providerId ?? null,
+    delivery_error: result.error?.slice(0, 500) ?? null,
+    accepted_at: result.status === "ACCEPTED" ? completedAt : null,
+    updated_at: completedAt,
+  }).eq("id", existing.id);
+  if (ledgerError) throw new Error(`visitor email ledger update failed: ${ledgerError.message}`);
+  await syncVisitorEmailResult(visitor.id, result);
+  return result;
+}
+
+async function sendRegistrationAcknowledgment(visitor: VisitorRow, statusToken: string): Promise<PassEmailResult> {
   const publicUrl = visitorSiteUrl();
-  if (!apiKey || !from || !publicUrl) return { status: "NOT_CONFIGURED", error: "Resend sender credentials or public application URL are not configured." };
+  const statusUrl = publicUrl ? `${publicUrl}/visitor-status/${encodeURIComponent(statusToken)}` : "";
+  const reference = visitor.reference_number ?? "";
+  const subject = `HIRNA TNVS visitor request received — ${reference}`;
+  const text = [
+    `Your HIRNA TNVS visitor request ${reference} was received and remains PENDING.`,
+    "Identity review and visit approval are still required. This acknowledgment does not authorize entry.",
+    statusUrl ? `Check status securely: ${statusUrl}` : "",
+  ].filter(Boolean).join("\n");
+  const content = `<p>Your visitor request <strong>${htmlEscape(reference)}</strong> was received.</p><p style="padding:12px;border-radius:10px;background:#fef3c7;color:#78350f"><strong>Status: PENDING</strong></p><p>Identity review and visit approval are still required. This acknowledgment does not authorize entry and no QR credential is active.</p>`;
+  return await sendTrackedVisitorEmail(visitor, "REGISTRATION_ACKNOWLEDGMENT", {
+    subject,
+    text,
+    html: brandedEmail("Visitor request received", content, statusUrl ? { label: "Check request status", url: statusUrl } : undefined),
+  }, publicUrl ? undefined : { status: "NOT_CONFIGURED", error: "The public visitor application URL is not configured." });
+}
+
+async function sendDeclineEmail(visitor: VisitorRow): Promise<PassEmailResult> {
+  const publicUrl = visitorSiteUrl();
+  const statusToken = visitor.status_token_issued_at
+    ? await signedVisitorToken("vss_", "visitor-status", visitor.id, visitor.status_token_issued_at)
+    : "";
+  const statusUrl = publicUrl && statusToken ? `${publicUrl}/visitor-status/${encodeURIComponent(statusToken)}` : "";
+  const reference = visitor.reference_number ?? "";
+  const subject = `HIRNA TNVS visitor request update — ${reference}`;
+  const text = [
+    `Your HIRNA TNVS visitor request ${reference} is DECLINED.`,
+    "No visitor pass or entry credential has been issued.",
+    statusUrl ? `Check status securely: ${statusUrl}` : "",
+  ].filter(Boolean).join("\n");
+  const content = `<p>Your visitor request <strong>${htmlEscape(reference)}</strong> has been updated.</p><p style="padding:12px;border-radius:10px;background:#ffe4e6;color:#9f1239"><strong>Status: DECLINED</strong></p><p>No visitor pass or entry credential has been issued. Internal security and identity-review details are not included in this message.</p>`;
+  return await sendTrackedVisitorEmail(visitor, "DECLINE", {
+    subject,
+    text,
+    html: brandedEmail("Visitor request update", content, statusUrl ? { label: "View request status", url: statusUrl } : undefined),
+  }, publicUrl && statusToken ? undefined : { status: "NOT_CONFIGURED", error: "The secure visitor status URL could not be created." });
+}
+
+async function sendVisitorPassEmail(visitor: VisitorRow, token: string): Promise<PassEmailResult> {
+  const publicUrl = visitorSiteUrl();
+  if (!publicUrl) {
+    return await sendTrackedVisitorEmail(visitor, "APPROVAL_PASS", {
+      subject: "HIRNA TNVS visitor request approved",
+      text: "Your request was approved, but the visitor pass URL is not configured.",
+      html: brandedEmail("Visitor request approved", "<p>The visitor pass URL is not configured.</p>"),
+    }, { status: "NOT_CONFIGURED", error: "The public visitor application URL is not configured." });
+  }
   const passUrl = `${publicUrl}/visitor-pass/${encodeURIComponent(token)}`;
   let qrDataUrl: string;
   try {
     qrDataUrl = await QRCode.toDataURL(passUrl, { errorCorrectionLevel: "M", width: 480, margin: 2 });
   } catch (error) {
-    return { status: "FAILED", error: error instanceof Error ? error.message : "QR generation failed" };
+    return await sendTrackedVisitorEmail(visitor, "APPROVAL_PASS", {
+      subject: "HIRNA TNVS visitor request approved",
+      text: "Your request was approved, but QR generation failed.",
+      html: brandedEmail("Visitor request approved", "<p>The QR pass could not be generated.</p>"),
+    }, { status: "FAILED", error: error instanceof Error ? error.message : "QR generation failed" });
   }
   const qrBase64 = qrDataUrl.split(",", 2)[1] ?? "";
   const host = hostOf(visitor);
   const destination = host
     ? `${host.first_name ?? ""} ${host.last_name ?? ""}`.trim()
     : visitor.receiving_department ?? "Receiving department";
-  const subject = `Approved visitor pass ${visitor.reference_number ?? ""}`.trim();
+  const subject = `HIRNA TNVS approved visitor pass — ${visitor.reference_number ?? ""}`.trim();
   const text = [
     `Your Hirna TNVS visitor request ${visitor.reference_number ?? ""} is approved.`,
     `Visit: ${visitor.purpose_of_visit}`,
@@ -760,26 +968,13 @@ async function sendVisitorPassEmail(visitor: VisitorRow, token: string): Promise
     `Pass valid until: ${visitor.qr_expires_at ?? "See approved schedule"}`,
     "Present the attached QR pass to authorized security staff. Approval does not waive on-site security checks.",
   ].join("\n");
-  const html = `<div style="font-family:Arial,sans-serif;max-width:620px;color:#172033"><h2>Visitor pass approved</h2><p>Your request <strong>${htmlEscape(visitor.reference_number ?? "")}</strong> is approved.</p><p><strong>Visit:</strong> ${htmlEscape(visitor.purpose_of_visit ?? "")}</p><p><strong>Destination:</strong> ${htmlEscape(destination)}</p><p><strong>Expected arrival:</strong> ${htmlEscape(visitor.expected_arrival ?? "See approved schedule")}</p><p><strong>Valid until:</strong> ${htmlEscape(visitor.qr_expires_at ?? "See approved schedule")}</p><p>The QR pass is attached. Present it to authorized security staff. Approval does not waive on-site security checks.</p></div>`;
-  try {
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from,
-        to: [visitor.email],
-        subject,
-        text,
-        html,
-        attachments: [{ filename: `${visitor.reference_number ?? "visitor-pass"}.png`, content: qrBase64 }],
-      }),
-    });
-    const responseBody = await response.json().catch(() => ({})) as { id?: string; message?: string };
-    if (!response.ok) return { status: "FAILED", error: responseBody.message || `Resend returned HTTP ${response.status}` };
-    return { status: "ACCEPTED", providerId: responseBody.id };
-  } catch (error) {
-    return { status: "FAILED", error: error instanceof Error ? error.message : "Email provider request failed" };
-  }
+  const content = `<p>Your request <strong>${htmlEscape(visitor.reference_number ?? "")}</strong> is approved.</p><p style="padding:12px;border-radius:10px;background:#d1fae5;color:#065f46"><strong>Status: APPROVED</strong></p><p><strong>Visit:</strong> ${htmlEscape(visitor.purpose_of_visit ?? "")}</p><p><strong>Destination:</strong> ${htmlEscape(destination)}</p><p><strong>Expected arrival:</strong> ${htmlEscape(visitor.expected_arrival ?? "See approved schedule")}</p><p><strong>Valid until:</strong> ${htmlEscape(visitor.qr_expires_at ?? "See approved schedule")}</p><p>The QR pass is attached. Present it to authorized security staff. Approval does not waive on-site security checks.</p>`;
+  return await sendTrackedVisitorEmail(visitor, "APPROVAL_PASS", {
+    subject,
+    text,
+    html: brandedEmail("Visitor pass approved", content, { label: "View active visitor pass", url: passUrl }),
+    attachments: [{ filename: `${visitor.reference_number ?? "visitor-pass"}.png`, content: qrBase64 }],
+  });
 }
 
 async function issueAndEmailVisitorPass(visitor: VisitorRow, actorEmail: string): Promise<VisitorRow> {
@@ -792,35 +987,56 @@ async function issueAndEmailVisitorPass(visitor: VisitorRow, actorEmail: string)
   if (Number.isNaN(arrival.getTime())) throw new Error("VISITOR_EXPECTED_ARRIVAL_INVALID");
   const expiresAt = new Date(arrival.getTime() + ttlHours * 60 * 60_000);
   if (expiresAt.getTime() <= Date.now()) throw new Error("VISITOR_PASS_WINDOW_EXPIRED");
-  const tokenBytes = new Uint8Array(32);
-  crypto.getRandomValues(tokenBytes);
-  const token = `vst_${base64Url(tokenBytes)}`;
-  const tokenHash = await sha256(token);
-  const issuedAt = new Date().toISOString();
-  const { data: issued, error: issueError } = await db.from("visitors").update({
-    qr_token_hash: tokenHash,
-    qr_code_token: null,
-    qr_issued_at: issuedAt,
-    qr_expires_at: expiresAt.toISOString(),
-    qr_revoked_at: null,
-    access_status: "AUTHORIZED",
-    email_delivery_status: "PENDING",
-    email_provider_id: null,
-    email_delivery_error: null,
-    email_attempted_at: issuedAt,
-    updated_by: actorEmail,
-    updated_at: naiveIso(),
-  }).eq("id", visitor.id).select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)").single();
-  if (issueError) throw new Error(`visitor pass issue failed: ${issueError.message}`);
-  const delivery = await sendVisitorPassEmail(issued as unknown as VisitorRow, token);
-  const { data: saved, error: deliveryError } = await db.from("visitors").update({
-    email_delivery_status: delivery.status,
-    email_provider_id: delivery.providerId ?? null,
-    email_delivery_error: delivery.error?.slice(0, 500) ?? null,
-    email_attempted_at: new Date().toISOString(),
-    updated_at: naiveIso(),
-  }).eq("id", visitor.id).select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)").single();
-  if (deliveryError) throw new Error(`visitor pass delivery status failed: ${deliveryError.message}`);
+  let issuedAt = visitor.qr_issued_at ?? new Date().toISOString();
+  let token = await signedVisitorToken("vst_", "visitor-pass", visitor.id, issuedAt);
+  let tokenHash = await sha256(token);
+  let issued = visitor;
+  if (!visitor.qr_token_hash) {
+    const { data, error: issueError } = await db.from("visitors").update({
+      qr_token_hash: tokenHash,
+      qr_code_token: null,
+      qr_issued_at: issuedAt,
+      qr_expires_at: expiresAt.toISOString(),
+      qr_revoked_at: null,
+      access_status: "AUTHORIZED",
+      email_delivery_status: "PENDING",
+      email_provider_id: null,
+      email_delivery_error: null,
+      email_attempted_at: issuedAt,
+      updated_by: actorEmail,
+      updated_at: naiveIso(),
+    }).eq("id", visitor.id).select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)").single();
+    if (issueError) throw new Error(`visitor pass issue failed: ${issueError.message}`);
+    issued = data as unknown as VisitorRow;
+  } else if (visitor.qr_revoked_at || !visitor.qr_expires_at || new Date(visitor.qr_expires_at).getTime() <= Date.now()) {
+    throw new Error("VISITOR_PASS_NOT_RETRYABLE");
+  } else if (visitor.qr_token_hash !== tokenHash) {
+    // Backward-compatible recovery for credentials issued before deterministic
+    // server-side reconstruction was introduced. The old hash is replaced, so
+    // only one pass can remain active.
+    issuedAt = new Date().toISOString();
+    token = await signedVisitorToken("vst_", "visitor-pass", visitor.id, issuedAt);
+    tokenHash = await sha256(token);
+    const { data, error: replacementError } = await db.from("visitors").update({
+      qr_token_hash: tokenHash,
+      qr_issued_at: issuedAt,
+      qr_revoked_at: null,
+      email_delivery_status: "PENDING",
+      email_provider_id: null,
+      email_delivery_error: null,
+      email_attempted_at: issuedAt,
+      updated_by: actorEmail,
+      updated_at: naiveIso(),
+    }).eq("id", visitor.id).eq("qr_token_hash", visitor.qr_token_hash)
+      .select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)").single();
+    if (replacementError) throw new Error(`legacy visitor pass replacement failed: ${replacementError.message}`);
+    issued = data as unknown as VisitorRow;
+  }
+  await sendVisitorPassEmail(issued as unknown as VisitorRow, token);
+  const { data: saved, error: deliveryError } = await db.from("visitors")
+    .select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)")
+    .eq("id", visitor.id).single();
+  if (deliveryError) throw new Error(`visitor pass delivery reload failed: ${deliveryError.message}`);
   return saved as unknown as VisitorRow;
 }
 
@@ -842,16 +1058,21 @@ async function handleApprovalDecision(ctx: AuthContext | null, req: Request, bod
       approval_reason: reason,
       access_status: "REVOKED",
       qr_revoked_at: now,
-      email_delivery_status: "NOT_REQUESTED",
+      email_delivery_status: "PENDING",
       updated_by: ctx!.email,
       updated_at: naiveIso(),
     }).eq("id", visitor.id).eq("approval_status", "PENDING")
       .select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)").maybeSingle();
     if (error) throw new Error(`visitor decline failed: ${error.message}`);
     if (!data) return jsonResponse(fail("This request was already decided.", "VISITOR_APPROVAL_ALREADY_DECIDED"), 409);
+    const delivery = await sendDeclineEmail(data as unknown as VisitorRow);
+    const delivered = await loadVisitor(visitor.id);
+    if (!delivered) return emptyNotFound();
     await writeAudit(ctx!.user, "DECLINE_KIOSK_VISITOR", MODULE, "Visitor", visitor.id,
-      `Visitor request ${visitor.reference_number ?? visitor.id} declined.`, resolveClientIp(req).ip, "INFO");
-    return jsonResponse(ok(toVisitorDto(data as unknown as VisitorRow), "Visitor request declined"), 200);
+      `Visitor request ${visitor.reference_number ?? visitor.id} declined; notification status ${delivery.status}.`, resolveClientIp(req).ip, "INFO");
+    return jsonResponse(ok(toVisitorDto(delivered), delivery.status === "ACCEPTED"
+      ? "Visitor request declined and notification accepted by the email provider"
+      : "Visitor request declined; notification delivery requires staff attention"), 200);
   }
 
   if (!['VERIFIED', 'MANUAL_REVIEW_APPROVED'].includes(visitor.identity_verification_status ?? "")) {
@@ -895,16 +1116,33 @@ async function handleApprovalDecision(ctx: AuthContext | null, req: Request, bod
 async function handleRetryPassEmail(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
   const visitor = await loadVisitor(p.id);
   if (!visitor || visitor.registration_source !== "KIOSK") return emptyNotFound();
-  if (visitor.approval_status !== "APPROVED" || !['VERIFIED', 'MANUAL_REVIEW_APPROVED'].includes(visitor.identity_verification_status ?? "")) {
-    return jsonResponse(fail("Only an approved, identity-cleared visit can receive a pass.", "VISITOR_NOT_CLEARED"), 409);
+  if (visitor.email_delivery_status === "ACCEPTED") return jsonResponse(fail("The provider already accepted this visitor notification. A retry was not sent.", "VISITOR_EMAIL_ALREADY_ACCEPTED"), 409);
+  if (!['FAILED', 'NOT_CONFIGURED'].includes(visitor.email_delivery_status ?? "")) {
+    return jsonResponse(fail("This visitor email is not eligible for retry.", "VISITOR_EMAIL_NOT_RETRYABLE"), 409);
   }
-  if (visitor.email_delivery_status === "ACCEPTED") return jsonResponse(fail("The provider already accepted this pass email. A retry was not sent.", "VISITOR_EMAIL_ALREADY_ACCEPTED"), 409);
-  const saved = await issueAndEmailVisitorPass(visitor, ctx!.email);
-  await writeAudit(ctx!.user, "RETRY_VISITOR_PASS_EMAIL", MODULE, "Visitor", visitor.id,
-    `Visitor pass replaced and email retried; provider status ${saved.email_delivery_status}.`, resolveClientIp(req).ip, "INFO");
-  return jsonResponse(ok(toVisitorDto(saved), saved.email_delivery_status === "ACCEPTED"
-    ? "Replacement pass accepted by the email provider"
-    : "Replacement pass created, but email delivery was not accepted"), 200);
+
+  let result: PassEmailResult;
+  if (visitor.approval_status === "APPROVED") {
+    if (!['VERIFIED', 'MANUAL_REVIEW_APPROVED'].includes(visitor.identity_verification_status ?? "")) {
+      return jsonResponse(fail("Only an approved, identity-cleared visit can receive a pass.", "VISITOR_NOT_CLEARED"), 409);
+    }
+    const saved = await issueAndEmailVisitorPass(visitor, ctx!.email);
+    result = { status: saved.email_delivery_status as PassEmailResult["status"], providerId: saved.email_provider_id ?? undefined, error: saved.email_delivery_error ?? undefined };
+  } else if (visitor.approval_status === "DECLINED") {
+    result = await sendDeclineEmail(visitor);
+  } else if (visitor.approval_status === "PENDING" && visitor.status_token_issued_at) {
+    const statusToken = await signedVisitorToken("vss_", "visitor-status", visitor.id, visitor.status_token_issued_at);
+    result = await sendRegistrationAcknowledgment(visitor, statusToken);
+  } else {
+    return jsonResponse(fail("This visitor request has no retryable notification.", "VISITOR_EMAIL_NOT_RETRYABLE"), 409);
+  }
+  const saved = await loadVisitor(visitor.id);
+  if (!saved) return emptyNotFound();
+  await writeAudit(ctx!.user, "RETRY_VISITOR_EMAIL", MODULE, "Visitor", visitor.id,
+    `Visitor ${visitor.approval_status?.toLowerCase()} notification retried; provider status ${result.status}.`, resolveClientIp(req).ip, "INFO");
+  return jsonResponse(ok(toVisitorDto(saved), result.status === "ACCEPTED"
+    ? "Visitor notification accepted by the email provider"
+    : "Visitor notification delivery was not accepted"), 200);
 }
 
 async function visitorByPassToken(token: string): Promise<VisitorRow | null> {
@@ -915,6 +1153,41 @@ async function visitorByPassToken(token: string): Promise<VisitorRow | null> {
     .eq("qr_token_hash", tokenHash).eq("registration_source", "KIOSK").eq("is_deleted", false).maybeSingle();
   if (error) throw new Error(`visitor pass lookup failed: ${error.message}`);
   return data as unknown as VisitorRow | null;
+}
+
+async function visitorByStatusToken(token: string): Promise<VisitorRow | null> {
+  if (!/^vss_[A-Za-z0-9_-]{40,60}$/.test(token)) return null;
+  const tokenHash = await sha256(token);
+  const { data, error } = await db.from("visitors")
+    .select("id, reference_number, registration_source, approval_status, status_token_expires_at, updated_at, is_deleted")
+    .eq("status_token_hash", tokenHash).eq("registration_source", "KIOSK").eq("is_deleted", false).maybeSingle();
+  if (error) throw new Error(`visitor status lookup failed: ${error.message}`);
+  return data as unknown as VisitorRow | null;
+}
+
+async function handleInspectVisitorStatus(_ctx: AuthContext | null, _req: Request, body: unknown) {
+  const token = String((body as Record<string, unknown> | null)?.token ?? "").trim();
+  const visitor = await visitorByStatusToken(token);
+  if (!visitor) return jsonResponse(fail("This visitor status link is invalid.", "VISITOR_STATUS_INVALID"), 404);
+  if (!visitor.status_token_expires_at || new Date(visitor.status_token_expires_at).getTime() <= Date.now()) {
+    return jsonResponse(fail("This visitor status link has expired.", "VISITOR_STATUS_EXPIRED"), 410);
+  }
+  const status = visitor.approval_status === "APPROVED"
+    ? "APPROVED"
+    : visitor.approval_status === "DECLINED"
+      ? "DECLINED"
+      : "PENDING";
+  const message = status === "APPROVED"
+    ? "Your visit is approved. Use only the QR pass delivered to your registered email address."
+    : status === "DECLINED"
+      ? "Your visitor request was declined. No entry credential was issued."
+      : "Your visitor request remains pending identity review and visit approval. No entry credential is active.";
+  return jsonResponse(ok({
+    referenceNumber: visitor.reference_number,
+    status,
+    message,
+    updatedAt: visitor.updated_at,
+  }, "Visitor request status retrieved"), 200);
 }
 
 function validateVisitorPass(visitor: VisitorRow): { code: string; message: string } | null {
@@ -1313,6 +1586,7 @@ const routes = [
   { method: "GET", path: "/visitor-kiosk/config", guard: { kind: "public" }, handler: handleKioskConfig },
   { method: "POST", path: "/visitor-kiosk/register", guard: { kind: "public" }, handler: handleKioskRegister },
   { method: "POST", path: "/visitor-pass/inspect", guard: { kind: "public" }, handler: handleInspectVisitorPass },
+  { method: "POST", path: "/visitor-status/inspect", guard: { kind: "public" }, handler: handleInspectVisitorStatus },
   { method: "POST", path: "/visitor-passes/check-in", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: (ctx: AuthContext | null, req: Request, body: unknown) => handleVisitorPassScan(ctx, req, body, false) },
   { method: "POST", path: "/visitor-passes/check-out", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: (ctx: AuthContext | null, req: Request, body: unknown) => handleVisitorPassScan(ctx, req, body, true) },
   // Backward compatibility for clients that previously collapsed /visitors

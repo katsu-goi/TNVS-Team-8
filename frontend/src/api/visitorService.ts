@@ -85,6 +85,8 @@ export const visitorService = {
     referenceNumber: string;
     approvalStatus: string;
     identityVerificationStatus: string;
+    emailDeliveryStatus: 'NOT_REQUESTED' | 'ACCEPTED' | 'FAILED' | 'NOT_CONFIGURED';
+    statusToken: string | null;
     duplicate?: boolean;
   }> {
     const { data } = await apiClient.post('/visitor-kiosk/register', payload);
@@ -93,6 +95,16 @@ export const visitorService = {
 
   async inspectVisitorPass(token: string): Promise<any> {
     const { data } = await apiClient.post('/visitor-pass/inspect', { token });
+    return data?.data;
+  },
+
+  async inspectVisitorStatus(token: string): Promise<{
+    referenceNumber: string;
+    status: 'PENDING' | 'APPROVED' | 'DECLINED';
+    message: string;
+    updatedAt: string;
+  }> {
+    const { data } = await apiClient.post('/visitor-status/inspect', { token });
     return data?.data;
   },
 
