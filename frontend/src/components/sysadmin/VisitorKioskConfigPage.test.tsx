@@ -1,9 +1,12 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const service = vi.hoisted(() => ({ load: vi.fn(), update: vi.fn() }));
+const service = vi.hoisted(() => ({
+  load: vi.fn(), update: vi.fn(), loadGmailOAuthStatus: vi.fn(), startGmailOAuth: vi.fn(), disconnectGmail: vi.fn(),
+}));
 vi.mock('../../api/visitorKioskConfigService', () => ({ visitorKioskConfigService: service }));
 import { VisitorKioskConfigPage } from './VisitorKioskConfigPage';
+import { useAuthStore } from '../../stores/authStore';
 
 const purposes = ['DRIVER_PARTNER_ASSISTANCE', 'DRIVER_PARTNER_ONBOARDING', 'HR_RECRUITMENT', 'DOCUMENT_TRANSACTION', 'DELIVERY_PICKUP', 'FLEET_OPERATIONS', 'MAINTENANCE_SERVICE', 'GOVERNMENT_REGULATORY'];
 const config = {
@@ -23,11 +26,25 @@ const state = {
   availableDepartments: ['Operations'], fixedDepartmentPurposes: purposes,
   technical: { publicUrl: 'https://example.test', emailDeliveryConfigured: false, passPolicyConfigured: false, ocrStatus: 'NOT_CONFIGURED', identityVerificationStatus: 'MANUAL_REVIEW_REQUIRED' },
 };
+const gmailStatus = {
+  provider: 'GMAIL', senderEmail: 'hirnamobilitysolutionsinc@gmail.com', scope: 'https://www.googleapis.com/auth/gmail.send',
+  redirectUri: 'https://dunijfrvfozwlykpkfhy.supabase.co/functions/v1/visitor/admin/gmail-oauth/callback',
+  serverSecretsConfigured: true, connected: false, connectionStatus: 'NOT_CONNECTED', connectedAt: null,
+  disconnectedAt: null, lastErrorCode: null, lastErrorAt: null,
+};
 
 describe('VisitorKioskConfigPage', () => {
+  afterEach(() => cleanup());
+
   beforeEach(() => {
     vi.resetAllMocks();
+    useAuthStore.setState({
+      user: { id: 'super-1', email: 'super@example.test', assignedRoles: ['SUPER_ADMIN'], roles: ['SUPER_ADMIN'] },
+    });
     service.load.mockResolvedValue(state);
+    service.loadGmailOAuthStatus.mockResolvedValue(gmailStatus);
+    service.startGmailOAuth.mockResolvedValue({ authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth', redirectUri: gmailStatus.redirectUri, scope: gmailStatus.scope, expiresAt: '2026-10-22T10:10:00Z' });
+    service.disconnectGmail.mockResolvedValue(undefined);
     service.update.mockResolvedValue({ ...state, config: { ...config, registrationEnabled: true, revision: 3 }, readiness: { ready: true, configurationComplete: true, registrationEnabled: true, missing: [] } });
   });
 
@@ -45,5 +62,36 @@ describe('VisitorKioskConfigPage', () => {
       changeReason: 'Organization approved launch',
     })));
     expect(await screen.findByText('Configuration saved. Public visitor registration is enabled.')).toBeInTheDocument();
+  });
+
+  it('always shows the Gmail controls and actual disconnected state to a direct SUPER_ADMIN', async () => {
+    render(<VisitorKioskConfigPage />);
+    expect(await screen.findByRole('heading', { name: 'Gmail Email Integration' })).toBeInTheDocument();
+    expect(screen.getByText('hirnamobilitysolutionsinc@gmail.com')).toBeInTheDocument();
+    expect(screen.getByText('Not Connected')).toBeInTheDocument();
+    expect(screen.getByText('Configured')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Connect Gmail' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Disconnect Gmail' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Refresh Gmail status' })).toBeEnabled();
+  });
+
+  it('keeps the Gmail section visible with a clear error when status loading fails', async () => {
+    service.loadGmailOAuthStatus.mockRejectedValueOnce(new Error('Backend status unavailable'));
+    render(<VisitorKioskConfigPage />);
+    expect(await screen.findByRole('heading', { name: 'Gmail Email Integration' })).toBeInTheDocument();
+    expect(await screen.findByText(/Gmail status could not be loaded: Backend status unavailable/)).toBeInTheDocument();
+    expect(screen.getByText('Error')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Connect Gmail' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Refresh Gmail status' })).toBeEnabled();
+  });
+
+  it('does not expose Gmail management controls to SYSTEM_ADMIN', async () => {
+    useAuthStore.setState({
+      user: { id: 'system-1', email: 'system@example.test', assignedRoles: ['SYSTEM_ADMIN'], roles: ['SYSTEM_ADMIN'] },
+    });
+    render(<VisitorKioskConfigPage />);
+    expect(await screen.findByText('Registration is not ready')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Gmail Email Integration' })).not.toBeInTheDocument();
+    expect(service.loadGmailOAuthStatus).not.toHaveBeenCalled();
   });
 });

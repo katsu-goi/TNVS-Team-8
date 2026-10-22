@@ -14,4 +14,8 @@ describe('visitor Edge Function route matching', () => {
     expect(matchPath('/visitor/visitors/visitor-123/approval', '/visitors/:id/approval'))
       .toEqual({ id: 'visitor-123' });
   });
+
+  it('matches the full function-prefixed Google OAuth callback pathname', () => {
+    expect(matchPath('/visitor/admin/gmail-oauth/callback', '/admin/gmail-oauth/callback')).toEqual({});
+  });
 });

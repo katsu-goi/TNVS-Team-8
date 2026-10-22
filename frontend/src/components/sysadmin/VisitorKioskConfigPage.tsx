@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, AlertTriangle, CheckCircle2, ExternalLink, Loader2, RefreshCw, Save } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle2, ExternalLink, Loader2, Mail, RefreshCw, Save, Unplug } from 'lucide-react';
 import { extractErrorMessage } from '../../api/client';
 import {
   visitorKioskConfigService,
   type VisitorKioskAdminConfig,
   type VisitorKioskAdminState,
+  type VisitorGmailOAuthStatus,
 } from '../../api/visitorKioskConfigService';
+import { useAuthStore } from '../../stores/authStore';
 import { Button, PageHeader, TextAreaField } from '../ui/SharedUI';
 
 const purposeLabels: Record<string, string> = {
@@ -48,13 +50,19 @@ function localConfigurationComplete(config: VisitorKioskAdminConfig, fixedPurpos
 }
 
 export const VisitorKioskConfigPage: React.FC = () => {
+  const directSuperAdmin = useAuthStore((store) => Boolean(store.user?.assignedRoles?.includes('SUPER_ADMIN')));
   const [state, setState] = useState<VisitorKioskAdminState | null>(null);
   const [form, setForm] = useState<VisitorKioskAdminConfig | null>(null);
+  const [gmail, setGmail] = useState<VisitorGmailOAuthStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [gmailBusy, setGmailBusy] = useState(false);
+  const [gmailLoading, setGmailLoading] = useState(false);
+  const [gmailError, setGmailError] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [changeReason, setChangeReason] = useState('');
+  const [disconnectReason, setDisconnectReason] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -66,6 +74,21 @@ export const VisitorKioskConfigPage: React.FC = () => {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  const loadGmailStatus = useCallback(async () => {
+    if (!directSuperAdmin) {
+      setGmail(null); setGmailError('');
+      return;
+    }
+    setGmailLoading(true); setGmailError('');
+    try { setGmail(await visitorKioskConfigService.loadGmailOAuthStatus()); }
+    catch (statusError) {
+      setGmail(null);
+      setGmailError(extractErrorMessage(statusError));
+    } finally { setGmailLoading(false); }
+  }, [directSuperAdmin]);
+
+  useEffect(() => { void loadGmailStatus(); }, [loadGmailStatus]);
 
   const localComplete = useMemo(() => Boolean(form && state && localConfigurationComplete(
     form, state.fixedDepartmentPurposes, state.availableDepartments,
@@ -108,6 +131,35 @@ export const VisitorKioskConfigPage: React.FC = () => {
       setNotice(saved.readiness.ready ? 'Configuration saved. Public visitor registration is enabled.' : 'Configuration saved. Registration remains disabled until every readiness requirement is complete.');
     } catch (saveError) { setError(extractErrorMessage(saveError)); }
     finally { setSaving(false); }
+  };
+
+  const connectGmail = async () => {
+    setGmailBusy(true); setGmailError(''); setNotice('');
+    try {
+      const authorization = await visitorKioskConfigService.startGmailOAuth();
+      const popup = window.open(authorization.authorizationUrl, '_blank', 'noopener,noreferrer');
+      if (!popup) throw new Error('The Google authorization window was blocked. Allow pop-ups for this site and try again.');
+      setNotice('Google authorization opened in a new window. Complete consent using the authorized Gmail account, then select Refresh Gmail status. No email is sent during connection.');
+    } catch (connectError) { setGmailError(extractErrorMessage(connectError)); }
+    finally { setGmailBusy(false); }
+  };
+
+  const refreshGmail = async () => {
+    setGmailBusy(true);
+    try { await loadGmailStatus(); }
+    finally { setGmailBusy(false); }
+  };
+
+  const disconnectGmail = async () => {
+    if (disconnectReason.trim().length < 10) return;
+    setGmailBusy(true); setGmailError(''); setNotice('');
+    try {
+      await visitorKioskConfigService.disconnectGmail(disconnectReason.trim());
+      setDisconnectReason('');
+      setGmail(await visitorKioskConfigService.loadGmailOAuthStatus());
+      setNotice('Gmail authorization was revoked and the encrypted refresh token was removed.');
+    } catch (disconnectError) { setGmailError(extractErrorMessage(disconnectError)); }
+    finally { setGmailBusy(false); }
   };
 
   if (loading) return <div className="flex min-h-72 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-red-700" /><span className="ml-3 text-sm text-slate-600">Loading visitor kiosk policy…</span></div>;
@@ -187,10 +239,44 @@ export const VisitorKioskConfigPage: React.FC = () => {
         <h2 className="text-lg font-black text-slate-900">Technical status and activation</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[
           ['Public URL', state.technical.publicUrl || 'Not configured'],
-          ['Email delivery', state.technical.emailDeliveryConfigured ? 'Configured' : 'Not configured'],
+          ['Email delivery', state.technical.emailDeliveryConfigured || gmail?.connected ? 'Configured' : 'Not configured'],
           ['Pass validity policy', state.technical.passPolicyConfigured ? 'Configured' : 'Not configured'],
           ['Identity verification', state.technical.identityVerificationStatus],
         ].map(([label, value]) => <div key={label} className="rounded-xl bg-slate-50 p-4"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 break-words text-sm font-semibold text-slate-800">{value}</p></div>)}</div>
+
+        {directSuperAdmin && <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-5" data-testid="gmail-email-integration">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex gap-3">
+              <Mail className={`mt-0.5 h-6 w-6 ${gmail?.connected ? 'text-emerald-700' : gmailError || gmail?.connectionStatus === 'ERROR' ? 'text-rose-700' : 'text-slate-500'}`} />
+              <div>
+                <h3 className="font-black text-slate-900">Gmail Email Integration</h3>
+                <p className="mt-1 text-sm text-slate-600">Email provider: <strong>Gmail API</strong></p>
+                <p className="mt-1 text-sm text-slate-600">Sender address: <strong>{gmail?.senderEmail ?? 'hirnamobilitysolutionsinc@gmail.com'}</strong></p>
+                <p className="mt-1 text-xs text-slate-500">Scope: {gmail?.scope ?? 'https://www.googleapis.com/auth/gmail.send'}</p>
+              </div>
+            </div>
+            <span className={`rounded-full px-3 py-1 text-xs font-bold ${gmail?.connected ? 'bg-emerald-100 text-emerald-800' : gmailError || gmail?.connectionStatus === 'ERROR' ? 'bg-rose-100 text-rose-800' : 'bg-slate-200 text-slate-700'}`}>
+              {gmailLoading ? 'CHECKING' : gmail?.connected ? 'CONNECTED' : gmailError || gmail?.connectionStatus === 'ERROR' ? 'ERROR' : 'NOT CONNECTED'}
+            </span>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <div className="rounded-xl bg-white p-3 text-xs text-slate-600"><span className="block font-bold uppercase tracking-wide text-slate-500">Connection status</span><span className="mt-1 block font-semibold text-slate-800">{gmailLoading ? 'Checking backend…' : gmail?.connected ? 'Connected' : gmailError || gmail?.connectionStatus === 'ERROR' ? 'Error' : 'Not Connected'}</span></div>
+            <div className="rounded-xl bg-white p-3 text-xs text-slate-600"><span className="block font-bold uppercase tracking-wide text-slate-500">Gmail API configuration</span><span className="mt-1 block font-semibold text-slate-800">{gmailLoading ? 'Checking…' : gmail?.serverSecretsConfigured ? 'Configured' : gmail ? 'Not configured' : 'Unavailable'}</span></div>
+            <div className="rounded-xl bg-white p-3 text-xs text-slate-600"><span className="block font-bold uppercase tracking-wide text-slate-500">Last connection time</span><span className="mt-1 block font-semibold text-slate-800">{gmail?.connectedAt ? new Date(gmail.connectedAt).toLocaleString() : 'Never connected'}</span></div>
+            <div className="rounded-xl bg-white p-3 text-xs text-slate-600 md:col-span-3"><span className="block font-bold uppercase tracking-wide text-slate-500">Authorized redirect URI</span><code className="mt-1 block break-all text-slate-800">{gmail?.redirectUri || 'https://dunijfrvfozwlykpkfhy.supabase.co/functions/v1/visitor/admin/gmail-oauth/callback'}</code></div>
+          </div>
+          {gmailError && <p role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">Gmail status could not be loaded: {gmailError}</p>}
+          {gmail?.lastErrorCode && <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">Last backend error: {gmail.lastErrorCode}. Reconnect after correcting the server configuration.</p>}
+          <p className="mt-3 text-xs text-slate-500">OAuth client secrets, refresh tokens, and access tokens are never returned to this page. Connecting does not send a test or live visitor email.</p>
+          {gmail?.connected && <div className="mt-4 rounded-xl border border-rose-200 bg-white p-4">
+            <Field label="Reason to revoke Gmail authorization" requiredByPolicy value={disconnectReason} onChange={(event) => setDisconnectReason(event.target.value)} minLength={10} maxLength={500} placeholder="Explain why notification delivery is being disconnected" />
+          </div>}
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+            <Button variant="primary" busy={gmailBusy} disabled={gmailBusy || gmailLoading || gmail?.connected || gmail?.serverSecretsConfigured === false} onClick={() => void connectGmail()}><ExternalLink className="h-4 w-4" />Connect Gmail</Button>
+            <Button disabled={gmailBusy || gmailLoading || !gmail?.connected || disconnectReason.trim().length < 10} onClick={() => void disconnectGmail()}><Unplug className="h-4 w-4" />Disconnect Gmail</Button>
+            <Button disabled={gmailBusy} onClick={() => void refreshGmail()}><RefreshCw className="h-4 w-4" />Refresh Gmail status</Button>
+          </div>
+        </div>}
         <label className={`mt-5 flex items-start gap-3 rounded-xl border p-4 ${localComplete ? 'border-emerald-300 bg-emerald-50' : 'border-amber-300 bg-amber-50'}`}><input type="checkbox" className="mt-1 h-5 w-5 accent-red-700" checked={form.registrationEnabled} disabled={!form.registrationEnabled && !localComplete} onChange={(e) => update('registrationEnabled', e.target.checked)} /><span><span className="block text-sm font-black text-slate-900">Enable public visitor registration</span><span className="text-xs text-slate-600">The backend will reject activation unless all fields, active-department routes, and organizational reviews are complete.</span></span></label>
       </section>
 
