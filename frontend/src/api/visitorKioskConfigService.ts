@@ -57,6 +57,8 @@ export type VisitorGmailOAuthStatus = {
   scope: string;
   redirectUri: string;
   serverSecretsConfigured: boolean;
+  serverConfigurationStatus: 'CONFIGURED' | 'MISSING' | 'INVALID';
+  configurationErrorCode: string | null;
   connected: boolean;
   connectionStatus: 'NOT_CONNECTED' | 'CONNECTED' | 'ERROR';
   connectedAt: string | null;

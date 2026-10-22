@@ -23,6 +23,7 @@ import {
   exchangeGmailAuthorizationCode,
   GMAIL_SEND_SCOPE,
   GmailOAuthError,
+  gmailOAuthConfigurationStatus,
   gmailOAuthRedirectUri,
   gmailOAuthSecrets,
   randomOAuthValue,
@@ -813,6 +814,18 @@ type GmailConfigurationRow = {
   updated_at: string;
 };
 
+const emptyGmailConfiguration = (): GmailConfigurationRow => ({
+  encrypted_refresh_token: null,
+  granted_scopes: [],
+  connection_status: "NOT_CONNECTED",
+  connected_by: null,
+  connected_at: null,
+  disconnected_at: null,
+  last_error_code: null,
+  last_error_at: null,
+  updated_at: new Date().toISOString(),
+});
+
 const GMAIL_OAUTH_STATE_TTL_MINUTES = 10;
 
 function gmailOAuthHtml(success: boolean, title: string, detail: string, status = 200): Response {
@@ -836,63 +849,85 @@ function gmailOAuthHtml(success: boolean, title: string, detail: string, status 
 async function loadGmailConfiguration(): Promise<GmailConfigurationRow> {
   const { data, error } = await db.from("visitor_gmail_oauth_configuration")
     .select("encrypted_refresh_token,granted_scopes,connection_status,connected_by,connected_at,disconnected_at,last_error_code,last_error_at,updated_at")
-    .eq("id", 1).single();
-  if (error) throw new Error(`visitor Gmail configuration load failed: ${error.message}`);
-  return data as GmailConfigurationRow;
+    .eq("id", 1).maybeSingle();
+  if (error) throw new GmailOAuthError("GMAIL_CONFIGURATION_DATABASE_ERROR", "The Gmail OAuth configuration could not be loaded.");
+  return data ? data as GmailConfigurationRow : emptyGmailConfiguration();
 }
 
 async function handleGmailOAuthStatus() {
-  const row = await loadGmailConfiguration();
-  let redirectUri = "";
-  try { redirectUri = gmailOAuthRedirectUri(config.url); } catch { /* reported as not configured */ }
-  return jsonResponse(ok({
-    provider: "GMAIL",
-    senderEmail: VISITOR_GMAIL_SENDER,
-    scope: GMAIL_SEND_SCOPE,
-    redirectUri,
-    serverSecretsConfigured: Boolean(
-      envText("GOOGLE_GMAIL_CLIENT_ID") && envText("GOOGLE_GMAIL_CLIENT_SECRET") && envText("VISITOR_GMAIL_OAUTH_ENCRYPTION_KEY"),
-    ),
-    connected: row.connection_status === "CONNECTED" && Boolean(row.encrypted_refresh_token),
-    connectionStatus: row.connection_status,
-    connectedAt: row.connected_at,
-    disconnectedAt: row.disconnected_at,
-    lastErrorCode: row.last_error_code,
-    lastErrorAt: row.last_error_at,
-  }, "Gmail OAuth status loaded"), 200);
+  try {
+    const row = await loadGmailConfiguration();
+    const serverConfiguration = gmailOAuthConfigurationStatus();
+    let redirectUri = "";
+    try { redirectUri = gmailOAuthRedirectUri(config.url); } catch { /* returned as a safe configuration state */ }
+    return jsonResponse(ok({
+      provider: "GMAIL",
+      senderEmail: VISITOR_GMAIL_SENDER,
+      scope: GMAIL_SEND_SCOPE,
+      redirectUri,
+      serverSecretsConfigured: serverConfiguration.configured && Boolean(redirectUri),
+      serverConfigurationStatus: redirectUri ? serverConfiguration.status : "INVALID",
+      configurationErrorCode: redirectUri ? serverConfiguration.errorCode : "GMAIL_REDIRECT_URI_INVALID",
+      connected: row.connection_status === "CONNECTED" && Boolean(row.encrypted_refresh_token),
+      connectionStatus: row.connection_status,
+      connectedAt: row.connected_at,
+      disconnectedAt: row.disconnected_at,
+      lastErrorCode: row.last_error_code,
+      lastErrorAt: row.last_error_at,
+    }, "Gmail OAuth status loaded"), 200);
+  } catch (error) {
+    const code = error instanceof GmailOAuthError ? error.code : "GMAIL_CONFIGURATION_DATABASE_ERROR";
+    console.error(`[visitor-gmail] status failed code=${code}`);
+    return jsonResponse(fail("Gmail connection status is temporarily unavailable.", code), 503);
+  }
 }
 
 async function handleGmailOAuthAuthorize(ctx: AuthContext | null, req: Request) {
-  const secrets = gmailOAuthSecrets();
-  const redirectUri = gmailOAuthRedirectUri(config.url);
-  const state = randomOAuthValue(32);
-  const codeVerifier = randomOAuthValue(64);
-  const now = new Date();
-  const expiresAt = new Date(now.getTime() + GMAIL_OAUTH_STATE_TTL_MINUTES * 60_000).toISOString();
-  const [stateHash, encryptedVerifier] = await Promise.all([
-    sha256Hex(state),
-    encryptGmailSecret(codeVerifier, "pkce-verifier", secrets.encryptionKey),
-  ]);
+  try {
+    const secrets = gmailOAuthSecrets();
+    const redirectUri = gmailOAuthRedirectUri(config.url);
+    const state = randomOAuthValue(32);
+    const codeVerifier = randomOAuthValue(64);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + GMAIL_OAUTH_STATE_TTL_MINUTES * 60_000).toISOString();
+    const [stateHash, encryptedVerifier] = await Promise.all([
+      sha256Hex(state),
+      encryptGmailSecret(codeVerifier, "pkce-verifier", secrets.encryptionKey),
+    ]);
 
-  await db.from("visitor_gmail_oauth_states").delete().lt("expires_at", now.toISOString());
-  const { error } = await db.from("visitor_gmail_oauth_states").insert({
-    state_hash: stateHash,
-    encrypted_code_verifier: encryptedVerifier,
-    initiated_by: ctx!.userId,
-    initiated_ip: resolveClientIp(req).ip,
-    expires_at: expiresAt,
-  });
-  if (error) throw new Error(`Gmail OAuth state initialization failed: ${error.message}`);
+    await db.from("visitor_gmail_oauth_states").delete().lt("expires_at", now.toISOString());
+    const { error } = await db.from("visitor_gmail_oauth_states").insert({
+      state_hash: stateHash,
+      encrypted_code_verifier: encryptedVerifier,
+      initiated_by: ctx!.userId,
+      initiated_ip: resolveClientIp(req).ip,
+      expires_at: expiresAt,
+    });
+    if (error) throw new GmailOAuthError("GMAIL_CONFIGURATION_DATABASE_ERROR", "The secure Gmail authorization state could not be stored.");
 
-  const authorizationUrl = await buildGmailAuthorizationUrl({
-    clientId: secrets.clientId,
-    redirectUri,
-    state,
-    codeVerifier,
-  });
-  await writeAudit(ctx!.user, "VISITOR_GMAIL_OAUTH_STARTED", MODULE, "VisitorGmailOAuth", "1",
-    `A send-only Gmail OAuth connection was initiated for ${VISITOR_GMAIL_SENDER}.`, resolveClientIp(req).ip, "HIGH");
-  return jsonResponse(ok({ authorizationUrl, redirectUri, scope: GMAIL_SEND_SCOPE, expiresAt }, "Gmail authorization initialized"), 200);
+    const authorizationUrl = await buildGmailAuthorizationUrl({
+      clientId: secrets.clientId,
+      redirectUri,
+      state,
+      codeVerifier,
+    });
+    await writeAudit(ctx!.user, "VISITOR_GMAIL_OAUTH_STARTED", MODULE, "VisitorGmailOAuth", "1",
+      `A send-only Gmail OAuth connection was initiated for ${VISITOR_GMAIL_SENDER}.`, resolveClientIp(req).ip, "HIGH");
+    return jsonResponse(ok({ authorizationUrl, redirectUri, scope: GMAIL_SEND_SCOPE, expiresAt }, "Gmail authorization initialized"), 200);
+  } catch (error) {
+    const code = error instanceof GmailOAuthError ? error.code : "GMAIL_OAUTH_INITIALIZATION_FAILED";
+    const status = code === "GMAIL_OAUTH_NOT_CONFIGURED" || code === "GMAIL_ENCRYPTION_KEY_INVALID"
+      || code === "GMAIL_REDIRECT_URI_INVALID" || code === "GMAIL_CONFIGURATION_DATABASE_ERROR" ? 503 : 502;
+    const message = code === "GMAIL_ENCRYPTION_KEY_INVALID"
+      ? "Gmail OAuth cannot start because the server encryption key is invalid. Configure a base64 key that decodes to exactly 32 bytes."
+      : code === "GMAIL_OAUTH_NOT_CONFIGURED"
+      ? "Gmail OAuth cannot start because required server credentials are missing."
+      : code === "GMAIL_CONFIGURATION_DATABASE_ERROR"
+      ? "Gmail OAuth cannot start because its secure server-side storage is unavailable."
+      : "Gmail OAuth authorization could not be initialized.";
+    console.error(`[visitor-gmail] authorize failed code=${code}`);
+    return jsonResponse(fail(message, code), status);
+  }
 }
 
 async function consumeGmailOAuthState(state: string) {
@@ -912,7 +947,13 @@ async function handleGmailOAuthCallback(_ctx: AuthContext | null, req: Request) 
     return gmailOAuthHtml(false, "Gmail connection rejected", "The authorization state is missing or invalid. Start again from the authenticated admin page.", 400);
   }
 
-  const savedState = await consumeGmailOAuthState(state);
+  let savedState: Awaited<ReturnType<typeof consumeGmailOAuthState>>;
+  try {
+    savedState = await consumeGmailOAuthState(state);
+  } catch {
+    console.error("[visitor-gmail] callback state validation failed code=GMAIL_CONFIGURATION_DATABASE_ERROR");
+    return gmailOAuthHtml(false, "Gmail connection unavailable", "The secure authorization state could not be validated. Return to the admin page and try again later.", 503);
+  }
   if (!savedState) {
     return gmailOAuthHtml(false, "Gmail connection rejected", "This authorization request is invalid, expired, or has already been used.", 400);
   }
@@ -942,7 +983,8 @@ async function handleGmailOAuthCallback(_ctx: AuthContext | null, req: Request) 
     });
     const encryptedRefreshToken = await encryptGmailSecret(tokens.refreshToken, "refresh-token", secrets.encryptionKey);
     const connectedAt = new Date().toISOString();
-    const { error } = await db.from("visitor_gmail_oauth_configuration").update({
+    const { error } = await db.from("visitor_gmail_oauth_configuration").upsert({
+      id: 1,
       sender_email: VISITOR_GMAIL_SENDER,
       encrypted_refresh_token: encryptedRefreshToken,
       granted_scopes: tokens.scopes,
@@ -954,13 +996,14 @@ async function handleGmailOAuthCallback(_ctx: AuthContext | null, req: Request) 
       last_error_code: null,
       last_error_at: null,
       updated_at: connectedAt,
-    }).eq("id", 1);
-    if (error) throw new Error(`Gmail OAuth credential storage failed: ${error.message}`);
+    }, { onConflict: "id" });
+    if (error) throw new GmailOAuthError("GMAIL_CONFIGURATION_DATABASE_ERROR", "The encrypted Gmail credential could not be stored.");
     await writeAudit(actor, "VISITOR_GMAIL_OAUTH_CONNECTED", MODULE, "VisitorGmailOAuth", "1",
       `Gmail send-only authorization was connected for ${VISITOR_GMAIL_SENDER}.`, resolveClientIp(req).ip, "HIGH");
     return gmailOAuthHtml(true, "Gmail connected", `${VISITOR_GMAIL_SENDER} is authorized for visitor notification sending. No test email was sent.`);
   } catch (error) {
     const code = error instanceof GmailOAuthError ? error.code : "GMAIL_OAUTH_CALLBACK_FAILED";
+    console.error(`[visitor-gmail] callback failed code=${code}`);
     await writeAudit(actor, "VISITOR_GMAIL_OAUTH_FAILED", MODULE, "VisitorGmailOAuth", "1",
       `Gmail OAuth callback failed with ${code}. No live email was sent.`, resolveClientIp(req).ip, "HIGH");
     return gmailOAuthHtml(false, "Gmail connection failed", "The secure token exchange could not be completed. Return to the admin page and review the server configuration.", 502);
@@ -972,7 +1015,13 @@ async function handleGmailOAuthDisconnect(ctx: AuthContext | null, req: Request,
   if (reason.length < 10 || reason.length > 500) {
     return badRequest("A disconnect reason of 10–500 characters is required.", "GMAIL_DISCONNECT_REASON_REQUIRED");
   }
-  const row = await loadGmailConfiguration();
+  let row: GmailConfigurationRow;
+  try {
+    row = await loadGmailConfiguration();
+  } catch {
+    console.error("[visitor-gmail] disconnect failed code=GMAIL_CONFIGURATION_DATABASE_ERROR");
+    return jsonResponse(fail("Gmail cannot be disconnected because its secure server-side storage is unavailable.", "GMAIL_CONFIGURATION_DATABASE_ERROR"), 503);
+  }
   if (row.connection_status !== "CONNECTED" || !row.encrypted_refresh_token) {
     return jsonResponse(fail("Gmail is not connected.", "GMAIL_NOT_CONNECTED"), 409);
   }
@@ -982,6 +1031,7 @@ async function handleGmailOAuthDisconnect(ctx: AuthContext | null, req: Request,
     await revokeGoogleRefreshToken(refreshToken);
   } catch (error) {
     const errorCode = error instanceof GmailOAuthError ? error.code : "GMAIL_REVOKE_FAILED";
+    console.error(`[visitor-gmail] disconnect revocation failed code=${errorCode}`);
     await db.from("visitor_gmail_oauth_configuration").update({
       connection_status: "ERROR", last_error_code: errorCode, last_error_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     }).eq("id", 1);
@@ -998,7 +1048,10 @@ async function handleGmailOAuthDisconnect(ctx: AuthContext | null, req: Request,
     last_error_at: null,
     updated_at: disconnectedAt,
   }).eq("id", 1);
-  if (error) throw new Error(`Gmail disconnect storage failed: ${error.message}`);
+  if (error) {
+    console.error("[visitor-gmail] disconnect storage failed code=GMAIL_CONFIGURATION_DATABASE_ERROR");
+    return jsonResponse(fail("Google revoked the authorization, but the local connection record could not be cleared. Contact the system administrator.", "GMAIL_CONFIGURATION_DATABASE_ERROR"), 503);
+  }
   await writeAudit(ctx!.user, "VISITOR_GMAIL_OAUTH_DISCONNECTED", MODULE, "VisitorGmailOAuth", "1",
     `Gmail authorization for ${VISITOR_GMAIL_SENDER} was revoked. Reason: ${reason}`, resolveClientIp(req).ip, "HIGH");
   return jsonResponse(ok({ connected: false }, "Gmail authorization revoked"), 200);

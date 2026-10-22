@@ -14,6 +14,12 @@ export type GmailOAuthSecrets = {
   encryptionKey: string;
 };
 
+export type GmailOAuthConfigurationStatus = {
+  status: "CONFIGURED" | "MISSING" | "INVALID";
+  configured: boolean;
+  errorCode: "GMAIL_OAUTH_NOT_CONFIGURED" | "GMAIL_ENCRYPTION_KEY_INVALID" | null;
+};
+
 export type GmailMessagePayload = {
   subject: string;
   text: string;
@@ -37,17 +43,42 @@ function envText(name: string): string {
   }
 }
 
-export function gmailOAuthSecrets(): GmailOAuthSecrets {
-  const secrets = {
-    clientId: envText("GOOGLE_GMAIL_CLIENT_ID"),
-    clientSecret: envText("GOOGLE_GMAIL_CLIENT_SECRET"),
-    encryptionKey: envText("VISITOR_GMAIL_OAUTH_ENCRYPTION_KEY"),
+function readGmailOAuthSecrets(environment?: Partial<Record<"GOOGLE_GMAIL_CLIENT_ID" | "GOOGLE_GMAIL_CLIENT_SECRET" | "VISITOR_GMAIL_OAUTH_ENCRYPTION_KEY", string>>): GmailOAuthSecrets {
+  const read = (name: "GOOGLE_GMAIL_CLIENT_ID" | "GOOGLE_GMAIL_CLIENT_SECRET" | "VISITOR_GMAIL_OAUTH_ENCRYPTION_KEY") =>
+    environment ? String(environment[name] ?? "").trim() : envText(name);
+  return {
+    clientId: read("GOOGLE_GMAIL_CLIENT_ID"),
+    clientSecret: read("GOOGLE_GMAIL_CLIENT_SECRET"),
+    encryptionKey: read("VISITOR_GMAIL_OAUTH_ENCRYPTION_KEY"),
   };
+}
+
+export function gmailOAuthConfigurationStatus(
+  environment?: Partial<Record<"GOOGLE_GMAIL_CLIENT_ID" | "GOOGLE_GMAIL_CLIENT_SECRET" | "VISITOR_GMAIL_OAUTH_ENCRYPTION_KEY", string>>,
+): GmailOAuthConfigurationStatus {
+  const secrets = readGmailOAuthSecrets(environment);
   if (!secrets.clientId || !secrets.clientSecret || !secrets.encryptionKey) {
-    throw new GmailOAuthError(
-      "GMAIL_OAUTH_NOT_CONFIGURED",
-      "Google Gmail OAuth client credentials and the token-encryption key must be configured server-side.",
-    );
+    return { status: "MISSING", configured: false, errorCode: "GMAIL_OAUTH_NOT_CONFIGURED" };
+  }
+  try {
+    const raw = fromBase64(secrets.encryptionKey);
+    const valid = raw.byteLength === 32;
+    raw.fill(0);
+    if (!valid) return { status: "INVALID", configured: false, errorCode: "GMAIL_ENCRYPTION_KEY_INVALID" };
+  } catch {
+    return { status: "INVALID", configured: false, errorCode: "GMAIL_ENCRYPTION_KEY_INVALID" };
+  }
+  return { status: "CONFIGURED", configured: true, errorCode: null };
+}
+
+export function gmailOAuthSecrets(): GmailOAuthSecrets {
+  const secrets = readGmailOAuthSecrets();
+  const configuration = gmailOAuthConfigurationStatus();
+  if (configuration.errorCode === "GMAIL_OAUTH_NOT_CONFIGURED") {
+    throw new GmailOAuthError(configuration.errorCode, "Google Gmail OAuth client credentials and the token-encryption key must be configured server-side.");
+  }
+  if (configuration.errorCode === "GMAIL_ENCRYPTION_KEY_INVALID") {
+    throw new GmailOAuthError(configuration.errorCode, "The Gmail OAuth encryption key must be valid base64 that decodes to exactly 32 bytes.");
   }
   return secrets;
 }

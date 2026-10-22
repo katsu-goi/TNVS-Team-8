@@ -29,7 +29,8 @@ const state = {
 const gmailStatus = {
   provider: 'GMAIL', senderEmail: 'hirnamobilitysolutionsinc@gmail.com', scope: 'https://www.googleapis.com/auth/gmail.send',
   redirectUri: 'https://dunijfrvfozwlykpkfhy.supabase.co/functions/v1/visitor/admin/gmail-oauth/callback',
-  serverSecretsConfigured: true, connected: false, connectionStatus: 'NOT_CONNECTED', connectedAt: null,
+  serverSecretsConfigured: true, serverConfigurationStatus: 'CONFIGURED', configurationErrorCode: null,
+  connected: false, connectionStatus: 'NOT_CONNECTED', connectedAt: null,
   disconnectedAt: null, lastErrorCode: null, lastErrorAt: null,
 };
 
@@ -81,8 +82,32 @@ describe('VisitorKioskConfigPage', () => {
     expect(await screen.findByRole('heading', { name: 'Gmail Email Integration' })).toBeInTheDocument();
     expect(await screen.findByText(/Gmail status could not be loaded: Backend status unavailable/)).toBeInTheDocument();
     expect(screen.getByText('Error')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Connect Gmail' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Connect Gmail' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Refresh Gmail status' })).toBeEnabled();
+  });
+
+  it('keeps a failed Connect action separate from the actual NOT_CONNECTED status', async () => {
+    service.startGmailOAuth.mockRejectedValueOnce(new Error('The Gmail OAuth encryption key is invalid.'));
+    render(<VisitorKioskConfigPage />);
+    expect(await screen.findByText('Not Connected')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Gmail' }));
+    expect(await screen.findByText(/Gmail connection failed: The Gmail OAuth encryption key is invalid/)).toBeInTheDocument();
+    expect(screen.getByText('NOT CONNECTED')).toBeInTheDocument();
+    expect(screen.queryByText(/Gmail status could not be loaded/)).not.toBeInTheDocument();
+  });
+
+  it('shows malformed encryption configuration without changing first-time connection state', async () => {
+    service.loadGmailOAuthStatus.mockResolvedValueOnce({
+      ...gmailStatus,
+      serverSecretsConfigured: false,
+      serverConfigurationStatus: 'INVALID',
+      configurationErrorCode: 'GMAIL_ENCRYPTION_KEY_INVALID',
+    });
+    render(<VisitorKioskConfigPage />);
+    expect(await screen.findByText('Not Connected')).toBeInTheDocument();
+    expect(screen.getByText('Invalid')).toBeInTheDocument();
+    expect(screen.getByText(/GMAIL_ENCRYPTION_KEY_INVALID/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Connect Gmail' })).toBeDisabled();
   });
 
   it('does not expose Gmail management controls to SYSTEM_ADMIN', async () => {

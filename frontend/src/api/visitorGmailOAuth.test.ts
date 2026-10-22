@@ -8,6 +8,7 @@ import {
   encryptGmailSecret,
   exchangeGmailAuthorizationCode,
   GMAIL_SEND_SCOPE,
+  gmailOAuthConfigurationStatus,
   gmailOAuthRedirectUri,
   sendGmailMessage,
   VISITOR_GMAIL_SENDER,
@@ -16,6 +17,18 @@ import {
 const projectUrl = 'https://dunijfrvfozwlykpkfhy.supabase.co';
 
 describe('visitor Gmail OAuth security', () => {
+  it('distinguishes missing, malformed, and valid server configuration without exposing values', () => {
+    expect(gmailOAuthConfigurationStatus({})).toEqual({
+      status: 'MISSING', configured: false, errorCode: 'GMAIL_OAUTH_NOT_CONFIGURED',
+    });
+    expect(gmailOAuthConfigurationStatus({
+      GOOGLE_GMAIL_CLIENT_ID: 'client', GOOGLE_GMAIL_CLIENT_SECRET: 'secret', VISITOR_GMAIL_OAUTH_ENCRYPTION_KEY: 'not-base64!!!',
+    })).toEqual({ status: 'INVALID', configured: false, errorCode: 'GMAIL_ENCRYPTION_KEY_INVALID' });
+    expect(gmailOAuthConfigurationStatus({
+      GOOGLE_GMAIL_CLIENT_ID: 'client', GOOGLE_GMAIL_CLIENT_SECRET: 'secret', VISITOR_GMAIL_OAUTH_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString('base64'),
+    })).toEqual({ status: 'CONFIGURED', configured: true, errorCode: null });
+  });
+
   it('produces the exact deployed callback and a send-only offline PKCE request', async () => {
     const redirectUri = gmailOAuthRedirectUri(projectUrl);
     expect(redirectUri).toBe(`${projectUrl}/functions/v1/visitor/admin/gmail-oauth/callback`);
@@ -94,6 +107,8 @@ describe('visitor Gmail OAuth security', () => {
     expect(visitor).toContain('const DIRECT_SUPER_ADMIN = { kind: "assignedRoles", roles: ["SUPER_ADMIN"] }');
     expect(visitor).toContain('path: "/admin/gmail-oauth/authorize", guard: DIRECT_SUPER_ADMIN');
     expect(visitor).toContain('path: "/admin/gmail-oauth/disconnect", guard: DIRECT_SUPER_ADMIN');
+    expect(visitor).toContain('.eq("id", 1).maybeSingle()');
+    expect(visitor).toContain('serverConfigurationStatus');
     expect(migration).toContain('revoke all on public.visitor_gmail_oauth_configuration from public, anon, authenticated');
     expect(migration).toContain('revoke all on public.visitor_gmail_oauth_states from public, anon, authenticated');
     expect(app).toContain('path="admin/visitor-kiosk" element={<AdminPortalRoute><VisitorKioskConfigPage /></AdminPortalRoute>}');
