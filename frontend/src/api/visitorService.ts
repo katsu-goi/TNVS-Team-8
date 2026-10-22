@@ -10,11 +10,16 @@ export type KioskHost = { id: string; name: string; department: string; position
 export type KioskPurpose = { value: string; label: string; department?: string | null };
 export type KioskConfig = {
   privacy: {
+    organizationName: string;
     controllerName: string;
     controllerContact: string;
     dpoContact: string;
+    processingPurposes: string;
     lawfulBasis: string;
+    privacyNoticeText: string;
+    acknowledgementText: string;
     retentionPolicy: string;
+    retentionDays: number | null;
     rightsProcess: string;
     processors: string;
     safeguards: string;
@@ -22,6 +27,8 @@ export type KioskConfig = {
     noticeVersion: string;
     acceptedIdTypes: string[];
     ready: boolean;
+    configurationComplete: boolean;
+    registrationEnabled: boolean;
     missing: string[];
     ocr: { status: 'NOT_CONFIGURED'; message: string };
     identityVerification: { status: 'NOT_CONFIGURED'; livenessSupported: false; message: string };

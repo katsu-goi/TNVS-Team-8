@@ -6,6 +6,15 @@ import { adminDb } from "../_shared/db.ts";
 import { naiveIso } from "../_shared/auth-users.ts";
 import { writeAudit } from "../_shared/lockout.ts";
 import { resolveClientIp } from "../_shared/ip.ts";
+import {
+  evaluateVisitorKioskReadiness,
+  parsePurposeDepartmentRoutes,
+  publicVisitorKioskPrivacy,
+  splitVisitorKioskList,
+  VISITOR_KIOSK_FIXED_DEPARTMENT_PURPOSES,
+  VISITOR_KIOSK_PURPOSES,
+  type VisitorKioskPolicy,
+} from "../_shared/visitor-kiosk-config.ts";
 import QRCode from "npm:qrcode@1.5.4";
 
 const db = adminDb();
@@ -27,26 +36,8 @@ function toUtcIso(s: string): string {
   return naive + "Z";
 }
 
-const KIOSK_PURPOSES = [
-  { value: "MEETING_EMPLOYEE", label: "Meeting an Employee" },
-  { value: "DRIVER_PARTNER_ASSISTANCE", label: "Driver-Partner Inquiry or Assistance" },
-  { value: "DRIVER_PARTNER_ONBOARDING", label: "Driver-Partner Onboarding or Requirements" },
-  { value: "HR_RECRUITMENT", label: "Human Resources or Recruitment" },
-  { value: "BUSINESS_MEETING", label: "Business Meeting or Partnership" },
-  { value: "DOCUMENT_TRANSACTION", label: "Document Submission or Collection" },
-  { value: "DELIVERY_PICKUP", label: "Delivery or Pickup" },
-  { value: "FLEET_OPERATIONS", label: "Vehicle, Fleet, or Operations Concern" },
-  { value: "MAINTENANCE_SERVICE", label: "Maintenance or Service Visit" },
-  { value: "GOVERNMENT_REGULATORY", label: "Government or Regulatory Transaction" },
-  { value: "OTHER", label: "Other Purpose" },
-] as const;
-
-const PURPOSE_VALUES = new Set(KIOSK_PURPOSES.map((purpose) => purpose.value));
-const FIXED_DEPARTMENT_PURPOSES = new Set([
-  "DRIVER_PARTNER_ASSISTANCE", "DRIVER_PARTNER_ONBOARDING", "HR_RECRUITMENT",
-  "DOCUMENT_TRANSACTION", "DELIVERY_PICKUP", "FLEET_OPERATIONS",
-  "MAINTENANCE_SERVICE", "GOVERNMENT_REGULATORY",
-]);
+const PURPOSE_VALUES = new Set(VISITOR_KIOSK_PURPOSES.map((purpose) => purpose.value));
+const FIXED_DEPARTMENT_PURPOSES = new Set<string>(VISITOR_KIOSK_FIXED_DEPARTMENT_PURPOSES);
 const IMAGE_BUCKET = "visitor-identity-private";
 const MAX_ID_IMAGE_BYTES = 5 * 1024 * 1024;
 
@@ -54,54 +45,58 @@ function envText(name: string): string {
   return Deno.env.get(name)?.trim() ?? "";
 }
 
-function splitConfig(value: string): string[] {
-  return value.split("|").map((item) => item.trim()).filter(Boolean);
+type KioskConfigRow = {
+  organization_name: string | null; controller_name: string | null; controller_contact: string | null;
+  dpo_contact: string | null; processing_purposes: string | null; lawful_basis: string | null;
+  privacy_notice_text: string | null; acknowledgement_text: string | null; notice_version: string | null;
+  retention_policy: string | null; retention_days: number | null; rights_process: string | null;
+  processors: string | null; safeguards: string | null; alternative_verification: string | null;
+  accepted_id_types: string[] | null; purpose_department_routes: Record<string, unknown> | null;
+  registration_enabled: boolean; privacy_review_approved: boolean; security_review_approved: boolean;
+  operations_review_approved: boolean;
+};
+
+function preferDatabase(value: string | null | undefined, envName: string): string {
+  return value?.trim() || envText(envName);
 }
 
-function purposeDepartmentRoutes(): Record<string, string> {
-  const raw = envText("VISITOR_PURPOSE_DEPARTMENT_ROUTES");
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return Object.fromEntries(Object.entries(parsed)
-      .map(([key, value]) => [key.trim().toUpperCase(), String(value ?? "").trim()])
-      .filter(([, value]) => Boolean(value)));
-  } catch {
-    return {};
-  }
-}
-
-function kioskPrivacyConfig() {
-  const values = {
-    controllerName: envText("VISITOR_PRIVACY_CONTROLLER_NAME"),
-    controllerContact: envText("VISITOR_PRIVACY_CONTROLLER_CONTACT"),
-    dpoContact: envText("VISITOR_PRIVACY_DPO_CONTACT"),
-    lawfulBasis: envText("VISITOR_PRIVACY_LAWFUL_BASIS"),
-    retentionPolicy: envText("VISITOR_IDENTITY_RETENTION_POLICY"),
-    rightsProcess: envText("VISITOR_PRIVACY_RIGHTS_PROCESS"),
-    processors: envText("VISITOR_PRIVACY_PROCESSORS"),
-    safeguards: envText("VISITOR_PRIVACY_SAFEGUARDS"),
-    alternativeVerification: envText("VISITOR_ALTERNATIVE_VERIFICATION_PROCEDURE"),
-    noticeVersion: envText("VISITOR_PRIVACY_NOTICE_VERSION"),
+async function kioskPrivacyConfig(activeDepartments: string[]) {
+  const { data, error } = await db.from("visitor_kiosk_configuration").select("*").eq("id", 1).maybeSingle();
+  if (error) throw new Error(`visitor kiosk configuration load failed: ${error.message}`);
+  const row = data as KioskConfigRow | null;
+  const retentionFallback = Number(envText("VISITOR_IDENTITY_RETENTION_DAYS"));
+  const databaseRoutes = parsePurposeDepartmentRoutes(row?.purpose_department_routes);
+  const policy: VisitorKioskPolicy = {
+    organizationName: row?.organization_name?.trim() || "HIRNA TNVS",
+    controllerName: preferDatabase(row?.controller_name, "VISITOR_PRIVACY_CONTROLLER_NAME"),
+    controllerContact: preferDatabase(row?.controller_contact, "VISITOR_PRIVACY_CONTROLLER_CONTACT"),
+    dpoContact: preferDatabase(row?.dpo_contact, "VISITOR_PRIVACY_DPO_CONTACT"),
+    processingPurposes: row?.processing_purposes?.trim() || "",
+    lawfulBasis: preferDatabase(row?.lawful_basis, "VISITOR_PRIVACY_LAWFUL_BASIS"),
+    privacyNoticeText: row?.privacy_notice_text?.trim() || "",
+    acknowledgementText: row?.acknowledgement_text?.trim() || "",
+    noticeVersion: preferDatabase(row?.notice_version, "VISITOR_PRIVACY_NOTICE_VERSION"),
+    retentionPolicy: preferDatabase(row?.retention_policy, "VISITOR_IDENTITY_RETENTION_POLICY"),
+    retentionDays: row?.retention_days ?? (Number.isInteger(retentionFallback) && retentionFallback > 0 ? retentionFallback : null),
+    rightsProcess: preferDatabase(row?.rights_process, "VISITOR_PRIVACY_RIGHTS_PROCESS"),
+    processors: preferDatabase(row?.processors, "VISITOR_PRIVACY_PROCESSORS"),
+    safeguards: preferDatabase(row?.safeguards, "VISITOR_PRIVACY_SAFEGUARDS"),
+    alternativeVerification: preferDatabase(row?.alternative_verification, "VISITOR_ALTERNATIVE_VERIFICATION_PROCEDURE"),
+    acceptedIdTypes: row?.accepted_id_types?.length
+      ? splitVisitorKioskList(row.accepted_id_types)
+      : splitVisitorKioskList(envText("VISITOR_ACCEPTED_ID_TYPES")),
+    purposeDepartmentRoutes: Object.keys(databaseRoutes).length
+      ? databaseRoutes
+      : parsePurposeDepartmentRoutes(envText("VISITOR_PURPOSE_DEPARTMENT_ROUTES")),
+    registrationEnabled: row?.registration_enabled === true,
+    privacyReviewApproved: row?.privacy_review_approved === true,
+    securityReviewApproved: row?.security_review_approved === true,
+    operationsReviewApproved: row?.operations_review_approved === true,
   };
-  const missing = Object.entries(values).filter(([, value]) => !value).map(([key]) => key);
-  const acceptedIdTypes = splitConfig(envText("VISITOR_ACCEPTED_ID_TYPES"));
-  if (acceptedIdTypes.length === 0) missing.push("acceptedIdTypes");
-  const retentionDays = Number(envText("VISITOR_IDENTITY_RETENTION_DAYS"));
-  if (!Number.isInteger(retentionDays) || retentionDays <= 0) missing.push("identityRetentionDays");
-  const routes = purposeDepartmentRoutes();
-  if ([...FIXED_DEPARTMENT_PURPOSES].some((purpose) => !routes[purpose])) missing.push("purposeDepartmentRoutes");
+  const readiness = evaluateVisitorKioskReadiness(policy, activeDepartments);
   return {
-    ...values,
-    acceptedIdTypes,
-    ready: missing.length === 0,
-    missing,
-    ocr: { status: "NOT_CONFIGURED" as const, message: "OCR is not configured. Visitors confirm their entered details and authorized staff review the ID image." },
-    identityVerification: {
-      status: "NOT_CONFIGURED" as const,
-      livenessSupported: false,
-      message: "A biometric identity-verification provider is not configured. No face-match or liveness result will be fabricated; authorized staff must use the approved alternative procedure.",
-    },
+    policy,
+    privacy: publicVisitorKioskPrivacy(policy, readiness),
   };
 }
 
@@ -434,9 +429,7 @@ function workflowResponse(result: WorkflowRpcResult, successMessage: string) {
 // Handlers
 // ---------------------------------------------------------------------------
 
-async function handleKioskConfig() {
-  const privacy = kioskPrivacyConfig();
-  const departmentRoutes = purposeDepartmentRoutes();
+async function loadKioskDestinations() {
   const { data: users, error } = await db.from("users")
     .select("id, first_name, last_name, department, position")
     .eq("status", "ACTIVE")
@@ -452,22 +445,23 @@ async function handleKioskConfig() {
     position: user.position,
   })).filter((user) => user.name);
   const departments = [...new Set(hosts.map((host) => String(host.department ?? "").trim()).filter(Boolean))].sort();
-  const invalidRoutes = Object.entries(departmentRoutes)
-    .filter(([purpose, department]) => FIXED_DEPARTMENT_PURPOSES.has(purpose) && !departments.includes(department));
-  if (invalidRoutes.length > 0) {
-    privacy.ready = false;
-    privacy.missing.push("purposeDepartmentRoutesReferenceInactiveDepartments");
-  }
+  return { hosts, departments };
+}
+
+async function handleKioskConfig() {
+  const { hosts, departments } = await loadKioskDestinations();
+  const { policy, privacy } = await kioskPrivacyConfig(departments);
   return jsonResponse(ok({
     privacy,
-    purposes: KIOSK_PURPOSES.map((purpose) => ({ ...purpose, department: departmentRoutes[purpose.value] ?? null })),
+    purposes: VISITOR_KIOSK_PURPOSES.map((purpose) => ({ ...purpose, department: policy.purposeDepartmentRoutes[purpose.value] ?? null })),
     hosts,
     departments,
   }, privacy.ready ? "Visitor kiosk configuration loaded" : "Visitor kiosk requires privacy configuration before collecting personal information"), 200);
 }
 
 async function handleKioskRegister(_ctx: AuthContext | null, req: Request, body: unknown) {
-  const privacy = kioskPrivacyConfig();
+  const { departments } = await loadKioskDestinations();
+  const { policy, privacy } = await kioskPrivacyConfig(departments);
   if (!privacy.ready) {
     return jsonResponse(fail(
       "Visitor registration is unavailable until the organization configures the required privacy notice and approved ID policy.",
@@ -486,7 +480,7 @@ async function handleKioskRegister(_ctx: AuthContext | null, req: Request, body:
   const expectedRaw = String(b.expectedArrival ?? "").trim();
   const hostId = String(b.hostId ?? "").trim() || null;
   let receivingDepartment = String(b.receivingDepartment ?? "").trim() || null;
-  const routedDepartment = purposeDepartmentRoutes()[purposeCategory] ?? null;
+  const routedDepartment = policy.purposeDepartmentRoutes[purposeCategory] ?? null;
   if (FIXED_DEPARTMENT_PURPOSES.has(purposeCategory)) receivingDepartment = routedDepartment;
   const idType = String(b.idType ?? "").trim();
   const idNumberLast4 = String(b.idNumberLast4 ?? "").replace(/[^A-Za-z0-9]/g, "").slice(-4).toUpperCase() || null;
@@ -555,12 +549,12 @@ async function handleKioskRegister(_ctx: AuthContext | null, req: Request, body:
   });
   if (uploadError) throw new Error(`secure ID image upload failed: ${uploadError.message}`);
 
-  const retentionDays = Number(envText("VISITOR_IDENTITY_RETENTION_DAYS"));
+  const retentionDays = Number(policy.retentionDays);
   const deleteAfter = Number.isInteger(retentionDays) && retentionDays > 0
     ? new Date(Date.now() + retentionDays * 24 * 60 * 60_000).toISOString()
     : null;
   const reference = referenceNumber();
-  const purposeLabel = KIOSK_PURPOSES.find((item) => item.value === purposeCategory)?.label ?? purposeCategory;
+  const purposeLabel = VISITOR_KIOSK_PURPOSES.find((item) => item.value === purposeCategory)?.label ?? purposeCategory;
   const { data: saved, error: insertError } = await db.from("visitors").insert({
     id: visitorId,
     full_name: fullName,

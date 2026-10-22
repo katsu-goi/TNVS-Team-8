@@ -30,6 +30,7 @@ const SecurityCenterPage = lazyNamed(() => import('./components/sysadmin/AdminPa
 const AuditLogsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'AuditLogsPage');
 const BackupPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'BackupPage');
 const SettingsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'SettingsPage');
+const VisitorKioskConfigPage = lazyNamed(() => import('./components/sysadmin/VisitorKioskConfigPage'), 'VisitorKioskConfigPage');
 const NotificationsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'NotificationsPage');
 const SystemHealthPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'SystemHealthPage');
 const SessionsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'SessionsPage');
@@ -291,6 +292,7 @@ export const AppRoutes: React.FC = () => (
           <Route path="admin/ai-services" element={<SystemAdminRoute><AiServicesPage /></SystemAdminRoute>} />
           <Route path="admin/backup" element={<SystemAdminRoute><BackupPage /></SystemAdminRoute>} />
           <Route path="admin/settings" element={<SystemAdminRoute><SettingsPage /></SystemAdminRoute>} />
+          <Route path="admin/visitor-kiosk" element={<AdminPortalRoute><VisitorKioskConfigPage /></AdminPortalRoute>} />
           <Route path="admin/notifications" element={<AdminPortalRoute><NotificationsPage /></AdminPortalRoute>} />
           <Route path="admin/system-health" element={<SystemAdminRoute><SystemHealthPage /></SystemAdminRoute>} />
            <Route path="admin/sessions" element={<SystemAdminRoute><SessionsPage /></SystemAdminRoute>} />

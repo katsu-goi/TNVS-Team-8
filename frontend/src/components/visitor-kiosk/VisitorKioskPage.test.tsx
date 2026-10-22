@@ -11,10 +11,15 @@ vi.mock('../../api/visitorService', async () => {
 
 const configured: KioskConfig = {
   privacy: {
+    organizationName: 'HIRNA TNVS',
     controllerName: 'Configured Controller', controllerContact: 'privacy@example.test', dpoContact: 'dpo@example.test',
+    processingPurposes: 'Visitor registration and facility security.',
     lawfulBasis: 'Configured lawful basis', retentionPolicy: 'Configured retention policy', rightsProcess: 'Configured rights process',
+    privacyNoticeText: 'Configured public visitor privacy notice for testing the acknowledged registration workflow.',
+    acknowledgementText: 'I acknowledge that I have read and understood this configured notice.',
+    retentionDays: 30,
     processors: 'Configured processors', safeguards: 'Configured safeguards', alternativeVerification: 'Present the original ID to an authorized officer.',
-    noticeVersion: '2026-10', acceptedIdTypes: ['Company ID', 'Government ID'], ready: true, missing: [],
+    noticeVersion: '2026-10', acceptedIdTypes: ['Company ID', 'Government ID'], ready: true, configurationComplete: true, registrationEnabled: true, missing: [],
     ocr: { status: 'NOT_CONFIGURED', message: 'OCR is not configured.' },
     identityVerification: { status: 'NOT_CONFIGURED', livenessSupported: false, message: 'Provider not configured.' },
   },

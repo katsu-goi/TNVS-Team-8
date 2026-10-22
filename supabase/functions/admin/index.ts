@@ -8,6 +8,13 @@ import { findUserById } from "../_shared/auth-users.ts";
 import { hashPassword } from "../_shared/password.ts";
 import { ACCOUNT_UPDATE_ALLOWED_ROLES, prepareAccountUpdate } from "./account-update-policy.ts";
 import {
+  evaluateVisitorKioskReadiness,
+  parsePurposeDepartmentRoutes,
+  splitVisitorKioskList,
+  VISITOR_KIOSK_FIXED_DEPARTMENT_PURPOSES,
+  type VisitorKioskPolicy,
+} from "../_shared/visitor-kiosk-config.ts";
+import {
   assignedRoleIds,
   findConflict,
   listPermissionCatalog,
@@ -915,6 +922,200 @@ async function handleStopOversightSession(ctx: AuthContext | null, req: Request,
 // ---------------------------------------------------------------------------
 // System configuration
 // ---------------------------------------------------------------------------
+
+type VisitorKioskConfigRow = {
+  id: number; organization_name: string | null; controller_name: string | null; controller_contact: string | null;
+  dpo_contact: string | null; processing_purposes: string | null; lawful_basis: string | null;
+  privacy_notice_text: string | null; acknowledgement_text: string | null; notice_version: string | null;
+  retention_policy: string | null; retention_days: number | null; rights_process: string | null;
+  processors: string | null; safeguards: string | null; alternative_verification: string | null;
+  accepted_id_types: string[] | null; purpose_department_routes: Record<string, unknown> | null;
+  registration_enabled: boolean; privacy_review_approved: boolean; privacy_review_approved_by: string | null;
+  privacy_review_approved_at: string | null; security_review_approved: boolean;
+  security_review_approved_by: string | null; security_review_approved_at: string | null;
+  operations_review_approved: boolean; operations_review_approved_by: string | null;
+  operations_review_approved_at: string | null; revision: number; updated_at: string; updated_by: string | null;
+};
+
+function visitorConfigEnv(name: string): string {
+  return Deno.env.get(name)?.trim() ?? "";
+}
+
+function configValue(databaseValue: string | null | undefined, envName: string): string {
+  return databaseValue?.trim() || visitorConfigEnv(envName);
+}
+
+function visitorPolicyFromRow(row: VisitorKioskConfigRow): VisitorKioskPolicy {
+  const retentionFallback = Number(visitorConfigEnv("VISITOR_IDENTITY_RETENTION_DAYS"));
+  const databaseRoutes = parsePurposeDepartmentRoutes(row.purpose_department_routes);
+  return {
+    organizationName: row.organization_name?.trim() || "HIRNA TNVS",
+    controllerName: configValue(row.controller_name, "VISITOR_PRIVACY_CONTROLLER_NAME"),
+    controllerContact: configValue(row.controller_contact, "VISITOR_PRIVACY_CONTROLLER_CONTACT"),
+    dpoContact: configValue(row.dpo_contact, "VISITOR_PRIVACY_DPO_CONTACT"),
+    processingPurposes: row.processing_purposes?.trim() || "",
+    lawfulBasis: configValue(row.lawful_basis, "VISITOR_PRIVACY_LAWFUL_BASIS"),
+    privacyNoticeText: row.privacy_notice_text?.trim() || "",
+    acknowledgementText: row.acknowledgement_text?.trim() || "",
+    noticeVersion: configValue(row.notice_version, "VISITOR_PRIVACY_NOTICE_VERSION"),
+    retentionPolicy: configValue(row.retention_policy, "VISITOR_IDENTITY_RETENTION_POLICY"),
+    retentionDays: row.retention_days ?? (Number.isInteger(retentionFallback) && retentionFallback > 0 ? retentionFallback : null),
+    rightsProcess: configValue(row.rights_process, "VISITOR_PRIVACY_RIGHTS_PROCESS"),
+    processors: configValue(row.processors, "VISITOR_PRIVACY_PROCESSORS"),
+    safeguards: configValue(row.safeguards, "VISITOR_PRIVACY_SAFEGUARDS"),
+    alternativeVerification: configValue(row.alternative_verification, "VISITOR_ALTERNATIVE_VERIFICATION_PROCEDURE"),
+    acceptedIdTypes: row.accepted_id_types?.length
+      ? splitVisitorKioskList(row.accepted_id_types)
+      : splitVisitorKioskList(visitorConfigEnv("VISITOR_ACCEPTED_ID_TYPES")),
+    purposeDepartmentRoutes: Object.keys(databaseRoutes).length
+      ? databaseRoutes
+      : parsePurposeDepartmentRoutes(visitorConfigEnv("VISITOR_PURPOSE_DEPARTMENT_ROUTES")),
+    registrationEnabled: row.registration_enabled,
+    privacyReviewApproved: row.privacy_review_approved,
+    securityReviewApproved: row.security_review_approved,
+    operationsReviewApproved: row.operations_review_approved,
+  };
+}
+
+async function activeVisitorDepartments(): Promise<string[]> {
+  const { data, error } = await db.from("users").select("department")
+    .eq("status", "ACTIVE").eq("is_deleted", false).not("department", "is", null).limit(1000);
+  if (error) throw new Error(`visitor departments load failed: ${error.message}`);
+  return [...new Set((data ?? []).map((row) => String(row.department ?? "").trim()).filter(Boolean))].sort();
+}
+
+async function loadVisitorKioskConfigRow(): Promise<VisitorKioskConfigRow> {
+  const { data, error } = await db.from("visitor_kiosk_configuration").select("*").eq("id", 1).single();
+  if (error) throw new Error(`visitor kiosk configuration load failed: ${error.message}`);
+  return data as unknown as VisitorKioskConfigRow;
+}
+
+function visitorKioskAdminDto(row: VisitorKioskConfigRow, policy: VisitorKioskPolicy, departments: string[]) {
+  return {
+    config: {
+      ...policy,
+      revision: row.revision,
+      updatedAt: row.updated_at,
+      approvals: {
+        privacy: { approved: row.privacy_review_approved, approvedAt: row.privacy_review_approved_at },
+        security: { approved: row.security_review_approved, approvedAt: row.security_review_approved_at },
+        operations: { approved: row.operations_review_approved, approvedAt: row.operations_review_approved_at },
+      },
+    },
+    readiness: evaluateVisitorKioskReadiness(policy, departments),
+    availableDepartments: departments,
+    fixedDepartmentPurposes: VISITOR_KIOSK_FIXED_DEPARTMENT_PURPOSES,
+    technical: {
+      publicUrl: visitorConfigEnv("PORTAL_PUBLIC_URL") || visitorConfigEnv("VISITOR_KIOSK_PUBLIC_URL"),
+      emailDeliveryConfigured: Boolean(visitorConfigEnv("RESEND_API_KEY") && visitorConfigEnv("RESEND_FROM_EMAIL")),
+      passPolicyConfigured: Boolean(visitorConfigEnv("VISITOR_PASS_TTL_HOURS") && visitorConfigEnv("VISITOR_PASS_EARLY_MINUTES")),
+      ocrStatus: "NOT_CONFIGURED",
+      identityVerificationStatus: "MANUAL_REVIEW_REQUIRED",
+    },
+  };
+}
+
+async function handleGetVisitorKioskConfig() {
+  const [row, departments] = await Promise.all([loadVisitorKioskConfigRow(), activeVisitorDepartments()]);
+  return jsonResponse(ok(visitorKioskAdminDto(row, visitorPolicyFromRow(row), departments), "Visitor kiosk configuration loaded"), 200);
+}
+
+function requiredVisitorKioskText(body: Record<string, unknown>, key: string, minimum: number, maximum: number): string {
+  const value = String(body[key] ?? "").trim();
+  if (value && (value.length < minimum || value.length > maximum)) {
+    throw new Error(`${key} must be ${minimum}-${maximum} characters.`);
+  }
+  return value;
+}
+
+async function handleUpdateVisitorKioskConfig(ctx: AuthContext | null, req: Request, body: unknown) {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const changeReason = requiredVisitorKioskText(b, "changeReason", 10, 500);
+  if (!changeReason) return jsonResponse(fail("A change reason is required for the audit trail.", "CHANGE_REASON_REQUIRED"), 400);
+
+  const [existing, departments] = await Promise.all([loadVisitorKioskConfigRow(), activeVisitorDepartments()]);
+  const expectedRevision = Number(b.expectedRevision);
+  if (!Number.isInteger(expectedRevision) || expectedRevision !== Number(existing.revision)) {
+    return jsonResponse(fail("The kiosk configuration changed since it was loaded. Refresh before saving.", "CONFIGURATION_REVISION_CONFLICT"), 409);
+  }
+
+  let policy: VisitorKioskPolicy;
+  try {
+    const retentionDays = b.retentionDays === null || b.retentionDays === "" ? null : Number(b.retentionDays);
+    if (retentionDays !== null && (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650)) {
+      throw new Error("retentionDays must be between 1 and 3650.");
+    }
+    const acceptedIdTypes = splitVisitorKioskList(b.acceptedIdTypes).slice(0, 20);
+    if (acceptedIdTypes.some((value) => value.length > 100)) throw new Error("Each accepted ID type must be 100 characters or fewer.");
+    policy = {
+      organizationName: requiredVisitorKioskText(b, "organizationName", 2, 200),
+      controllerName: requiredVisitorKioskText(b, "controllerName", 2, 200),
+      controllerContact: requiredVisitorKioskText(b, "controllerContact", 5, 300),
+      dpoContact: requiredVisitorKioskText(b, "dpoContact", 5, 300),
+      processingPurposes: requiredVisitorKioskText(b, "processingPurposes", 20, 4000),
+      lawfulBasis: requiredVisitorKioskText(b, "lawfulBasis", 20, 4000),
+      privacyNoticeText: requiredVisitorKioskText(b, "privacyNoticeText", 50, 12000),
+      acknowledgementText: requiredVisitorKioskText(b, "acknowledgementText", 20, 2000),
+      noticeVersion: requiredVisitorKioskText(b, "noticeVersion", 1, 80),
+      retentionPolicy: requiredVisitorKioskText(b, "retentionPolicy", 20, 4000),
+      retentionDays,
+      rightsProcess: requiredVisitorKioskText(b, "rightsProcess", 20, 4000),
+      processors: requiredVisitorKioskText(b, "processors", 3, 4000),
+      safeguards: requiredVisitorKioskText(b, "safeguards", 20, 4000),
+      alternativeVerification: requiredVisitorKioskText(b, "alternativeVerification", 20, 4000),
+      acceptedIdTypes,
+      purposeDepartmentRoutes: parsePurposeDepartmentRoutes(b.purposeDepartmentRoutes),
+      registrationEnabled: b.registrationEnabled === true,
+      privacyReviewApproved: b.privacyReviewApproved === true,
+      securityReviewApproved: b.securityReviewApproved === true,
+      operationsReviewApproved: b.operationsReviewApproved === true,
+    };
+  } catch (error) {
+    return jsonResponse(fail((error as Error).message, "VALIDATION_ERROR"), 400);
+  }
+
+  const readiness = evaluateVisitorKioskReadiness(policy, departments);
+  if (policy.registrationEnabled && !readiness.configurationComplete) {
+    return jsonResponse(fail("Registration cannot be enabled until every required policy field, department route, and approval is complete.", "KIOSK_CONFIGURATION_INCOMPLETE", readiness.missing), 422);
+  }
+
+  const now = nowIso();
+  const approvalFields = (prefix: "privacy" | "security" | "operations", approved: boolean) => {
+    const previousApproved = existing[`${prefix}_review_approved` as keyof VisitorKioskConfigRow] === true;
+    return {
+      [`${prefix}_review_approved`]: approved,
+      [`${prefix}_review_approved_by`]: approved ? (previousApproved ? existing[`${prefix}_review_approved_by` as keyof VisitorKioskConfigRow] : ctx!.userId) : null,
+      [`${prefix}_review_approved_at`]: approved ? (previousApproved ? existing[`${prefix}_review_approved_at` as keyof VisitorKioskConfigRow] : now) : null,
+    };
+  };
+  const payload = {
+    organization_name: policy.organizationName || null, controller_name: policy.controllerName || null,
+    controller_contact: policy.controllerContact || null, dpo_contact: policy.dpoContact || null,
+    processing_purposes: policy.processingPurposes || null, lawful_basis: policy.lawfulBasis || null,
+    privacy_notice_text: policy.privacyNoticeText || null, acknowledgement_text: policy.acknowledgementText || null,
+    notice_version: policy.noticeVersion || null, retention_policy: policy.retentionPolicy || null,
+    retention_days: policy.retentionDays, rights_process: policy.rightsProcess || null,
+    processors: policy.processors || null, safeguards: policy.safeguards || null,
+    alternative_verification: policy.alternativeVerification || null, accepted_id_types: policy.acceptedIdTypes,
+    purpose_department_routes: policy.purposeDepartmentRoutes, registration_enabled: policy.registrationEnabled,
+    ...approvalFields("privacy", policy.privacyReviewApproved),
+    ...approvalFields("security", policy.securityReviewApproved),
+    ...approvalFields("operations", policy.operationsReviewApproved),
+    revision: existing.revision + 1, updated_at: now, updated_by: ctx!.userId,
+  };
+  const { data: saved, error } = await db.from("visitor_kiosk_configuration").update(payload)
+    .eq("id", 1).eq("revision", existing.revision).select("*").maybeSingle();
+  if (error) throw new Error(`visitor kiosk configuration update failed: ${error.message}`);
+  if (!saved) return jsonResponse(fail("The kiosk configuration changed while saving. Refresh and try again.", "CONFIGURATION_REVISION_CONFLICT"), 409);
+
+  const before = visitorPolicyFromRow(existing);
+  const changedKeys = Object.keys(policy).filter((key) => JSON.stringify(before[key as keyof VisitorKioskPolicy]) !== JSON.stringify(policy[key as keyof VisitorKioskPolicy]));
+  await writeAudit(ctx!.user, "VISITOR_KIOSK_CONFIGURATION_UPDATED", "VISITOR", "VisitorKioskConfiguration", "1",
+    `Visitor kiosk configuration updated. Changed fields: ${changedKeys.join(", ") || "metadata"}. Reason: ${changeReason}`,
+    resolveClientIp(req).ip, policy.registrationEnabled ? "HIGH" : "INFO");
+  const savedRow = saved as unknown as VisitorKioskConfigRow;
+  return jsonResponse(ok(visitorKioskAdminDto(savedRow, visitorPolicyFromRow(savedRow), departments), "Visitor kiosk configuration saved"), 200);
+}
 
 type ConfigRow = {
   id: string;
@@ -2320,6 +2521,8 @@ const routes = [
   { method: "GET", path: "/admin/config", guard: SYSTEM_ADMIN_ONLY, handler: handleListConfigs },
   { method: "GET", path: "/admin/config/:key", guard: SYSTEM_ADMIN_ONLY, handler: handleGetConfig },
   { method: "PUT", path: "/admin/config/:key", guard: SYSTEM_ADMIN_ONLY, handler: handleUpsertConfig },
+  { method: "GET", path: "/admin/visitor-kiosk-config", guard: ADMIN_PORTAL_ROLES, handler: handleGetVisitorKioskConfig },
+  { method: "PUT", path: "/admin/visitor-kiosk-config", guard: ADMIN_PORTAL_ROLES, handler: handleUpdateVisitorKioskConfig },
   { method: "GET", path: "/admin/integrations", guard: SYSTEM_ADMIN_ONLY, handler: handleListIntegrations },
   { method: "GET", path: "/admin/integrations/:systemName", guard: SYSTEM_ADMIN_ONLY, handler: handleGetIntegration },
   { method: "GET", path: "/admin/hr-assistance", guard: SUPER_ADMIN_ONLY, handler: handleListHrRequests },
