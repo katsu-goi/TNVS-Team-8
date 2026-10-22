@@ -1,11 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  AlertCircle, ArrowLeft, ArrowRight, Camera, Check, CheckCircle2,
-  IdCard, Loader2, LockKeyhole, Mail, RefreshCw, ShieldCheck, Upload, UserRound,
+  AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2,
+  IdCard, Loader2, LockKeyhole, Mail, RefreshCw, ShieldCheck, UserRound,
 } from 'lucide-react';
 import { extractErrorMessage } from '../../api/client';
 import { visitorService, type KioskConfig, type KioskRegistration } from '../../api/visitorService';
+import { VisitorIdScanner } from './VisitorIdScanner';
 
 type Step = 'welcome' | 'privacy' | 'id' | 'verification' | 'details' | 'review' | 'submitted';
 
@@ -55,34 +56,6 @@ export function visitorDetailsAreValid(form: VisitorKioskFormState): boolean {
     && Boolean(form.purposeCategory) && Boolean(form.expectedArrival) && otherValid && hostValid && destinationValid && organizationValid;
 }
 
-function cameraMessage(error: unknown): string {
-  const name = typeof error === 'object' && error && 'name' in error ? String((error as { name?: unknown }).name) : '';
-  if (name === 'NotAllowedError') return 'Camera permission was denied. Allow camera access in browser settings, or upload a clear photo instead.';
-  if (name === 'NotFoundError') return 'No camera was found. Connect a camera or upload a clear photo instead.';
-  if (!window.isSecureContext) return 'Camera capture requires HTTPS or localhost. Upload a clear photo instead.';
-  return 'The camera is unavailable. You can upload a clear photo instead.';
-}
-
-async function validateImage(file: File): Promise<string> {
-  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new Error('Use a JPEG, PNG, or WebP image.');
-  if (file.size <= 0 || file.size > 5 * 1024 * 1024) throw new Error('The image must be no larger than 5 MB.');
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error('The image could not be read.'));
-    reader.readAsDataURL(file);
-  });
-  await new Promise<void>((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => image.naturalWidth >= 640 && image.naturalHeight >= 400
-      ? resolve()
-      : reject(new Error('The ID image is too small. Use an image at least 640 × 400 pixels.'));
-    image.onerror = () => reject(new Error('The selected file is not a readable image.'));
-    image.src = dataUrl;
-  });
-  return dataUrl;
-}
-
 const KioskShell: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,#fee2e2,transparent_34%),linear-gradient(145deg,#f8fafc,#fff)] text-slate-900">
     <header className="border-b border-white/70 bg-white/85 px-4 py-3 shadow-sm backdrop-blur sm:px-8">
@@ -109,12 +82,6 @@ export const VisitorKioskPage: React.FC = () => {
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ referenceNumber: string; approvalStatus: string } | null>(null);
-  const [cameraStarting, setCameraStarting] = useState(false);
-  const [cameraActive, setCameraActive] = useState(false);
-  const [cameraError, setCameraError] = useState('');
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const loadConfig = useCallback(async () => {
     setLoading(true); setError('');
@@ -124,53 +91,12 @@ export const VisitorKioskPage: React.FC = () => {
   }, []);
   useEffect(() => { void loadConfig(); }, [loadConfig]);
 
-  const stopCamera = useCallback(() => {
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    if (videoRef.current) videoRef.current.srcObject = null;
-    setCameraActive(false); setCameraStarting(false);
-  }, []);
-  useEffect(() => () => stopCamera(), [stopCamera]);
-  useEffect(() => { if (step !== 'id') stopCamera(); }, [step, stopCamera]);
-
-  const startCamera = async () => {
-    setCameraStarting(true); setCameraError('');
-    try {
-      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) throw new DOMException('Camera unavailable', 'NotSupportedError');
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1600 }, height: { ideal: 1000 } } });
-      streamRef.current = stream;
-      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
-      setCameraActive(true);
-    } catch (cameraFailure) { stopCamera(); setCameraError(cameraMessage(cameraFailure)); }
-    finally { setCameraStarting(false); }
-  };
-
-  const capture = () => {
-    const video = videoRef.current;
-    if (!video || video.videoWidth < 640 || video.videoHeight < 400) { setCameraError('Wait for the camera image to become clear, then try again.'); return; }
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-    canvas.getContext('2d')?.drawImage(video, 0, 0);
-    setForm((current) => ({ ...current, idImage: canvas.toDataURL('image/jpeg', 0.86), imageConfirmed: false }));
-    stopCamera();
-  };
-
-  const onFile = async (file?: File) => {
-    if (!file) return;
-    setCameraError('');
-    try {
-      const idImage = await validateImage(file);
-      setForm((current) => ({ ...current, idImage, imageConfirmed: false }));
-    }
-    catch (fileError) { setCameraError(fileError instanceof Error ? fileError.message : 'The image is invalid.'); }
-  };
-
   const selectedHost = config?.hosts.find((host) => host.id === form.hostId);
   const selectedPurpose = config?.purposes.find((purpose) => purpose.value === form.purposeCategory);
   const detailsValid = useMemo(() => visitorDetailsAreValid(form), [form]);
 
   const reset = () => {
-    stopCamera(); setStep('welcome'); setPrivacyAcknowledged(false); setForm(emptyForm); setResult(null); setError(''); setCameraError(''); setIdempotencyKey(crypto.randomUUID());
+    setStep('welcome'); setPrivacyAcknowledged(false); setForm(emptyForm); setResult(null); setError(''); setIdempotencyKey(crypto.randomUUID());
   };
 
   const submit = async () => {
@@ -207,7 +133,36 @@ export const VisitorKioskPage: React.FC = () => {
 
         {step === 'privacy' && <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-8"><div className="flex items-start gap-4"><div className="rounded-2xl bg-red-50 p-3 text-red-700"><LockKeyhole className="h-7 w-7" /></div><div><h1 className="text-2xl font-black">Privacy notice</h1><p className="mt-1 text-sm text-slate-500">Read this notice before any ID image or personal information is collected. Notice version {config.privacy.noticeVersion}.</p></div></div><div className="mt-6 rounded-xl border border-red-100 bg-red-50/50 p-4 text-sm leading-6 text-slate-700">{config.privacy.privacyNoticeText}</div><div className="mt-6 grid gap-3 md:grid-cols-2"><NoticeRow title="Organization">{config.privacy.organizationName}</NoticeRow><NoticeRow title="Personal information controller">{config.privacy.controllerName}<br />Contact: {config.privacy.controllerContact}</NoticeRow><NoticeRow title="DPO and privacy concerns">{config.privacy.dpoContact}</NoticeRow><NoticeRow title="Purposes and information collected">{config.privacy.processingPurposes}</NoticeRow><NoticeRow title="Lawful basis">{config.privacy.lawfulBasis}</NoticeRow><NoticeRow title="Access and service providers">Authorized Facilities/Security personnel and the intended host or department, subject to role restrictions. Processors: {config.privacy.processors}</NoticeRow><NoticeRow title="Retention">{config.privacy.retentionPolicy}</NoticeRow><NoticeRow title="Your rights">{config.privacy.rightsProcess}</NoticeRow><NoticeRow title="Safeguards">{config.privacy.safeguards}</NoticeRow></div><p className="mt-5 text-xs leading-5 text-slate-500">This notice supports transparency but does not by itself establish legal compliance. Processing must follow the approved lawful basis and policy. See the <a className="font-bold text-red-700 underline" href="https://privacy.gov.ph/data-privacy-act-/" target="_blank" rel="noreferrer">Philippine Data Privacy Act of 2012</a> and its <a className="font-bold text-red-700 underline" href="https://privacy.gov.ph/implementing-rules%20regulations-data-privacy-act-2012/" target="_blank" rel="noreferrer">Implementing Rules and Regulations</a>.</p><label className="mt-6 flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 p-4"><input type="checkbox" checked={privacyAcknowledged} onChange={(event) => setPrivacyAcknowledged(event.target.checked)} className="mt-1 h-5 w-5 accent-red-700" /><span className="text-sm leading-6 text-slate-700">{config.privacy.acknowledgementText}</span></label><div className="mt-6 flex justify-between"><button onClick={() => setStep('welcome')} className="inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-slate-600"><ArrowLeft className="h-4 w-4" />Back</button><button disabled={!privacyAcknowledged} onClick={() => setStep('id')} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Continue <ArrowRight className="h-4 w-4" /></button></div></section>}
 
-        {step === 'id' && <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-8"><h1 className="text-2xl font-black">Capture an approved ID</h1><p className="mt-1 text-sm text-slate-500">Use a well-lit image showing the complete ID. OCR and authenticity verification are not configured; staff will review the image.</p><div className="mt-6 grid gap-6 lg:grid-cols-[320px_1fr]"><div><label className={labelClass}>ID type</label><select value={form.idType} onChange={(event) => setForm((current) => ({ ...current, idType: event.target.value }))} className={inputClass}><option value="">Select an approved ID</option>{config.privacy.acceptedIdTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select><label className="mt-4 block"><span className={labelClass}>Last 4 ID characters (optional)</span><input maxLength={4} value={form.idNumberLast4} onChange={(event) => setForm((current) => ({ ...current, idNumberLast4: event.target.value.replace(/[^A-Za-z0-9]/g, '') }))} className={inputClass} autoComplete="off" /><span className="mt-1 block text-xs text-slate-500">Only the last four are requested to reduce retained ID data.</span></label><div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-xs leading-5 text-blue-800"><strong>OCR status:</strong> Not configured. No claim of ID authenticity or automated extraction will be made.</div></div><div><div className="relative flex min-h-72 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-slate-300 bg-slate-950">{form.idImage ? <img src={form.idImage} alt="Captured ID preview" className="max-h-[420px] w-full object-contain" /> : cameraActive ? <video ref={videoRef} muted playsInline className="max-h-[420px] w-full object-contain" /> : <div className="p-8 text-center text-slate-300"><Camera className="mx-auto h-12 w-12" /><p className="mt-3 text-sm font-bold">Camera preview appears here</p><p className="mt-1 text-xs text-slate-400">You can also upload a photo.</p></div>}</div><input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(event) => void onFile(event.target.files?.[0])} /><div className="mt-3 flex flex-wrap gap-2">{form.idImage ? <><button onClick={() => setForm((current) => ({ ...current, idImage: '', imageConfirmed: false }))} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold"><RefreshCw className="h-4 w-4" />Retake</button></> : cameraActive ? <button onClick={capture} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-bold text-white"><Camera className="h-4 w-4" />Capture</button> : <button disabled={cameraStarting} onClick={() => void startCamera()} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-bold text-white">{cameraStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}Use camera</button>}<button onClick={() => fileRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold"><Upload className="h-4 w-4" />Upload photo</button></div>{cameraError && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{cameraError}</p>}{form.idImage && <label className="mt-4 flex items-start gap-3 rounded-xl border border-slate-200 p-4"><input type="checkbox" checked={form.imageConfirmed} onChange={(event) => setForm((current) => ({ ...current, imageConfirmed: event.target.checked }))} className="mt-1 h-5 w-5 accent-red-700" /><span className="text-sm text-slate-700">I confirm the ID is complete, readable, in focus, and not obscured by glare.</span></label>}</div></div><div className="mt-6 flex justify-between"><button onClick={() => setStep('privacy')} className="inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-slate-600"><ArrowLeft className="h-4 w-4" />Back</button><button disabled={!form.idType || !form.idImage || !form.imageConfirmed} onClick={() => setStep('verification')} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Continue <ArrowRight className="h-4 w-4" /></button></div></section>}
+        {step === 'id' && (
+          <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-8">
+            <h1 className="text-2xl font-black">Capture an approved ID</h1>
+            <p className="mt-1 text-sm text-slate-500">Align a well-lit ID inside the guide for automatic capture, or use the manual and upload fallbacks. Detection checks image quality only; authorized staff still perform identity review.</p>
+            <div className="mt-6 grid gap-6 lg:grid-cols-[320px_1fr]">
+              <div>
+                <label className={labelClass}>ID type</label>
+                <select value={form.idType} onChange={(event) => setForm((current) => ({ ...current, idType: event.target.value }))} className={inputClass}>
+                  <option value="">Select an approved ID</option>
+                  {config.privacy.acceptedIdTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+                </select>
+                <label className="mt-4 block">
+                  <span className={labelClass}>Last 4 ID characters (optional)</span>
+                  <input maxLength={4} value={form.idNumberLast4} onChange={(event) => setForm((current) => ({ ...current, idNumberLast4: event.target.value.replace(/[^A-Za-z0-9]/g, '') }))} className={inputClass} autoComplete="off" />
+                  <span className="mt-1 block text-xs text-slate-500">Only the last four are requested to reduce retained ID data.</span>
+                </label>
+                <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-xs leading-5 text-blue-800"><strong>OCR and authenticity status:</strong> Not configured. Edge detection, alignment, focus, lighting, and glare checks do not verify that an ID is genuine.</div>
+              </div>
+              <VisitorIdScanner
+                image={form.idImage}
+                confirmed={form.imageConfirmed}
+                onImageChange={(idImage, imageConfirmed) => setForm((current) => ({ ...current, idImage, imageConfirmed }))}
+              />
+            </div>
+            <div className="mt-6 flex justify-between">
+              <button onClick={() => setStep('privacy')} className="inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-slate-600"><ArrowLeft className="h-4 w-4" />Back</button>
+              <button disabled={!form.idType || !form.idImage || !form.imageConfirmed} onClick={() => setStep('verification')} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Continue <ArrowRight className="h-4 w-4" /></button>
+            </div>
+          </section>
+        )}
 
         {step === 'verification' && <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-10"><div className="mx-auto max-w-2xl text-center"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-100 text-amber-700"><UserRound className="h-8 w-8" /></div><h1 className="mt-5 text-2xl font-black">Identity verification requires manual review</h1><p className="mt-3 text-sm leading-7 text-slate-600">{config.privacy.identityVerification.message}</p><div className="mt-6 rounded-xl border border-amber-300 bg-amber-50 p-5 text-left text-sm leading-6 text-amber-900"><p className="font-extrabold">No face image will be collected in this configuration.</p><p className="mt-1">Ordinary camera detection is not identity verification, and no successful face match, liveness result, or confidence score will be fabricated.</p><p className="mt-3"><strong>Approved alternative:</strong> {config.privacy.alternativeVerification}</p></div></div><div className="mt-8 flex justify-between"><button onClick={() => setStep('id')} className="inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-slate-600"><ArrowLeft className="h-4 w-4" />Back</button><button onClick={() => setStep('details')} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white">Continue for manual review <ArrowRight className="h-4 w-4" /></button></div></section>}
 
