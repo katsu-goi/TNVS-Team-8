@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   evaluateVisitorKioskReadiness,
+  findUnresolvedVisitorPolicyPlaceholders,
   publicVisitorKioskPrivacy,
   VISITOR_KIOSK_FIXED_DEPARTMENT_PURPOSES,
   type VisitorKioskPolicy,
@@ -56,6 +57,40 @@ describe('visitor kiosk readiness policy', () => {
       registrationEnabled: true,
       missing: [],
     });
+  });
+
+  it.each([
+    ['privacyNoticeText', 'Retention is [NUMBER] days.'],
+    ['retentionPolicy', 'Deletion starts after [DEFINED STARTING EVENT].'],
+    ['dpoContact', '[APPROVED PRIVACY EMAIL]'],
+    ['controllerName', '[REGISTERED ORGANIZATION NAME]'],
+    ['controllerContact', '[OFFICIAL PRIVACY EMAIL OR CONTACT NUMBER]'],
+    ['lawfulBasis', 'Subject to organizational approval'],
+  ] as const)('fails closed when %s contains unresolved organization content', (field, value) => {
+    const policy = { ...completePolicy(), [field]: value };
+    const readiness = evaluateVisitorKioskReadiness(policy, departments);
+    expect(readiness.ready).toBe(false);
+    expect(readiness.configurationComplete).toBe(false);
+    expect(readiness.missing).toContain(`${field}:unresolvedPlaceholder`);
+  });
+
+  it('recognizes normal Markdown links without treating their labels as placeholders', () => {
+    const policy = completePolicy();
+    policy.privacyNoticeText = 'Read the [PRIVACY POLICY](https://example.test/privacy) and contact the DPO.';
+    expect(findUnresolvedVisitorPolicyPlaceholders(policy)).toEqual([]);
+    expect(evaluateVisitorKioskReadiness(policy, departments).ready).toBe(true);
+  });
+
+  it('redacts incomplete policy content from the public kiosk projection', () => {
+    const policy = completePolicy();
+    policy.dpoContact = '[APPROVED PRIVACY EMAIL]';
+    const publicConfig = publicVisitorKioskPrivacy(policy, evaluateVisitorKioskReadiness(policy, departments));
+    expect(publicConfig.ready).toBe(false);
+    expect(publicConfig.configurationComplete).toBe(false);
+    expect(publicConfig.dpoContact).toBe('');
+    expect(publicConfig.privacyNoticeText).toBe('');
+    expect(publicConfig.acceptedIdTypes).toEqual([]);
+    expect(JSON.stringify(publicConfig)).not.toContain('[APPROVED PRIVACY EMAIL]');
   });
 
   it('keeps administrative approval metadata out of the public projection', () => {

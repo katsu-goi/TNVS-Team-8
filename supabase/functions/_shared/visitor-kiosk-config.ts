@@ -66,6 +66,27 @@ const REQUIRED_TEXT_FIELDS: Array<[keyof VisitorKioskPolicy, string]> = [
   ["alternativeVerification", "alternativeVerification"],
 ];
 
+const UNRESOLVED_POLICY_PATTERNS = [
+  /\[(?![^\]]+\]\s*\()[A-Z][A-Z0-9 _./-]{1,80}\]/g,
+  /\b(?:subject to organizational approval|to be (?:provided|confirmed|determined|approved)|tbd|todo)\b/gi,
+  /\b(?:insert|enter|provide)\s+(?:the\s+)?[^\n.]{1,80}\s+here\b/gi,
+] as const;
+
+export type VisitorPolicyPlaceholder = { field: string; token: string };
+
+/** Finds template markers without treating normal Markdown links as placeholders. */
+export function findUnresolvedVisitorPolicyPlaceholders(
+  policy: VisitorKioskPolicy,
+): VisitorPolicyPlaceholder[] {
+  const values: Array<[string, string]> = REQUIRED_TEXT_FIELDS.map(([key, label]) => [label, String(policy[key] ?? "")]);
+  policy.acceptedIdTypes.forEach((value, index) => values.push([`acceptedIdTypes[${index}]`, value]));
+
+  return values.flatMap(([field, value]) => UNRESOLVED_POLICY_PATTERNS.flatMap((pattern) => {
+    const matches = value.match(new RegExp(pattern.source, pattern.flags)) ?? [];
+    return matches.map((token) => ({ field, token }));
+  }));
+}
+
 export function evaluateVisitorKioskReadiness(
   policy: VisitorKioskPolicy,
   activeDepartments: readonly string[],
@@ -73,6 +94,8 @@ export function evaluateVisitorKioskReadiness(
   const missing = REQUIRED_TEXT_FIELDS
     .filter(([key]) => !String(policy[key] ?? "").trim())
     .map(([, label]) => label);
+  const unresolvedFields = new Set(findUnresolvedVisitorPolicyPlaceholders(policy).map(({ field }) => field.replace(/\[\d+\]$/, "")));
+  unresolvedFields.forEach((field) => missing.push(`${field}:unresolvedPlaceholder`));
   if (!Number.isInteger(policy.retentionDays) || Number(policy.retentionDays) <= 0) missing.push("retentionDays");
   if (policy.acceptedIdTypes.length === 0) missing.push("acceptedIdTypes");
 
@@ -115,23 +138,24 @@ export function splitVisitorKioskList(raw: unknown): string[] {
 
 /** Public projection: deliberately excludes approval actors/timestamps, revisions, and audit reasons. */
 export function publicVisitorKioskPrivacy(policy: VisitorKioskPolicy, readiness: VisitorKioskReadiness) {
+  const publishPolicy = readiness.configurationComplete;
   return {
-    organizationName: policy.organizationName,
-    controllerName: policy.controllerName,
-    controllerContact: policy.controllerContact,
-    dpoContact: policy.dpoContact,
-    processingPurposes: policy.processingPurposes,
-    lawfulBasis: policy.lawfulBasis,
-    privacyNoticeText: policy.privacyNoticeText,
-    acknowledgementText: policy.acknowledgementText,
-    retentionPolicy: policy.retentionPolicy,
-    retentionDays: policy.retentionDays,
-    rightsProcess: policy.rightsProcess,
-    processors: policy.processors,
-    safeguards: policy.safeguards,
-    alternativeVerification: policy.alternativeVerification,
-    noticeVersion: policy.noticeVersion,
-    acceptedIdTypes: policy.acceptedIdTypes,
+    organizationName: publishPolicy ? policy.organizationName : "",
+    controllerName: publishPolicy ? policy.controllerName : "",
+    controllerContact: publishPolicy ? policy.controllerContact : "",
+    dpoContact: publishPolicy ? policy.dpoContact : "",
+    processingPurposes: publishPolicy ? policy.processingPurposes : "",
+    lawfulBasis: publishPolicy ? policy.lawfulBasis : "",
+    privacyNoticeText: publishPolicy ? policy.privacyNoticeText : "",
+    acknowledgementText: publishPolicy ? policy.acknowledgementText : "",
+    retentionPolicy: publishPolicy ? policy.retentionPolicy : "",
+    retentionDays: publishPolicy ? policy.retentionDays : null,
+    rightsProcess: publishPolicy ? policy.rightsProcess : "",
+    processors: publishPolicy ? policy.processors : "",
+    safeguards: publishPolicy ? policy.safeguards : "",
+    alternativeVerification: publishPolicy ? policy.alternativeVerification : "",
+    noticeVersion: publishPolicy ? policy.noticeVersion : "",
+    acceptedIdTypes: publishPolicy ? policy.acceptedIdTypes : [],
     ready: readiness.ready,
     configurationComplete: readiness.configurationComplete,
     registrationEnabled: readiness.registrationEnabled,

@@ -8,6 +8,7 @@ import {
   type VisitorGmailOAuthStatus,
 } from '../../api/visitorKioskConfigService';
 import { useAuthStore } from '../../stores/authStore';
+import { findUnresolvedPrivacyPolicyContent } from '../../utils/visitorPrivacyPolicy';
 import { Button, PageHeader, TextAreaField } from '../ui/SharedUI';
 
 const purposeLabels: Record<string, string> = {
@@ -46,7 +47,8 @@ function localConfigurationComplete(config: VisitorKioskAdminConfig, fixedPurpos
   const validRoutes = fixedPurposes.every((purpose) => departments.includes(config.purposeDepartmentRoutes[purpose] ?? ''));
   return textValues.every((value) => value.trim()) && Boolean(config.retentionDays && config.retentionDays > 0)
     && config.acceptedIdTypes.length > 0 && validRoutes && config.privacyReviewApproved
-    && config.securityReviewApproved && config.operationsReviewApproved;
+    && config.securityReviewApproved && config.operationsReviewApproved
+    && findUnresolvedPrivacyPolicyContent(config).length === 0;
 }
 
 export const VisitorKioskConfigPage: React.FC = () => {
@@ -92,9 +94,22 @@ export const VisitorKioskConfigPage: React.FC = () => {
 
   useEffect(() => { void loadGmailStatus(); }, [loadGmailStatus]);
 
+  const unresolvedPolicyContent = useMemo(() => form ? findUnresolvedPrivacyPolicyContent(form) : [], [form]);
+  const processorDisclosureWarnings = useMemo(() => {
+    if (!form || !state) return [];
+    const disclosure = form.processors.toLowerCase();
+    const warnings: string[] = [];
+    if (state.technical.emailDeliveryConfigured && !disclosure.includes('resend')) {
+      warnings.push('Resend is configured as an email fallback but is not named in the approved processor disclosure.');
+    }
+    if (gmail?.connected && !/\b(?:gmail|google)\b/i.test(disclosure)) {
+      warnings.push('The Gmail API is connected but Google/Gmail is not named in the approved processor disclosure.');
+    }
+    return warnings;
+  }, [form, gmail?.connected, state]);
   const localComplete = useMemo(() => Boolean(form && state && localConfigurationComplete(
     form, state.fixedDepartmentPurposes, state.availableDepartments,
-  )), [form, state]);
+  ) && processorDisclosureWarnings.length === 0), [form, processorDisclosureWarnings.length, state]);
 
   const update = <K extends keyof VisitorKioskAdminConfig>(key: K, value: VisitorKioskAdminConfig[K]) => {
     setForm((current) => current ? { ...current, [key]: value } : current);
@@ -185,6 +200,16 @@ export const VisitorKioskConfigPage: React.FC = () => {
       {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div>}
       {notice && <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{notice}</div>}
 
+      {unresolvedPolicyContent.length > 0 && <div role="alert" className="rounded-2xl border-2 border-rose-300 bg-rose-50 p-5 text-rose-950">
+        <div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-rose-700" /><div><h2 className="font-black">Unresolved privacy notice placeholders</h2><p className="mt-1 text-sm leading-6">Registration cannot be enabled while organization-specific policy details are still placeholders. Replace each item with approved information; the application will not invent it.</p></div></div>
+        <ul className="mt-4 grid gap-2 text-sm sm:grid-cols-2">{unresolvedPolicyContent.map((item, index) => <li key={`${item.field}-${item.token}-${index}`} className="rounded-xl border border-rose-200 bg-white px-3 py-2"><span className="font-bold">{item.label}:</span> <code className="break-words text-xs">{item.token}</code></li>)}</ul>
+      </div>}
+
+      {processorDisclosureWarnings.length > 0 && <div role="alert" className="rounded-2xl border border-amber-300 bg-amber-50 p-5 text-amber-950">
+        <div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" /><div><h2 className="font-black">Processor disclosure needs review</h2><p className="mt-1 text-sm">The technical email status does not match the saved public processor disclosure. Confirm the approved wording without removing fallback or historical providers unless the organization has evidence that they no longer apply.</p></div></div>
+        <ul className="mt-3 list-disc space-y-1 pl-9 text-sm">{processorDisclosureWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+      </div>}
+
       <section className={sectionClass}>
         <h2 className="text-lg font-black text-slate-900">Organization and privacy controller</h2>
         <p className="mt-1 text-sm text-amber-700">These are legally significant notice details. Supply only organization-approved information; the application will not infer a DPO or legal basis.</p>
@@ -202,7 +227,7 @@ export const VisitorKioskConfigPage: React.FC = () => {
         <div className="mt-5 grid gap-5">
           <PolicyArea label="Processing purposes and information collected" value={form.processingPurposes} onChange={(e) => update('processingPurposes', e.target.value)} maxLength={4000} />
           <PolicyArea label="Lawful basis" value={form.lawfulBasis} onChange={(e) => update('lawfulBasis', e.target.value)} maxLength={4000} hint="Requires DPO/legal approval for the actual processing activities." />
-          <PolicyArea label="Public privacy notice" value={form.privacyNoticeText} onChange={(e) => update('privacyNoticeText', e.target.value)} maxLength={12000} />
+          <PolicyArea label="Public privacy notice" value={form.privacyNoticeText} onChange={(e) => update('privacyNoticeText', e.target.value)} maxLength={12000} hint="Markdown headings, lists, emphasis, and secure HTTPS or email links are supported. Raw HTML is not rendered on the public kiosk." />
           <PolicyArea label="Visitor acknowledgment statement" value={form.acknowledgementText} onChange={(e) => update('acknowledgementText', e.target.value)} maxLength={2000} hint="This must not be presented as blanket consent when another lawful basis applies." />
         </div>
       </section>
@@ -215,7 +240,7 @@ export const VisitorKioskConfigPage: React.FC = () => {
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600"><p className="font-bold text-slate-800">Secure deletion</p><p className="mt-1">The existing private bucket and service-only cleanup function remain in force. An authorized scheduled cleanup job is still required operationally.</p></div>
           <div className="md:col-span-2"><PolicyArea label="Retention and secure deletion policy" value={form.retentionPolicy} onChange={(e) => update('retentionPolicy', e.target.value)} maxLength={4000} /></div>
           <PolicyArea label="Safeguards" value={form.safeguards} onChange={(e) => update('safeguards', e.target.value)} maxLength={4000} />
-          <PolicyArea label="Authorized processors and service providers" value={form.processors} onChange={(e) => update('processors', e.target.value)} maxLength={4000} hint="List only processors covered by an approved arrangement." />
+          <PolicyArea label="Authorized processors and service providers" value={form.processors} onChange={(e) => update('processors', e.target.value)} maxLength={4000} hint="Name every actual approved storage and email provider in use, including Gmail API when connected and any retained fallback or historical provider. Do not list an unapproved arrangement." />
           <PolicyArea label="Data subject rights and request procedure" value={form.rightsProcess} onChange={(e) => update('rightsProcess', e.target.value)} maxLength={4000} />
           <PolicyArea label="Alternative/manual identity verification" value={form.alternativeVerification} onChange={(e) => update('alternativeVerification', e.target.value)} maxLength={4000} />
         </div>

@@ -65,6 +65,28 @@ describe('VisitorKioskConfigPage', () => {
     expect(await screen.findByText('Configuration saved. Public visitor registration is enabled.')).toBeInTheDocument();
   });
 
+  it('prominently flags unresolved policy placeholders and blocks local activation', async () => {
+    service.load.mockResolvedValueOnce({
+      ...state,
+      config: { ...config, dpoContact: '[APPROVED PRIVACY EMAIL]' },
+      readiness: { ready: false, configurationComplete: false, registrationEnabled: false, missing: ['dpoContact:unresolvedPlaceholder', 'registrationEnabled'] },
+    });
+    render(<VisitorKioskConfigPage />);
+    expect(await screen.findByRole('heading', { name: 'Unresolved privacy notice placeholders' })).toBeInTheDocument();
+    expect(screen.getByText('[APPROVED PRIVACY EMAIL]')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /Enable public visitor registration/i })).toBeDisabled();
+  });
+
+  it('flags real Gmail and Resend integrations missing from the processor disclosure', async () => {
+    service.load.mockResolvedValueOnce({ ...state, technical: { ...state.technical, emailDeliveryConfigured: true } });
+    service.loadGmailOAuthStatus.mockResolvedValueOnce({ ...gmailStatus, connected: true, connectionStatus: 'CONNECTED', connectedAt: '2026-10-22T10:00:00Z' });
+    render(<VisitorKioskConfigPage />);
+    expect(await screen.findByRole('heading', { name: 'Processor disclosure needs review' })).toBeInTheDocument();
+    expect(screen.getByText(/Resend is configured as an email fallback/)).toBeInTheDocument();
+    expect(screen.getByText(/Gmail API is connected/)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /Enable public visitor registration/i })).toBeDisabled();
+  });
+
   it('always shows the Gmail controls and actual disconnected state to a direct SUPER_ADMIN', async () => {
     render(<VisitorKioskConfigPage />);
     expect(await screen.findByRole('heading', { name: 'Gmail Email Integration' })).toBeInTheDocument();

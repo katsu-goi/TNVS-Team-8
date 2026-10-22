@@ -9,13 +9,19 @@ vi.mock('../../api/visitorService', async () => {
   return { ...actual, visitorService: { ...actual.visitorService, getKioskConfig: vi.fn(), submitKioskRegistration: vi.fn(), inspectVisitorStatus: vi.fn() } };
 });
 
+vi.mock('./VisitorIdScanner', () => ({
+  VisitorIdScanner: ({ onImageChange }: { onImageChange: (image: string, confirmed: boolean) => void }) => (
+    <button type="button" onClick={() => onImageChange('data:image/jpeg;base64,AA==', true)}>Use test ID image</button>
+  ),
+}));
+
 const configured: KioskConfig = {
   privacy: {
     organizationName: 'HIRNA TNVS',
     controllerName: 'Configured Controller', controllerContact: 'privacy@example.test', dpoContact: 'dpo@example.test',
     processingPurposes: 'Visitor registration and facility security.',
     lawfulBasis: 'Configured lawful basis', retentionPolicy: 'Configured retention policy', rightsProcess: 'Configured rights process',
-    privacyNoticeText: 'Configured public visitor privacy notice for testing the acknowledged registration workflow.',
+    privacyNoticeText: '# Approved Visitor Notice\n\n**Important:** this is the complete approved policy.\n\n- Visitor details\n- Approved ID image\n\nContact the [privacy team](mailto:privacy@example.test).',
     acknowledgementText: 'I acknowledge that I have read and understood this configured notice.',
     retentionDays: 30,
     processors: 'Configured processors', safeguards: 'Configured safeguards', alternativeVerification: 'Present the original ID to an authorized officer.',
@@ -37,13 +43,83 @@ describe('VisitorKioskPage', () => {
     expect(await screen.findByRole('heading', { name: /welcome to hirna tnvs/i })).toBeInTheDocument();
     expect(visitorService.getKioskConfig).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: /start visitor registration/i }));
-    expect(screen.getByRole('heading', { name: /privacy notice/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /your privacy matters/i })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /capture an approved id/i })).not.toBeInTheDocument();
     const continueButton = screen.getByRole('button', { name: /continue/i });
     expect(continueButton).toBeDisabled();
     fireEvent.click(screen.getByRole('checkbox'));
     fireEvent.click(continueButton);
     expect(await screen.findByRole('heading', { name: /capture an approved id/i })).toBeInTheDocument();
+  });
+
+  it('renders complete Markdown semantics without allowing raw HTML or unsafe links', async () => {
+    vi.mocked(visitorService.getKioskConfig).mockResolvedValue({
+      ...configured,
+      privacy: {
+        ...configured.privacy,
+        privacyNoticeText: '## Collection details\n\n**Required explanation**\n\n1. Name\n2. ID image\n\n[Safe contact](mailto:privacy@example.test)\n\n[Unsafe link](javascript:alert(1))\n\n<script>window.policyInjected = true</script>',
+      },
+    });
+    const { container } = render(<MemoryRouter><VisitorKioskPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: /start visitor registration/i }));
+
+    expect(screen.getByRole('heading', { name: 'Collection details' })).toBeInTheDocument();
+    expect(screen.getByText('Required explanation').tagName).toBe('STRONG');
+    expect(screen.getAllByRole('listitem').some((item) => item.textContent === 'ID image')).toBe(true);
+    expect(screen.getByRole('link', { name: 'Safe contact' })).toHaveAttribute('href', 'mailto:privacy@example.test');
+    expect(screen.queryByRole('link', { name: 'Unsafe link' })).not.toBeInTheDocument();
+    expect(screen.getByText('Unsafe link')).toBeInTheDocument();
+    expect(container.querySelector('script')).not.toBeInTheDocument();
+    expect(screen.getByText('Manual identity verification is available')).toBeInTheDocument();
+    expect(screen.getByText('Organization and Contact')).toBeInTheDocument();
+    expect(screen.getByText('Information and Processing')).toBeInTheDocument();
+    expect(screen.getByText('Privacy and Security')).toBeInTheDocument();
+  });
+
+  it('uses an unchecked native acknowledgment and keeps Continue disabled until activation', async () => {
+    render(<MemoryRouter><VisitorKioskPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: /start visitor registration/i }));
+    const checkbox = screen.getByRole('checkbox', { name: configured.privacy.acknowledgementText });
+    const continueButton = screen.getByRole('button', { name: /continue/i });
+    expect(checkbox).not.toBeChecked();
+    expect(continueButton).toBeDisabled();
+    checkbox.focus();
+    expect(checkbox).toHaveFocus();
+    fireEvent.click(checkbox);
+    expect(checkbox).toBeChecked();
+    expect(continueButton).toBeEnabled();
+    expect(screen.getByRole('link', { name: /review the full notice again/i })).toHaveAttribute('href', '#full-privacy-notice');
+  });
+
+  it('submits the acknowledged notice version once with the pending registration', async () => {
+    vi.mocked(visitorService.submitKioskRegistration).mockResolvedValue({
+      id: 'visitor-1', referenceNumber: 'HV-20261022-TEST', approvalStatus: 'PENDING',
+      identityVerificationStatus: 'MANUAL_REVIEW_REQUIRED', emailDeliveryStatus: 'NOT_CONFIGURED', statusToken: 'vss_test',
+    });
+    render(<MemoryRouter><VisitorKioskPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: /start visitor registration/i }));
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: /^continue$/i }));
+
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Government ID' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Use test ID image' }));
+    fireEvent.click(screen.getByRole('button', { name: /^continue$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /continue for manual review/i }));
+
+    fireEvent.change(screen.getByLabelText('Full name'), { target: { value: 'Test Visitor' } });
+    fireEvent.change(screen.getByLabelText('Email for QR pass'), { target: { value: 'visitor@example.test' } });
+    fireEvent.change(screen.getByLabelText('Purpose of visit'), { target: { value: 'MEETING_EMPLOYEE' } });
+    fireEvent.change(screen.getByLabelText('Employee host'), { target: { value: 'host-1' } });
+    fireEvent.change(screen.getByLabelText('Expected arrival'), { target: { value: '2026-10-23T10:00' } });
+    fireEvent.click(screen.getByRole('button', { name: /review request/i }));
+    fireEvent.click(screen.getByRole('button', { name: /submit pending request/i }));
+
+    await waitFor(() => expect(visitorService.submitKioskRegistration).toHaveBeenCalledTimes(1));
+    expect(visitorService.submitKioskRegistration).toHaveBeenCalledWith(expect.objectContaining({
+      privacyAcknowledged: true,
+      privacyNoticeVersion: '2026-10',
+    }));
+    expect(await screen.findByRole('heading', { name: 'Request received' })).toBeInTheDocument();
   });
 
   it('blocks collection when mandatory privacy configuration is incomplete', async () => {
