@@ -603,7 +603,13 @@ async function handleKioskRegister(_ctx: AuthContext | null, req: Request, body:
     byte_size: image.bytes.length,
     delete_after: deleteAfter,
   });
-  if (artifactError) console.error(`visitor identity artifact metadata failed for ${visitorId}: ${artifactError.message}`);
+  if (artifactError) {
+    await Promise.all([
+      db.storage.from(IMAGE_BUCKET).remove([storagePath]),
+      db.from("visitors").delete().eq("id", visitorId),
+    ]);
+    throw new Error(`visitor identity artifact metadata failed: ${artifactError.message}`);
+  }
 
   if (host?.id) {
     const { error: notificationError } = await db.from("employee_notifications").insert({
@@ -630,11 +636,20 @@ async function handleKioskRegister(_ctx: AuthContext | null, req: Request, body:
   }, "Visitor request submitted for approval"), 201);
 }
 
-async function handleIdentityArtifacts(_ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
+async function handleIdentityArtifacts(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
+  const { data: visitor, error: visitorError } = await db.from("visitors")
+    .select("id, registration_source, is_deleted").eq("id", p.id).maybeSingle();
+  if (visitorError) throw new Error(`visitor identity owner load failed: ${visitorError.message}`);
+  if (!visitor || visitor.is_deleted || visitor.registration_source !== "KIOSK") return emptyNotFound();
   const { data, error } = await db.from("visitor_identity_artifacts")
     .select("id, artifact_type, storage_path, mime_type, byte_size, captured_at, delete_after")
     .eq("visitor_id", p.id).is("deleted_at", null).order("captured_at");
   if (error) throw new Error(`visitor identity artifact load failed: ${error.message}`);
+  const invalidArtifact = (data ?? []).find((artifact) => !["image/jpeg", "image/png", "image/webp"].includes(artifact.mime_type));
+  if (invalidArtifact) {
+    return jsonResponse(fail("The stored identity artifact has an unsupported media type.", "IDENTITY_ARTIFACT_MEDIA_TYPE_INVALID"), 422);
+  }
+  const expiresAt = new Date(Date.now() + 300_000).toISOString();
   const signed = await Promise.all((data ?? []).map(async (artifact) => {
     const { data: signedData, error: signedError } = await db.storage.from(IMAGE_BUCKET)
       .createSignedUrl(artifact.storage_path, 300);
@@ -648,8 +663,11 @@ async function handleIdentityArtifacts(_ctx: AuthContext | null, _req: Request, 
       deleteAfter: artifact.delete_after,
       signedUrl: signedData.signedUrl,
       expiresInSeconds: 300,
+      expiresAt,
     };
   }));
+  await writeAudit(ctx!.user, "VISITOR_IDENTITY_ARTIFACT_LINKS_ISSUED", MODULE, "Visitor", p.id,
+    `Temporary links issued for ${signed.length} private identity artifact(s).`, resolveClientIp(req).ip, "HIGH");
   return jsonResponse(ok(signed, "Temporary identity-artifact links created"), 200);
 }
 

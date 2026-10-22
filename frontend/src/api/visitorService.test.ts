@@ -45,6 +45,13 @@ describe('visitor kiosk API integration', () => {
     });
   });
 
+  it('requests private identity artifacts through the authenticated visitor function route', async () => {
+    const artifacts = [{ id: 'artifact-1', signedUrl: 'https://project.supabase.co/storage/v1/object/sign/private/path' }];
+    api.get.mockResolvedValueOnce({ data: { data: artifacts } });
+    await expect(visitorService.getIdentityArtifacts('visitor-1')).resolves.toBe(artifacts);
+    expect(api.get).toHaveBeenCalledWith('/visitors/visitor-1/identity-artifacts');
+  });
+
   it('inspects an issued visitor QR without using reservation QR endpoints', async () => {
     api.post.mockResolvedValueOnce({ data: { data: { referenceNumber: 'HV-1', status: 'REGISTERED' } } });
     await visitorService.inspectVisitorPass('vst_test_token');

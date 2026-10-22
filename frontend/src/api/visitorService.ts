@@ -56,6 +56,18 @@ export type KioskRegistration = {
   expectedArrival: string;
 };
 
+export type VisitorIdentityArtifact = {
+  id: string;
+  type: string;
+  mimeType: 'image/jpeg' | 'image/png' | 'image/webp';
+  byteSize: number;
+  capturedAt: string;
+  deleteAfter?: string | null;
+  signedUrl: string;
+  expiresInSeconds: number;
+  expiresAt: string;
+};
+
 /**
  * Visitor verification + watchlist API (Task 4).
  *
@@ -90,12 +102,7 @@ export const visitorService = {
     return data?.data;
   },
 
-  async getIdentityArtifacts(id: string): Promise<Array<{
-    id: string;
-    type: string;
-    signedUrl: string;
-    expiresInSeconds: number;
-  }>> {
+  async getIdentityArtifacts(id: string): Promise<VisitorIdentityArtifact[]> {
     const { data } = await apiClient.get(`/visitors/${id}/identity-artifacts`);
     return data?.data ?? [];
   },
