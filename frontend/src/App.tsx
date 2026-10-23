@@ -13,6 +13,7 @@ import { AppLayout } from './components/layout/AppLayout';
 import { LoginPage } from './components/auth/LoginPage';
 import { SessionIdleManager } from './components/auth/SessionIdleManager';
 import { HRAssistancePage } from './components/auth/HRAssistancePage';
+import { ForgotPasswordPage, ResetPasswordPage } from './components/auth/PasswordRecoveryPages';
 import { FacilitiesManagerLayout } from './components/facilities/FacilitiesManagerLayout';
 import { FacilitiesOfficerLayout } from './components/facilities-officer/FacilitiesOfficerLayout';
 import { LegalOfficerLayout } from './components/legal/LegalOfficerLayout';
@@ -265,6 +266,8 @@ export const AppRoutes: React.FC = () => (
   <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/hr-assistance" element={<HRAssistancePage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/reservation-portal/login" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><Team8LoginPage /></Suspense>} />
         <Route path="/reservation-portal/pass" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><ReservationPassPage /></Suspense>} />
         <Route path="/guest-pass/:token" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><ReservationPassPage /></Suspense>} />

@@ -1,6 +1,24 @@
 import '@testing-library/jest-dom/vitest';
 import { vi } from 'vitest';
 
+// Node 22+ may expose an unusable experimental global localStorage unless a
+// file is configured. Keep a deterministic per-worker Web Storage substitute.
+const storageValues = new Map<string, string>();
+Object.defineProperties(Storage.prototype, {
+  length: { configurable: true, get: () => storageValues.size },
+  clear: { configurable: true, value: () => storageValues.clear() },
+  getItem: { configurable: true, value: (key: string) => storageValues.get(String(key)) ?? null },
+  key: { configurable: true, value: (index: number) => [...storageValues.keys()][index] ?? null },
+  removeItem: { configurable: true, value: (key: string) => { storageValues.delete(String(key)); } },
+  setItem: { configurable: true, value: (key: string, value: string) => { storageValues.set(String(key), String(value)); } },
+});
+const testStorage = Object.create(Storage.prototype) as Storage;
+Object.defineProperty(globalThis, 'localStorage', {
+  configurable: true,
+  value: testStorage,
+});
+Object.defineProperty(window, 'localStorage', { configurable: true, value: testStorage });
+
 const canvasGradient = { addColorStop: vi.fn() };
 const canvasContext = new Proxy({
   canvas: document.createElement('canvas'),
