@@ -2,6 +2,7 @@ import { createHandler, isDirectSuperAdmin, AuthContext, RouteParams } from "../
 import { jsonResponse, corsHeaders } from "../_shared/cors.ts";
 import { ok, fail } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
+import { isValidStorageObjectPath } from "../_shared/storage-object-path.ts";
 import { naiveIso } from "../_shared/auth-users.ts";
 import { writeAudit } from "../_shared/lockout.ts";
 import { resolveClientIp } from "../_shared/ip.ts";
@@ -155,15 +156,6 @@ async function ensureBucket() {
     if (createError) throw new Error(`storage bucket create failed: ${createError.message}`);
   }
   return error == null || Number((error as { statusCode?: unknown }).statusCode) === 404 ? true : false;
-}
-
-function isValidStorageObjectPath(filePath: string): boolean {
-  const path = filePath.trim();
-  if (path === "" || path.startsWith("/") || path.startsWith("\\") || /^[A-Za-z]:[\\/]/.test(path)) {
-    return false;
-  }
-  if (path.includes("\\")) return false;
-  return path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
 function isMissingStorageObjectError(error: unknown): boolean {
@@ -344,6 +336,7 @@ function archiveDocumentDto(
     fileName: str(row.file_name),
     fileType,
     fileSize: num(row.file_size),
+    fileAvailable: isValidStorageObjectPath(str(row.file_path) ?? ""),
     documentType: str(row.ai_detected_document_type),
     documentNumber: str(metadata.documentNumber ?? metadata.document_number ?? metadata.referenceNumber),
     department: department ? { id: str(department.id), name: str(department.name), status: str(department.status) } : {

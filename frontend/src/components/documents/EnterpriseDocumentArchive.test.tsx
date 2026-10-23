@@ -26,7 +26,7 @@ const secondDepartment = {
 };
 
 const archivedDocument = {
-  id: 'document-id', title: 'Retention Schedule', fileName: 'retention.pdf', fileType: 'application/pdf',
+  id: 'document-id', title: 'Retention Schedule', fileName: 'retention.pdf', fileType: 'application/pdf', fileAvailable: true,
   fileSize: 100, documentType: 'POLICY', documentNumber: 'RS-1', department: { id: 'department-id', name: 'Existing Department', status: 'ACTIVE' },
   ownerEmail: 'owner@hirna.test', classification: 'RESTRICTED', archiveStatus: 'ARCHIVED', retentionStatus: 'SCHEDULED',
   retentionPolicy: null, retentionStartDate: null, retentionReviewDate: null, effectiveDate: null, expirationDate: null,
@@ -123,6 +123,24 @@ describe('EnterpriseDocumentArchive', () => {
     expect(within(details).getByText('Version and history')).toBeInTheDocument();
     expect(within(details).getByText('Record ID: document-id')).toBeInTheDocument();
     expect(documentArchiveService.getDocument).toHaveBeenCalledWith('document-id', expect.any(AbortSignal));
+    expect(documentArchiveService.getViewerFile).not.toHaveBeenCalled();
+  });
+
+  it('keeps metadata-only records readable without offering file actions', async () => {
+    const metadataOnly = { ...archivedDocument, fileAvailable: false, fileName: null };
+    vi.mocked(documentArchiveService.getDocuments).mockResolvedValue({ documents: [metadataOnly as never], total: 1 });
+    vi.mocked(documentArchiveService.getDocument).mockResolvedValue(metadataOnly as never);
+    render(<EnterpriseDocumentArchive />);
+    fireEvent.click(await screen.findByRole('button', { name: /Existing Department/ }));
+
+    expect(await screen.findAllByText('Metadata only — no file attached')).not.toHaveLength(0);
+    expect(screen.queryByRole('button', { name: 'Preview Document' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Download' })).not.toBeInTheDocument();
+
+    fireEvent.click((await screen.findAllByRole('button', { name: 'View Details' }))[0]);
+    const details = await screen.findByRole('dialog', { name: 'Document Details' });
+    expect(within(details).getByText('Metadata only — no file attached')).toBeInTheDocument();
+    expect(within(details).queryByRole('button', { name: 'Download' })).not.toBeInTheDocument();
     expect(documentArchiveService.getViewerFile).not.toHaveBeenCalled();
   });
 

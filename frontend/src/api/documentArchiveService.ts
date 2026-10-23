@@ -32,6 +32,7 @@ export type ArchiveDocument = {
   fileName: string | null;
   fileType: string | null;
   fileSize: number | null;
+  fileAvailable: boolean;
   documentType: string | null;
   documentNumber: string | null;
   department: { id: string | null; name: string | null; status: string | null };
