@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(resolve(process.cwd(), '../supabase/functions/visitor/index.ts'), 'utf8');
 const migration = readFileSync(resolve(process.cwd(), '../supabase/migrations/20261022000100_visitor_status_notifications.sql'), 'utf8');
+const guard = readFileSync(resolve(process.cwd(), '../supabase/functions/_shared/guard.ts'), 'utf8');
+const cors = readFileSync(resolve(process.cwd(), '../supabase/functions/_shared/cors.ts'), 'utf8');
 
 describe('visitor notification and status security contract', () => {
   it('stores only hashed high-entropy status credentials and never looks up by reference number', () => {
@@ -12,6 +14,13 @@ describe('visitor notification and status security contract', () => {
     expect(source).toContain('.eq("status_token_hash", tokenHash)');
     expect(source).not.toContain('.eq("reference_number", token)');
     expect(source).toContain('path: "/visitor-status/inspect", guard: { kind: "public" }');
+  });
+
+  it('keeps status inspection public and rate limited while exposing only a correlation header', () => {
+    expect(source).toContain('path: "/visitor-status/inspect", guard: { kind: "public" }');
+    expect(guard).toContain('tierFor("guest", route.path)');
+    expect(guard).toContain('headers.set("X-Request-ID", requestId)');
+    expect(cors).toContain('Content-Disposition, Retry-After, X-Request-ID');
   });
 
   it('keeps pending submissions unauthorized and sends a tracked acknowledgment', () => {
@@ -24,8 +33,18 @@ describe('visitor notification and status security contract', () => {
 
   it('requires identity clearance before approval pass creation', () => {
     expect(source).toContain('"VISITOR_IDENTITY_REVIEW_REQUIRED"');
-    expect(source).toContain('await issueAndEmailVisitorPass(approved as unknown as VisitorRow, ctx!.email)');
+    expect(source).toContain('await approveAndIssueVisitorPass(visitor, ctx!, reason, req.headers.get("X-Request-ID") ?? undefined)');
+    expect(source).toContain('.eq("id", visitor.id).eq("approval_status", "PENDING")');
     expect(source).toContain('attachments: [{ filename: `${visitor.reference_number ?? "visitor-pass"}.png`');
+  });
+
+  it('validates pass policy before committing approval and pass state together', () => {
+    const start = source.indexOf('async function approveAndIssueVisitorPass');
+    const end = source.indexOf('async function handleApprovalDecision');
+    const approval = source.slice(start, end);
+    expect(approval.indexOf('VISITOR_PASS_POLICY_NOT_CONFIGURED')).toBeLessThan(approval.indexOf('approval_status: "APPROVED"'));
+    expect(approval).toContain('access_status: "AUTHORIZED"');
+    expect(approval).toContain('qr_token_hash: tokenHash');
   });
 
   it('sends a public-safe decline notification without a QR attachment or internal reason', () => {

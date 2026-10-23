@@ -77,8 +77,12 @@ export function envMissingResponse(e: unknown): Response {
   );
 }
 
-export function internalErrorResponse(e: unknown): Response {
-  console.error("handler error:", (e as Error).message);
+export function internalErrorResponse(e: unknown, requestId?: string): Response {
+  const errorName = e instanceof Error ? e.name : "UnknownError";
+  const category = e instanceof Error && /^[A-Z][A-Z0-9_]+$/.test(e.message)
+    ? e.message
+    : "UNEXPECTED_HANDLER_ERROR";
+  console.error(JSON.stringify({ event: "handler_error", requestId: requestId ?? null, errorName, category }));
   return jsonResponse(
     fail("An unexpected error occurred. Please contact system administrator.", "INTERNAL_SERVER_ERROR"),
     500,
@@ -418,7 +422,19 @@ export function createHandler(routes: Route[], options: RouterOptions = {}): (re
   return async (req: Request): Promise<Response> => {
     if (isPreflight(req)) return preflightResponse(req);
 
-    const finish = (response: Response) => applyCors(req, response);
+    const suppliedRequestId = req.headers.get("X-Request-ID")?.trim() ?? "";
+    const requestId = /^[A-Za-z0-9._:-]{8,100}$/.test(suppliedRequestId)
+      ? suppliedRequestId
+      : crypto.randomUUID();
+    const finish = (response: Response) => {
+      const headers = new Headers(response.headers);
+      headers.set("X-Request-ID", requestId);
+      return applyCors(req, new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      }));
+    };
 
     try {
       assertEnv();
@@ -450,7 +466,7 @@ export function createHandler(routes: Route[], options: RouterOptions = {}): (re
       const rate = tierFor("guest", route.path);
       const key = `${resolveClientIp(req).ip}:${rate.name}:${route.path}`;
       if (!(await consumeRateLimit(key, rate.spec))) return finish(rateLimitedResponse(rate.spec.windowSeconds));
-      return finish(await safeRun(route.handler, null, req, body, params));
+      return finish(await safeRun(route.handler, null, req, body, params, requestId));
     }
 
     const actorCtx = await extractAuthContext(req);
@@ -459,7 +475,7 @@ export function createHandler(routes: Route[], options: RouterOptions = {}): (re
     try {
       await terminateOversightForLogout(actorCtx, req, body);
     } catch (e) {
-      return finish(internalErrorResponse(e));
+      return finish(internalErrorResponse(e, requestId));
     }
 
     const rate = tierFor(
@@ -474,14 +490,14 @@ export function createHandler(routes: Route[], options: RouterOptions = {}): (re
       ctx = await oversightTargetContext(actorCtx, req);
     } catch (e) {
       if (e instanceof OversightContextError) return finish(oversightContextErrorResponse(e));
-      return finish(internalErrorResponse(e));
+      return finish(internalErrorResponse(e, requestId));
     }
 
     if (ctx.oversight) {
       try {
         await writeOversightActionAudit(ctx, req, route, params, "AUTHORIZED_ATTEMPT");
       } catch (e) {
-        return finish(internalErrorResponse(e));
+        return finish(internalErrorResponse(e, requestId));
       }
     }
 
@@ -500,10 +516,10 @@ export function createHandler(routes: Route[], options: RouterOptions = {}): (re
     }
 
     if (isDirectSuperAdmin(ctx) && MUTATING_METHODS.has(req.method)) {
-      try { return finish(await runDirectAdminMutation(ctx, req, route, params, () => safeRun(route.handler, ctx, req, body, params))); }
-      catch (error) { return finish(internalErrorResponse(error)); }
+      try { return finish(await runDirectAdminMutation(ctx, req, route, params, () => safeRun(route.handler, ctx, req, body, params, requestId))); }
+      catch (error) { return finish(internalErrorResponse(error, requestId)); }
     }
-    const response = await safeRun(route.handler, ctx, req, body, params);
+    const response = await safeRun(route.handler, ctx, req, body, params, requestId);
     try { await writeOversightActionAudit(ctx, req, route, params, "COMPLETED", response.status); }
     catch (e) { console.error("oversight completion audit failed:", (e as Error).message); }
     return finish(response);
@@ -526,11 +542,12 @@ async function safeRun(
   req: Request,
   body: unknown,
   params: RouteParams,
+  requestId?: string,
 ): Promise<Response> {
   try {
     return await handler(ctx, req, body, params);
   } catch (e) {
-    return internalErrorResponse(e);
+    return internalErrorResponse(e, requestId);
   }
 }
 

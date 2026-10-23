@@ -4,7 +4,7 @@ import {
   AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2,
   IdCard, Loader2, LockKeyhole, Mail, RefreshCw, ShieldCheck, UserRound,
 } from 'lucide-react';
-import { extractErrorMessage } from '../../api/client';
+import { extractApiErrorCode, extractErrorMessage, extractRequestId } from '../../api/client';
 import { visitorService, type KioskConfig, type KioskRegistration } from '../../api/visitorService';
 import { VisitorIdScanner } from './VisitorIdScanner';
 import { PrivacyNoticeStep } from './PrivacyNoticeStep';
@@ -46,6 +46,21 @@ const labelClass = 'mb-1.5 block text-xs font-bold uppercase tracking-wide text-
 
 function errorMessage(error: unknown): string {
   return extractErrorMessage(error);
+}
+
+function publicStatusError(error: unknown): { error: string; requestId?: string } {
+  const code = extractApiErrorCode(error);
+  const requestId = extractRequestId(error) || undefined;
+  if (code === 'VISITOR_STATUS_INVALID') {
+    return { error: 'This secure visitor status link is invalid. Check that the complete link was opened.', requestId };
+  }
+  if (code === 'VISITOR_STATUS_EXPIRED') {
+    return { error: 'This secure visitor status link has expired. Contact reception if you still need an update.', requestId };
+  }
+  return {
+    error: 'We could not load your visitor status right now. Please try again. If the problem continues, contact reception.',
+    requestId,
+  };
 }
 
 export function visitorDetailsAreValid(form: VisitorKioskFormState): boolean {
@@ -196,17 +211,26 @@ export const VisitorPassPage: React.FC = () => {
 
 export const VisitorStatusPage: React.FC = () => {
   const { token = '' } = useParams();
-  const [state, setState] = useState<{ loading: boolean; data?: Awaited<ReturnType<typeof visitorService.inspectVisitorStatus>>; error?: string }>({ loading: true });
+  const [state, setState] = useState<{ loading: boolean; data?: Awaited<ReturnType<typeof visitorService.inspectVisitorStatus>>; error?: string; requestId?: string }>({ loading: true });
+  const loadStatus = useCallback(async (isActive: () => boolean = () => true) => {
+    setState({ loading: true });
+    try {
+      const data = await visitorService.inspectVisitorStatus(token);
+      if (isActive()) setState({ loading: false, data });
+    } catch (error) {
+      if (isActive()) setState({ loading: false, ...publicStatusError(error) });
+    }
+  }, [token]);
   useEffect(() => {
     let active = true;
-    void visitorService.inspectVisitorStatus(token).then((data) => { if (active) setState({ loading: false, data }); })
-      .catch((error) => { if (active) setState({ loading: false, error: errorMessage(error) }); });
+    void loadStatus(() => active);
     return () => { active = false; };
-  }, [token]);
+  }, [loadStatus]);
   const tone = state.data?.status === 'APPROVED'
     ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
     : state.data?.status === 'DECLINED'
       ? 'border-rose-200 bg-rose-50 text-rose-800'
       : 'border-amber-200 bg-amber-50 text-amber-900';
-  return <KioskShell><div className="mx-auto flex min-h-[75vh] max-w-xl items-center p-5"><section className="w-full rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-xl">{state.loading ? <><Loader2 className="mx-auto h-10 w-10 animate-spin text-red-700" /><p className="mt-4 text-sm font-bold">Checking request status…</p></> : state.error ? <><AlertCircle className="mx-auto h-12 w-12 text-rose-600" /><h1 className="mt-4 text-2xl font-black">Status unavailable</h1><p className="mt-2 text-sm text-slate-600">{state.error}</p></> : state.data && <><ShieldCheck className="mx-auto h-12 w-12 text-red-700" /><h1 className="mt-4 text-2xl font-black">Visitor request status</h1><p className="mt-2 font-mono text-sm font-bold text-slate-600">{state.data.referenceNumber}</p><div className={`mt-6 rounded-2xl border p-5 ${tone}`}><p className="text-xs font-black uppercase tracking-widest">Current status</p><p className="mt-2 text-2xl font-black">{state.data.status}</p></div><p className="mt-5 text-sm leading-6 text-slate-700">{state.data.message}</p><p className="mt-5 text-xs text-slate-500">This high-entropy link is required to view status. A reference number alone cannot access visitor records.</p></>}</section></div></KioskShell>;
+  const statusLabel = state.data?.status.replace(/_/g, ' ');
+  return <KioskShell><div className="mx-auto flex min-h-[75vh] max-w-xl items-center p-5"><section className="w-full rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-xl">{state.loading ? <><Loader2 className="mx-auto h-10 w-10 animate-spin text-red-700" /><p className="mt-4 text-sm font-bold">Checking request status…</p></> : state.error ? <><AlertCircle className="mx-auto h-12 w-12 text-rose-600" /><h1 className="mt-4 text-2xl font-black">Status unavailable</h1><p className="mt-2 text-sm text-slate-600">{state.error}</p>{state.requestId && <p className="mt-3 font-mono text-xs text-slate-500">Support reference: {state.requestId}</p>}<button type="button" onClick={() => void loadStatus()} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white"><RefreshCw className="h-4 w-4" />Try again</button></> : state.data && <><ShieldCheck className="mx-auto h-12 w-12 text-red-700" /><h1 className="mt-4 text-2xl font-black">Visitor request status</h1><p className="mt-2 font-mono text-sm font-bold text-slate-600">{state.data.referenceNumber}</p><div className={`mt-6 rounded-2xl border p-5 ${tone}`}><p className="text-xs font-black uppercase tracking-widest">Current status</p><p className="mt-2 text-2xl font-black">{statusLabel}</p></div><p className="mt-5 text-sm leading-6 text-slate-700">{state.data.message}</p><p className="mt-5 text-xs text-slate-500">This high-entropy link is required to view status. A reference number alone cannot access visitor records.</p></>}</section></div></KioskShell>;
 };

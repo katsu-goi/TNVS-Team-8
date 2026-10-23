@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { apiClient, extractErrorMessage, getApiUrl, safeFetchJson } from './client';
+import { apiClient, extractErrorMessage, extractRequestId, getApiUrl, safeFetchJson } from './client';
 
 describe('safeFetchJson', () => {
   it('throws a normalized error instead of converting failures to null', async () => {
@@ -25,6 +25,12 @@ describe('Supabase Edge Function routing', () => {
     );
   });
 
+  it('routes the secure visitor status request through the deployed visitor function', () => {
+    expect(getApiUrl('/visitor-status/inspect')).toBe(
+      'https://dunijfrvfozwlykpkfhy.supabase.co/functions/v1/visitor/visitor-status/inspect',
+    );
+  });
+
   it('does not duplicate an API prefix that already matches its function', () => {
     const url = getApiUrl('/facilities/management');
     expect(url).toMatch(/\/facilities\/management$/);
@@ -40,5 +46,9 @@ describe('extractErrorMessage', () => {
         headers: { 'retry-after': '42' },
       },
     })).toBe('AI processing is temporarily unavailable. Try again in 42 seconds.');
+  });
+
+  it('reads a safe support correlation ID from response headers', () => {
+    expect(extractRequestId({ response: { headers: { 'x-request-id': 'request-1234' } } })).toBe('request-1234');
   });
 });

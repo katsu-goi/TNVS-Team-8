@@ -41,8 +41,8 @@ const artifact = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-const renderReview = () => render(
-  <KioskVisitorReviewModal visitor={visitor} onClose={vi.fn()} onChanged={vi.fn().mockResolvedValue(undefined)} />,
+const renderReview = (overrides: Record<string, unknown> = {}) => render(
+  <KioskVisitorReviewModal visitor={{ ...visitor, ...overrides }} onClose={vi.fn()} onChanged={vi.fn().mockResolvedValue(undefined)} />,
 );
 
 describe('secure kiosk visitor identity review', () => {
@@ -144,5 +144,60 @@ describe('secure kiosk visitor identity review', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Approve manual identity review' }));
     await waitFor(() => expect(api.manualIdentityReview).toHaveBeenCalledWith('visitor-1', 'APPROVE', 'Government ID is readable.'));
     expect(api.decideApproval).not.toHaveBeenCalled();
+  });
+
+  it('labels an accepted pending email as the registration acknowledgment', () => {
+    renderReview({ emailDeliveryStatus: 'ACCEPTED' });
+    expect(screen.getByText('Registration acknowledgment')).toBeInTheDocument();
+    expect(screen.getByText(/accepted by the email provider; inbox delivery is not guaranteed/i)).toBeInTheDocument();
+  });
+
+  it('prevents duplicate approval submissions while the first request is in flight', async () => {
+    let resolveApproval!: () => void;
+    api.decideApproval.mockReturnValue(new Promise<void>((resolve) => { resolveApproval = resolve; }));
+    renderReview({ identityVerificationStatus: 'MANUAL_REVIEW_APPROVED' });
+    fireEvent.change(screen.getByPlaceholderText('Required: at least 5 characters'), { target: { value: 'Approved scheduled visit.' } });
+    const approve = screen.getByRole('button', { name: 'Approve visit and issue pass' });
+    fireEvent.click(approve);
+    fireEvent.click(approve);
+    expect(api.decideApproval).toHaveBeenCalledTimes(1);
+    resolveApproval();
+    await waitFor(() => expect(api.listVisitors).toHaveBeenCalled());
+  });
+
+  it('explains missing pass policy, keeps the action single, and refreshes authoritative state', async () => {
+    api.decideApproval.mockRejectedValue({
+      response: {
+        status: 503,
+        data: { errorCode: 'VISITOR_PASS_POLICY_NOT_CONFIGURED' },
+        headers: { 'x-request-id': 'approval-request-1234' },
+      },
+    });
+    renderReview({ identityVerificationStatus: 'MANUAL_REVIEW_APPROVED' });
+    fireEvent.change(screen.getByPlaceholderText('Required: at least 5 characters'), { target: { value: 'Approved scheduled visit.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Approve visit and issue pass' }));
+    expect(await screen.findByText(/visit remains pending and no QR credential was issued/i)).toBeInTheDocument();
+    expect(screen.getByText(/approval-request-1234/)).toBeInTheDocument();
+    expect(api.listVisitors).toHaveBeenCalledTimes(1);
+    expect(api.decideApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes persisted state after an ambiguous approval response without retrying approval', async () => {
+    const approved = {
+      ...visitor,
+      identityVerificationStatus: 'MANUAL_REVIEW_APPROVED',
+      approvalStatus: 'APPROVED',
+      accessStatus: 'AUTHORIZED',
+      emailDeliveryStatus: 'FAILED',
+    };
+    api.decideApproval.mockRejectedValue({ request: {}, message: 'Network Error' });
+    api.listVisitors.mockResolvedValue([approved]);
+    renderReview({ identityVerificationStatus: 'MANUAL_REVIEW_APPROVED' });
+    fireEvent.change(screen.getByPlaceholderText('Required: at least 5 characters'), { target: { value: 'Approved scheduled visit.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Approve visit and issue pass' }));
+    expect(await screen.findByText(/approval could not be confirmed/i)).toBeInTheDocument();
+    expect(screen.getByText('Visit: APPROVED')).toBeInTheDocument();
+    expect(screen.getByText('Access: AUTHORIZED')).toBeInTheDocument();
+    expect(api.decideApproval).toHaveBeenCalledTimes(1);
   });
 });

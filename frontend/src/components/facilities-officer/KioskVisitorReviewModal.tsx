@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   X,
 } from 'lucide-react';
+import { extractApiErrorCode, extractErrorMessage, extractRequestId } from '../../api/client';
 import { visitorService, type VisitorIdentityArtifact } from '../../api/visitorService';
 
 type ImageStatus = 'loading' | 'loaded' | 'error' | 'expired' | 'missing';
@@ -25,12 +26,25 @@ type Props = {
 
 const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
-const errorMessage = (error: unknown) => {
-  if (error && typeof error === 'object' && 'response' in error) {
-    const response = (error as { response?: { data?: { error?: { message?: string } } } }).response;
-    if (response?.data?.error?.message) return response.data.error.message;
+const errorMessage = (error: unknown) => extractErrorMessage(error);
+
+const actionErrorMessage = (error: unknown, action: ReviewAction) => {
+  const code = extractApiErrorCode(error);
+  const requestId = extractRequestId(error);
+  const responseStatus = typeof error === 'object' && error !== null
+    ? (error as { response?: { status?: number } }).response?.status
+    : undefined;
+  let message: string;
+  if (code === 'VISITOR_PASS_POLICY_NOT_CONFIGURED') {
+    message = 'Pass issuance is not configured. The visit remains pending and no QR credential was issued. Ask a system administrator to configure the approved pass-validity policy.';
+  } else if (code === 'VISITOR_PASS_WINDOW_EXPIRED' || code === 'VISITOR_EXPECTED_ARRIVAL_INVALID') {
+    message = 'The visit schedule cannot produce a valid pass. Update the expected arrival before approving this request.';
+  } else if (responseStatus === 503 || (typeof error === 'object' && error !== null && 'request' in error && responseStatus === undefined)) {
+    message = `${action === 'APPROVE' ? 'Approval' : 'The action'} could not be confirmed. The current visitor state was refreshed; review it before trying again.`;
+  } else {
+    message = extractErrorMessage(error);
   }
-  return error instanceof Error ? error.message : 'The request could not be completed.';
+  return requestId ? `${message} Support reference: ${requestId}` : message;
 };
 
 const badgeClass = (value?: string) => {
@@ -54,6 +68,7 @@ export const KioskVisitorReviewModal: React.FC<Props> = ({ visitor, onClose, onC
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [fullScreen, setFullScreen] = useState(false);
   const requestId = useRef(0);
+  const actionInFlight = useRef(false);
   const automaticRetryUsed = useRef(false);
   const drag = useRef<{ id: number; x: number; y: number; originX: number; originY: number } | null>(null);
 
@@ -135,6 +150,7 @@ export const KioskVisitorReviewModal: React.FC<Props> = ({ visitor, onClose, onC
   };
 
   const perform = async (action: ReviewAction) => {
+    if (actionInFlight.current) return;
     const trimmedNotes = notes.trim();
     if (action !== 'RETRY' && trimmedNotes.length < 5) {
       setActionError('Enter review notes or a decision reason of at least 5 characters.');
@@ -144,6 +160,7 @@ export const KioskVisitorReviewModal: React.FC<Props> = ({ visitor, onClose, onC
       setActionError('Load and inspect the identification image before recording an identity decision.');
       return;
     }
+    actionInFlight.current = true;
     setBusy(true);
     setActionError('');
     try {
@@ -161,8 +178,10 @@ export const KioskVisitorReviewModal: React.FC<Props> = ({ visitor, onClose, onC
       await refreshVisitor();
       setNotes('');
     } catch (error) {
-      setActionError(errorMessage(error));
+      try { await refreshVisitor(); } catch { /* Preserve the primary action error. */ }
+      setActionError(actionErrorMessage(error, action));
     } finally {
+      actionInFlight.current = false;
       setBusy(false);
     }
   };
@@ -270,7 +289,7 @@ export const KioskVisitorReviewModal: React.FC<Props> = ({ visitor, onClose, onC
                   <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${badgeClass(currentVisitor.approvalStatus)}`}>Visit: {currentVisitor.approvalStatus}</span>
                   <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${badgeClass(currentVisitor.accessStatus)}`}>Access: {currentVisitor.accessStatus}</span>
                 </div>
-                <div><dt className="text-xs font-bold uppercase text-slate-500">Pass email</dt><dd className="mt-1 font-bold">{currentVisitor.emailDeliveryStatus}</dd>{currentVisitor.emailDeliveryError && <dd className="mt-1 text-xs font-semibold text-rose-800">{currentVisitor.emailDeliveryError}</dd>}</div>
+                <div><dt className="text-xs font-bold uppercase text-slate-500">{currentVisitor.approvalStatus === 'APPROVED' ? 'Pass email' : currentVisitor.approvalStatus === 'DECLINED' ? 'Decision email' : 'Registration acknowledgment'}</dt><dd className="mt-1 font-bold">{currentVisitor.emailDeliveryStatus}</dd>{currentVisitor.emailDeliveryStatus === 'ACCEPTED' && <dd className="mt-1 text-xs text-slate-600">Accepted by the email provider; inbox delivery is not guaranteed.</dd>}{currentVisitor.emailDeliveryError && <dd className="mt-1 text-xs font-semibold text-rose-800">{currentVisitor.emailDeliveryError}</dd>}</div>
               </dl>
             </div>
 

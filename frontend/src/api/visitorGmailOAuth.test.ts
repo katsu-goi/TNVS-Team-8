@@ -98,6 +98,28 @@ describe('visitor Gmail OAuth security', () => {
     expect(vi.mocked(fetcher).mock.calls[1][1]?.headers).toMatchObject({ Authorization: 'Bearer short-lived-access' });
   });
 
+  it('categorizes Gmail provider rejection without reporting acceptance', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'short-lived-access', scope: GMAIL_SEND_SCOPE }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded.' } }), { status: 429 })) as unknown as typeof fetch;
+    await expect(sendGmailMessage({
+      to: 'visitor@example.test', payload: { subject: 'Update', text: 'Update', html: '<p>Update</p>' },
+      idempotencyKey: 'visitor/approval/rejected', refreshToken: 'refresh-token',
+      secrets: { clientId: 'id', clientSecret: 'secret', encryptionKey: Buffer.alloc(32).toString('base64') }, fetcher,
+    })).rejects.toMatchObject({ code: 'GMAIL_SEND_RESOURCE_EXHAUSTED' });
+  });
+
+  it('categorizes an expired or revoked refresh token', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: 'invalid_grant', error_description: 'Token has been expired or revoked.',
+    }), { status: 400 })) as unknown as typeof fetch;
+    await expect(sendGmailMessage({
+      to: 'visitor@example.test', payload: { subject: 'Update', text: 'Update', html: '<p>Update</p>' },
+      idempotencyKey: 'visitor/approval/expired-token', refreshToken: 'expired-refresh-token',
+      secrets: { clientId: 'id', clientSecret: 'secret', encryptionKey: Buffer.alloc(32).toString('base64') }, fetcher,
+    })).rejects.toMatchObject({ code: 'GOOGLE_OAUTH_INVALID_GRANT' });
+  });
+
   it('registers only the callback publicly and keeps management direct-SUPER_ADMIN-only', () => {
     const root = resolve(process.cwd(), '..');
     const visitor = readFileSync(resolve(root, 'supabase/functions/visitor/index.ts'), 'utf8');

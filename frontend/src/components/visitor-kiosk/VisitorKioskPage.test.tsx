@@ -150,9 +150,11 @@ describe('visitorDetailsAreValid', () => {
 
 describe('VisitorStatusPage', () => {
   it.each([
-    ['PENDING', 'No entry credential is active.'],
+    ['PENDING_REVIEW', 'No entry credential is active.'],
     ['APPROVED', 'Use only the QR pass delivered'],
     ['DECLINED', 'No entry credential was issued.'],
+    ['PASS_EXPIRED', 'has expired'],
+    ['PASS_REVOKED', 'no longer active'],
   ] as const)('displays a token-protected %s status without personal data', async (status, message) => {
     vi.mocked(visitorService.inspectVisitorStatus).mockResolvedValue({
       referenceNumber: 'HV-20261022-TEST',
@@ -161,7 +163,7 @@ describe('VisitorStatusPage', () => {
       updatedAt: '2026-10-22T01:00:00.000Z',
     });
     render(<MemoryRouter initialEntries={['/visitor-status/vss_secure_token']}><Routes><Route path="/visitor-status/:token" element={<VisitorStatusPage />} /></Routes></MemoryRouter>);
-    expect(await screen.findByText(status)).toBeInTheDocument();
+    expect(await screen.findByText(status.replace(/_/g, ' '))).toBeInTheDocument();
     expect(screen.getByText('HV-20261022-TEST')).toBeInTheDocument();
     expect(screen.getByText(new RegExp(message, 'i'))).toBeInTheDocument();
     expect(visitorService.inspectVisitorStatus).toHaveBeenCalledWith('vss_secure_token');
@@ -169,9 +171,38 @@ describe('VisitorStatusPage', () => {
   });
 
   it('shows a safe error for an invalid or expired status token', async () => {
-    vi.mocked(visitorService.inspectVisitorStatus).mockRejectedValue(new Error('This visitor status link has expired.'));
+    vi.mocked(visitorService.inspectVisitorStatus).mockRejectedValue({
+      response: { status: 410, data: { errorCode: 'VISITOR_STATUS_EXPIRED' }, headers: { 'x-request-id': 'status-request-1234' } },
+    });
     render(<MemoryRouter initialEntries={['/visitor-status/vss_expired']}><Routes><Route path="/visitor-status/:token" element={<VisitorStatusPage />} /></Routes></MemoryRouter>);
     expect(await screen.findByRole('heading', { name: 'Status unavailable' })).toBeInTheDocument();
-    expect(screen.getByText('This visitor status link has expired.')).toBeInTheDocument();
+    expect(screen.getByText(/secure visitor status link has expired/i)).toBeInTheDocument();
+    expect(screen.getByText(/status-request-1234/)).toBeInTheDocument();
+  });
+
+  it('distinguishes an invalid secure status credential without exposing backend details', async () => {
+    vi.mocked(visitorService.inspectVisitorStatus).mockRejectedValue({
+      response: { status: 404, data: { errorCode: 'VISITOR_STATUS_INVALID' }, headers: {} },
+    });
+    render(<MemoryRouter initialEntries={['/visitor-status/not-a-status-token']}><Routes><Route path="/visitor-status/:token" element={<VisitorStatusPage />} /></Routes></MemoryRouter>);
+    expect(await screen.findByText(/secure visitor status link is invalid/i)).toBeInTheDocument();
+    expect(screen.queryByText(/functions\/v1/i)).not.toBeInTheDocument();
+  });
+
+  it('does not expose API URLs and permits an explicit retry after an outage', async () => {
+    vi.mocked(visitorService.inspectVisitorStatus)
+      .mockRejectedValueOnce(new Error('Cannot reach https://project.supabase.co/functions/v1.'))
+      .mockResolvedValueOnce({
+        referenceNumber: 'HV-20261022-RETRY',
+        status: 'PENDING_REVIEW',
+        message: 'Your request remains pending. No entry credential is active.',
+        updatedAt: '2026-10-22T01:00:00.000Z',
+      });
+    render(<MemoryRouter initialEntries={['/visitor-status/vss_retry']}><Routes><Route path="/visitor-status/:token" element={<VisitorStatusPage />} /></Routes></MemoryRouter>);
+    expect(await screen.findByText(/could not load your visitor status/i)).toBeInTheDocument();
+    expect(screen.queryByText(/supabase\.co/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('HV-20261022-RETRY')).toBeInTheDocument();
+    expect(visitorService.inspectVisitorStatus).toHaveBeenCalledTimes(2);
   });
 });

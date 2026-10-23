@@ -26,8 +26,8 @@ export function isAllowedOrigin(origin: string | null): boolean {
 export const DEFAULT_CORS: CorsOptions = {
   allowMethods: "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   allowHeaders:
-    "Authorization,Content-Type,X-Requested-With,X-Oversight-Session,Accept,Origin,User-Agent,Accept-Language,apikey,x-client-info",
-  exposeHeaders: "Content-Disposition, Retry-After",
+    "Authorization,Content-Type,X-Requested-With,X-Oversight-Session,X-Request-ID,Accept,Origin,User-Agent,Accept-Language,apikey,x-client-info",
+  exposeHeaders: "Content-Disposition, Retry-After, X-Request-ID",
 };
 
 export function corsHeaders(options: CorsOptions = DEFAULT_CORS): Headers {
@@ -37,7 +37,7 @@ export function corsHeaders(options: CorsOptions = DEFAULT_CORS): Headers {
   headers.set(
     "Access-Control-Allow-Headers",
     options.allowHeaders ??
-      "Authorization,Content-Type,X-Requested-With,X-Oversight-Session,Accept,Origin,User-Agent,Accept-Language,apikey,x-client-info",
+      "Authorization,Content-Type,X-Requested-With,X-Oversight-Session,X-Request-ID,Accept,Origin,User-Agent,Accept-Language,apikey,x-client-info",
   );
   headers.set("Access-Control-Max-Age", "86400");
   if (options.exposeHeaders) headers.set("Access-Control-Expose-Headers", options.exposeHeaders);

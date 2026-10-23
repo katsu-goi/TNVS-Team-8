@@ -100,7 +100,7 @@ export const visitorService = {
 
   async inspectVisitorStatus(token: string): Promise<{
     referenceNumber: string;
-    status: 'PENDING' | 'APPROVED' | 'DECLINED';
+    status: 'PENDING_REVIEW' | 'APPROVED' | 'DECLINED' | 'PASS_EXPIRED' | 'PASS_REVOKED' | 'TEMPORARILY_UNAVAILABLE';
     message: string;
     updatedAt: string;
   }> {

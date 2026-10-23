@@ -1359,6 +1359,75 @@ async function issueAndEmailVisitorPass(visitor: VisitorRow, actorEmail: string)
   return saved as unknown as VisitorRow;
 }
 
+async function approveAndIssueVisitorPass(
+  visitor: VisitorRow,
+  actor: AuthContext,
+  reason: string,
+  requestId?: string,
+): Promise<VisitorRow | null> {
+  // Validate the approved pass policy and visit window before committing the
+  // final approval. Approval and the active credential must become visible as
+  // one state transition; email delivery is tracked separately afterward.
+  const ttlHours = Number(envText("VISITOR_PASS_TTL_HOURS"));
+  const earlyMinutes = Number(envText("VISITOR_PASS_EARLY_MINUTES"));
+  if (!Number.isFinite(ttlHours) || ttlHours <= 0 || ttlHours > 168 || !Number.isFinite(earlyMinutes) || earlyMinutes < 0 || earlyMinutes > 1440) {
+    throw new Error("VISITOR_PASS_POLICY_NOT_CONFIGURED");
+  }
+  const arrival = new Date(visitor.expected_arrival ?? "");
+  if (Number.isNaN(arrival.getTime())) throw new Error("VISITOR_EXPECTED_ARRIVAL_INVALID");
+  const expiresAt = new Date(arrival.getTime() + ttlHours * 60 * 60_000);
+  if (expiresAt.getTime() <= Date.now()) throw new Error("VISITOR_PASS_WINDOW_EXPIRED");
+
+  const issuedAt = new Date().toISOString();
+  const token = await signedVisitorToken("vst_", "visitor-pass", visitor.id, issuedAt);
+  const tokenHash = await sha256(token);
+  const { data, error } = await db.from("visitors").update({
+    approval_status: "APPROVED",
+    approved_by: actor.userId,
+    approved_at: issuedAt,
+    approval_reason: reason || null,
+    qr_token_hash: tokenHash,
+    qr_code_token: null,
+    qr_issued_at: issuedAt,
+    qr_expires_at: expiresAt.toISOString(),
+    qr_revoked_at: null,
+    access_status: "AUTHORIZED",
+    email_delivery_status: "PENDING",
+    email_provider_id: null,
+    email_delivery_error: null,
+    email_attempted_at: issuedAt,
+    updated_by: actor.email,
+    updated_at: naiveIso(),
+  }).eq("id", visitor.id).eq("approval_status", "PENDING")
+    .select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)").maybeSingle();
+  if (error) throw new Error(`visitor approval and pass issue failed: ${error.message}`);
+  if (!data) return null;
+
+  const issued = data as unknown as VisitorRow;
+  try {
+    await sendVisitorPassEmail(issued, token);
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: "visitor_pass_email_failed",
+      requestId: requestId ?? null,
+      category: error instanceof Error && /^[A-Z][A-Z0-9_]+$/.test(error.message)
+        ? error.message
+        : "VISITOR_PASS_EMAIL_INTERNAL_ERROR",
+    }));
+    await db.from("visitors").update({
+      email_delivery_status: "FAILED",
+      email_provider_id: null,
+      email_delivery_error: "VISITOR_PASS_EMAIL_INTERNAL_ERROR",
+      email_attempted_at: new Date().toISOString(),
+      updated_at: naiveIso(),
+    }).eq("id", visitor.id);
+  }
+
+  const saved = await loadVisitor(visitor.id);
+  if (!saved) throw new Error("VISITOR_PASS_DELIVERY_RELOAD_FAILED");
+  return saved;
+}
+
 async function handleApprovalDecision(ctx: AuthContext | null, req: Request, body: unknown, p: RouteParams) {
   const visitor = await loadVisitor(p.id);
   if (!visitor || visitor.registration_source !== "KIOSK") return emptyNotFound();
@@ -1397,31 +1466,19 @@ async function handleApprovalDecision(ctx: AuthContext | null, req: Request, bod
   if (!['VERIFIED', 'MANUAL_REVIEW_APPROVED'].includes(visitor.identity_verification_status ?? "")) {
     return jsonResponse(fail("Identity verification or an authorized manual identity review must be completed before approval.", "VISITOR_IDENTITY_REVIEW_REQUIRED"), 409);
   }
-  const now = new Date().toISOString();
-  const { data: approved, error: approvalError } = await db.from("visitors").update({
-    approval_status: "APPROVED",
-    approved_by: ctx!.userId,
-    approved_at: now,
-    approval_reason: reason || null,
-    updated_by: ctx!.email,
-    updated_at: naiveIso(),
-  }).eq("id", visitor.id).eq("approval_status", "PENDING")
-    .select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)").maybeSingle();
-  if (approvalError) throw new Error(`visitor approval failed: ${approvalError.message}`);
-  if (!approved) return jsonResponse(fail("This request was already decided.", "VISITOR_APPROVAL_ALREADY_DECIDED"), 409);
   let delivered: VisitorRow;
   try {
-    delivered = await issueAndEmailVisitorPass(approved as unknown as VisitorRow, ctx!.email);
+    const approved = await approveAndIssueVisitorPass(visitor, ctx!, reason, req.headers.get("X-Request-ID") ?? undefined);
+    if (!approved) return jsonResponse(fail("This request was already decided.", "VISITOR_APPROVAL_ALREADY_DECIDED"), 409);
+    delivered = approved;
   } catch (error) {
     const code = error instanceof Error ? error.message : "VISITOR_PASS_ISSUE_FAILED";
-    if (code === "VISITOR_PASS_POLICY_NOT_CONFIGURED" || code === "VISITOR_PASS_WINDOW_EXPIRED") {
-      await db.from("visitors").update({
-        access_status: "NOT_AUTHORIZED",
-        email_delivery_status: "NOT_CONFIGURED",
-        email_delivery_error: code,
-        updated_at: naiveIso(),
-      }).eq("id", visitor.id);
-      return jsonResponse(fail("The visit was approved, but no pass was issued because the approved pass-validity policy is missing or the visit window has elapsed.", code), 503);
+    if (code === "VISITOR_PASS_POLICY_NOT_CONFIGURED") {
+      console.error(JSON.stringify({ event: "visitor_approval_unavailable", requestId: req.headers.get("X-Request-ID"), category: code }));
+      return jsonResponse(fail("Pass issuance is temporarily unavailable because the approved pass-validity policy is not configured. The visit remains pending and no credential was issued.", code), 503);
+    }
+    if (code === "VISITOR_PASS_WINDOW_EXPIRED" || code === "VISITOR_EXPECTED_ARRIVAL_INVALID") {
+      return jsonResponse(fail("The visit cannot be approved because its pass-validity window is invalid or has elapsed. Update the visit schedule before approving it.", code), 409);
     }
     throw error;
   }
@@ -1478,7 +1535,7 @@ async function visitorByStatusToken(token: string): Promise<VisitorRow | null> {
   if (!/^vss_[A-Za-z0-9_-]{40,60}$/.test(token)) return null;
   const tokenHash = await sha256(token);
   const { data, error } = await db.from("visitors")
-    .select("id, reference_number, registration_source, approval_status, status_token_expires_at, updated_at, is_deleted")
+    .select("id, reference_number, registration_source, approval_status, access_status, qr_expires_at, qr_revoked_at, status_token_expires_at, updated_at, is_deleted")
     .eq("status_token_hash", tokenHash).eq("registration_source", "KIOSK").eq("is_deleted", false).maybeSingle();
   if (error) throw new Error(`visitor status lookup failed: ${error.message}`);
   return data as unknown as VisitorRow | null;
@@ -1491,16 +1548,29 @@ async function handleInspectVisitorStatus(_ctx: AuthContext | null, _req: Reques
   if (!visitor.status_token_expires_at || new Date(visitor.status_token_expires_at).getTime() <= Date.now()) {
     return jsonResponse(fail("This visitor status link has expired.", "VISITOR_STATUS_EXPIRED"), 410);
   }
-  const status = visitor.approval_status === "APPROVED"
-    ? "APPROVED"
-    : visitor.approval_status === "DECLINED"
-      ? "DECLINED"
-      : "PENDING";
+  const passExpired = Boolean(visitor.qr_expires_at && new Date(visitor.qr_expires_at).getTime() <= Date.now());
+  const status = visitor.approval_status === "DECLINED"
+    ? "DECLINED"
+    : visitor.approval_status !== "APPROVED"
+      ? "PENDING_REVIEW"
+      : visitor.qr_revoked_at || visitor.access_status === "REVOKED"
+        ? "PASS_REVOKED"
+        : passExpired
+          ? "PASS_EXPIRED"
+          : visitor.access_status === "AUTHORIZED" && visitor.qr_expires_at
+            ? "APPROVED"
+            : "TEMPORARILY_UNAVAILABLE";
   const message = status === "APPROVED"
     ? "Your visit is approved. Use only the QR pass delivered to your registered email address."
     : status === "DECLINED"
       ? "Your visitor request was declined. No entry credential was issued."
-      : "Your visitor request remains pending identity review and visit approval. No entry credential is active.";
+      : status === "PASS_EXPIRED"
+        ? "Your approved visitor pass has expired. Contact reception if your visit needs to be rescheduled."
+        : status === "PASS_REVOKED"
+          ? "Your visitor pass is no longer active. Contact reception if you need assistance."
+          : status === "TEMPORARILY_UNAVAILABLE"
+            ? "Your request has been reviewed, but an active visitor pass is not currently available. Contact reception for assistance."
+            : "Your visitor request remains pending identity review and visit approval. No entry credential is active.";
   return jsonResponse(ok({
     referenceNumber: visitor.reference_number,
     status,
