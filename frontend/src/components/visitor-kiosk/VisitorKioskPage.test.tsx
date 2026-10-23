@@ -1,12 +1,12 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { VisitorKioskPage, VisitorStatusPage, visitorDetailsAreValid, type VisitorKioskFormState } from './VisitorKioskPage';
+import { VisitorKioskPage, VisitorPassPage, VisitorStatusPage, visitorDetailsAreValid, type VisitorKioskFormState } from './VisitorKioskPage';
 import { visitorService, type KioskConfig } from '../../api/visitorService';
 
 vi.mock('../../api/visitorService', async () => {
   const actual = await vi.importActual<typeof import('../../api/visitorService')>('../../api/visitorService');
-  return { ...actual, visitorService: { ...actual.visitorService, getKioskConfig: vi.fn(), submitKioskRegistration: vi.fn(), inspectVisitorStatus: vi.fn() } };
+  return { ...actual, visitorService: { ...actual.visitorService, getKioskConfig: vi.fn(), submitKioskRegistration: vi.fn(), inspectVisitorPass: vi.fn(), inspectVisitorStatus: vi.fn() } };
 });
 
 vi.mock('./VisitorIdScanner', () => ({
@@ -145,6 +145,36 @@ describe('visitorDetailsAreValid', () => {
   it('requires a real backend host selection for employee meetings', () => {
     expect(visitorDetailsAreValid({ ...base, purposeCategory: 'MEETING_EMPLOYEE', otherPurpose: '' })).toBe(false);
     expect(visitorDetailsAreValid({ ...base, purposeCategory: 'MEETING_EMPLOYEE', otherPurpose: '', hostId: 'host-1' })).toBe(true);
+  });
+});
+
+describe('VisitorPassPage', () => {
+  const pass = {
+    referenceNumber: 'HV-20261023-TEST',
+    visitorName: 'Visitor',
+    purpose: 'MEETING_EMPLOYEE',
+    destination: 'Department Head',
+    expectedArrival: '2026-10-23T13:45:00.000Z',
+    validFrom: '2026-10-23T13:15:00.000Z',
+    expiresAt: '2026-10-23T17:45:00.000Z',
+  };
+
+  it('shows an approved scheduled pass and its Manila activation time before entry begins', async () => {
+    vi.mocked(visitorService.inspectVisitorPass).mockResolvedValue({ ...pass, status: 'NOT_YET_VALID', active: false });
+    render(<MemoryRouter initialEntries={['/visitor-pass/vst_scheduled']}><Routes><Route path="/visitor-pass/:token" element={<VisitorPassPage />} /></Routes></MemoryRouter>);
+    expect(await screen.findByRole('heading', { name: 'Visitor pass approved' })).toBeInTheDocument();
+    expect(screen.getByText('APPROVED — NOT YET VALID')).toBeInTheDocument();
+    expect(screen.getAllByText(/Oct 23, 2026, 9:15 PM PHT/i).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('heading', { name: 'Pass unavailable' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check activation' })).toBeInTheDocument();
+  });
+
+  it('shows the active state only after the backend confirms the entry window', async () => {
+    vi.mocked(visitorService.inspectVisitorPass).mockResolvedValue({ ...pass, status: 'ACTIVE', active: true });
+    render(<MemoryRouter initialEntries={['/visitor-pass/vst_active']}><Routes><Route path="/visitor-pass/:token" element={<VisitorPassPage />} /></Routes></MemoryRouter>);
+    expect(await screen.findByRole('heading', { name: 'Active visitor pass' })).toBeInTheDocument();
+    expect(screen.getByText('ACTIVE')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Check activation' })).not.toBeInTheDocument();
   });
 });
 

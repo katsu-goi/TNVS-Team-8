@@ -71,4 +71,11 @@ describe('visitor notification and status security contract', () => {
     expect(source).toContain('visitor.qr_token_hash !== tokenHash');
     expect(source).toContain('VISITOR_PASS_NOT_RETRYABLE');
   });
+
+  it('shows approved pass details before activation without weakening scanner enforcement', () => {
+    expect(source).toContain('invalid.code !== "VISITOR_PASS_TOO_EARLY"');
+    expect(source).toContain('status: invalid?.code === "VISITOR_PASS_TOO_EARLY" ? "NOT_YET_VALID" : "ACTIVE"');
+    expect(source).toContain('active: !invalid');
+    expect(source).toContain('if (invalid) return jsonResponse(fail(invalid.message, invalid.code), 409);');
+  });
 });

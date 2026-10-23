@@ -68,6 +68,18 @@ export type VisitorIdentityArtifact = {
   expiresAt: string;
 };
 
+export type VisitorPassInspection = {
+  referenceNumber: string;
+  visitorName: string;
+  purpose: string | null;
+  destination: string | null;
+  expectedArrival: string;
+  validFrom: string;
+  expiresAt: string;
+  status: 'NOT_YET_VALID' | 'ACTIVE';
+  active: boolean;
+};
+
 /**
  * Visitor verification + watchlist API (Task 4).
  *
@@ -93,7 +105,7 @@ export const visitorService = {
     return data?.data;
   },
 
-  async inspectVisitorPass(token: string): Promise<any> {
+  async inspectVisitorPass(token: string): Promise<VisitorPassInspection> {
     const { data } = await apiClient.post('/visitor-pass/inspect', { token });
     return data?.data;
   },

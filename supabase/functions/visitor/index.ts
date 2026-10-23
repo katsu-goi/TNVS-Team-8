@@ -1070,6 +1070,23 @@ function visitorSiteUrl(): string {
   return (envText("PORTAL_PUBLIC_URL") || envText("VISITOR_KIOSK_PUBLIC_URL")).replace(/\/+$/, "");
 }
 
+function visitorPassValidFrom(visitor: VisitorRow): Date | null {
+  const expected = new Date(visitor.expected_arrival ?? "");
+  const earlyMinutes = Number(envText("VISITOR_PASS_EARLY_MINUTES"));
+  if (Number.isNaN(expected.getTime()) || !Number.isFinite(earlyMinutes)) return null;
+  return new Date(expected.getTime() - earlyMinutes * 60_000);
+}
+
+function formatVisitorSchedule(value: string | Date | null | undefined): string {
+  const date = value instanceof Date ? value : new Date(value ?? "");
+  if (Number.isNaN(date.getTime())) return "See approved schedule";
+  return `${new Intl.DateTimeFormat("en-PH", {
+    timeZone: "Asia/Manila",
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date)} PHT`;
+}
+
 function brandedEmail(title: string, content: string, action?: { label: string; url: string }): string {
   const button = action
     ? `<p style="margin:28px 0"><a href="${htmlEscape(action.url)}" style="display:inline-block;background:#b91c1c;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:700">${htmlEscape(action.label)}</a></p>`
@@ -1279,19 +1296,25 @@ async function sendVisitorPassEmail(visitor: VisitorRow, token: string): Promise
     ? `${host.first_name ?? ""} ${host.last_name ?? ""}`.trim()
     : visitor.receiving_department ?? "Receiving department";
   const subject = `HIRNA TNVS approved visitor pass — ${visitor.reference_number ?? ""}`.trim();
+  const validFrom = visitorPassValidFrom(visitor);
+  const expectedArrival = formatVisitorSchedule(visitor.expected_arrival);
+  const validFromText = formatVisitorSchedule(validFrom);
+  const expiresAt = formatVisitorSchedule(visitor.qr_expires_at);
   const text = [
     `Your Hirna TNVS visitor request ${visitor.reference_number ?? ""} is approved.`,
     `Visit: ${visitor.purpose_of_visit}`,
     `Destination: ${destination}`,
-    `Expected arrival: ${visitor.expected_arrival ?? "See approved schedule"}`,
-    `Pass valid until: ${visitor.qr_expires_at ?? "See approved schedule"}`,
+    `Expected arrival: ${expectedArrival}`,
+    `Pass valid from: ${validFromText}`,
+    `Pass valid until: ${expiresAt}`,
+    "The pass page can be opened before entry begins, but check-in remains unavailable until the valid-from time.",
     "Present the attached QR pass to authorized security staff. Approval does not waive on-site security checks.",
   ].join("\n");
-  const content = `<p>Your request <strong>${htmlEscape(visitor.reference_number ?? "")}</strong> is approved.</p><p style="padding:12px;border-radius:10px;background:#d1fae5;color:#065f46"><strong>Status: APPROVED</strong></p><p><strong>Visit:</strong> ${htmlEscape(visitor.purpose_of_visit ?? "")}</p><p><strong>Destination:</strong> ${htmlEscape(destination)}</p><p><strong>Expected arrival:</strong> ${htmlEscape(visitor.expected_arrival ?? "See approved schedule")}</p><p><strong>Valid until:</strong> ${htmlEscape(visitor.qr_expires_at ?? "See approved schedule")}</p><p>The QR pass is attached. Present it to authorized security staff. Approval does not waive on-site security checks.</p>`;
+  const content = `<p>Your request <strong>${htmlEscape(visitor.reference_number ?? "")}</strong> is approved.</p><p style="padding:12px;border-radius:10px;background:#d1fae5;color:#065f46"><strong>Status: APPROVED</strong></p><p><strong>Visit:</strong> ${htmlEscape(visitor.purpose_of_visit ?? "")}</p><p><strong>Destination:</strong> ${htmlEscape(destination)}</p><p><strong>Expected arrival:</strong> ${htmlEscape(expectedArrival)}</p><p><strong>Valid from:</strong> ${htmlEscape(validFromText)}</p><p><strong>Valid until:</strong> ${htmlEscape(expiresAt)}</p><p>You may view the approved pass details before entry begins, but check-in remains unavailable until the valid-from time.</p><p>The QR pass is attached. Present it to authorized security staff. Approval does not waive on-site security checks.</p>`;
   return await sendTrackedVisitorEmail(visitor, "APPROVAL_PASS", {
     subject,
     text,
-    html: brandedEmail("Visitor pass approved", content, { label: "View active visitor pass", url: passUrl }),
+    html: brandedEmail("Visitor pass approved", content, { label: "View visitor pass details", url: passUrl }),
     attachments: [{ filename: `${visitor.reference_number ?? "visitor-pass"}.png`, content: qrBase64 }],
   });
 }
@@ -1597,17 +1620,25 @@ async function handleInspectVisitorPass(_ctx: AuthContext | null, _req: Request,
   const visitor = await visitorByPassToken(token);
   if (!visitor) return jsonResponse(fail("This visitor pass is invalid.", "VISITOR_PASS_INVALID"), 404);
   const invalid = validateVisitorPass(visitor);
-  if (invalid) return jsonResponse(fail(invalid.message, invalid.code), 409);
   const host = hostOf(visitor);
-  return jsonResponse(ok({
+  const validFrom = visitorPassValidFrom(visitor);
+  if (invalid && invalid.code !== "VISITOR_PASS_TOO_EARLY") {
+    return jsonResponse(fail(invalid.message, invalid.code), 409);
+  }
+  const pass = {
     referenceNumber: visitor.reference_number,
     visitorName: visitor.full_name.split(/\s+/)[0],
     purpose: visitor.purpose_category,
     destination: host ? `${host.first_name ?? ""} ${host.last_name ?? ""}`.trim() : visitor.receiving_department,
     expectedArrival: visitor.expected_arrival,
+    validFrom: validFrom?.toISOString() ?? visitor.expected_arrival,
     expiresAt: visitor.qr_expires_at,
-    status: visitor.status,
-  }, "Visitor pass is active"), 200);
+    status: invalid?.code === "VISITOR_PASS_TOO_EARLY" ? "NOT_YET_VALID" : "ACTIVE",
+    active: !invalid,
+  };
+  return jsonResponse(ok(pass, invalid
+    ? "Visitor pass is approved and scheduled, but entry is not active yet"
+    : "Visitor pass is active"), 200);
 }
 
 async function handleVisitorPassScan(ctx: AuthContext | null, req: Request, body: unknown, checkOut: boolean) {

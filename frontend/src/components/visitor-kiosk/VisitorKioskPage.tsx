@@ -199,14 +199,26 @@ export const VisitorKioskPage: React.FC = () => {
 
 export const VisitorPassPage: React.FC = () => {
   const { token = '' } = useParams();
-  const [state, setState] = useState<{ loading: boolean; data?: any; error?: string }>({ loading: true });
+  const [state, setState] = useState<{ loading: boolean; data?: Awaited<ReturnType<typeof visitorService.inspectVisitorPass>>; error?: string }>({ loading: true });
+  const loadPass = useCallback(async (isActive: () => boolean = () => true) => {
+    setState({ loading: true });
+    try {
+      const data = await visitorService.inspectVisitorPass(token);
+      if (isActive()) setState({ loading: false, data });
+    } catch (error) {
+      if (isActive()) setState({ loading: false, error: errorMessage(error) });
+    }
+  }, [token]);
   useEffect(() => {
     let active = true;
-    void visitorService.inspectVisitorPass(token).then((data) => { if (active) setState({ loading: false, data }); })
-      .catch((error) => { if (active) setState({ loading: false, error: errorMessage(error) }); });
+    void loadPass(() => active);
     return () => { active = false; };
-  }, [token]);
-  return <KioskShell><div className="mx-auto flex min-h-[75vh] max-w-xl items-center p-5"><section className="w-full rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-xl">{state.loading ? <><Loader2 className="mx-auto h-10 w-10 animate-spin text-red-700" /><p className="mt-4 text-sm font-bold">Validating pass…</p></> : state.error ? <><AlertCircle className="mx-auto h-12 w-12 text-rose-600" /><h1 className="mt-4 text-2xl font-black">Pass unavailable</h1><p className="mt-2 text-sm text-slate-600">{state.error}</p></> : <><ShieldCheck className="mx-auto h-12 w-12 text-emerald-600" /><h1 className="mt-4 text-2xl font-black">Active visitor pass</h1><p className="mt-2 text-sm text-slate-600">Present the QR code from your email to authorized security staff.</p><div className="mt-6 space-y-2 rounded-xl bg-slate-50 p-5 text-left text-sm"><p><strong>Reference:</strong> {state.data.referenceNumber}</p><p><strong>Visitor:</strong> {state.data.visitorName}</p><p><strong>Destination:</strong> {state.data.destination}</p><p><strong>Expected:</strong> {new Date(state.data.expectedArrival).toLocaleString()}</p><p><strong>Valid until:</strong> {new Date(state.data.expiresAt).toLocaleString()}</p></div></>}</section></div></KioskShell>;
+  }, [loadPass]);
+  const formatSchedule = (value: string) => `${new Date(value).toLocaleString('en-PH', {
+    timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short',
+  })} PHT`;
+  const scheduled = state.data?.status === 'NOT_YET_VALID';
+  return <KioskShell><div className="mx-auto flex min-h-[75vh] max-w-xl items-center p-5"><section className="w-full rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-xl">{state.loading ? <><Loader2 className="mx-auto h-10 w-10 animate-spin text-red-700" /><p className="mt-4 text-sm font-bold">Validating pass…</p></> : state.error ? <><AlertCircle className="mx-auto h-12 w-12 text-rose-600" /><h1 className="mt-4 text-2xl font-black">Pass unavailable</h1><p className="mt-2 text-sm text-slate-600">{state.error}</p><button type="button" onClick={() => void loadPass()} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white"><RefreshCw className="h-4 w-4" />Try again</button></> : state.data && <><ShieldCheck className={`mx-auto h-12 w-12 ${scheduled ? 'text-amber-600' : 'text-emerald-600'}`} /><h1 className="mt-4 text-2xl font-black">{scheduled ? 'Visitor pass approved' : 'Active visitor pass'}</h1><p className="mt-2 text-sm text-slate-600">{scheduled ? <>Entry is not active yet. This pass becomes valid on <strong>{formatSchedule(state.data.validFrom)}</strong>.</> : 'Present the QR code from your email to authorized security staff.'}</p><div className={`mt-6 rounded-xl border p-4 text-sm font-bold ${scheduled ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>{scheduled ? 'APPROVED — NOT YET VALID' : 'ACTIVE'}</div><div className="mt-5 space-y-2 rounded-xl bg-slate-50 p-5 text-left text-sm"><p><strong>Reference:</strong> {state.data.referenceNumber}</p><p><strong>Visitor:</strong> {state.data.visitorName}</p><p><strong>Destination:</strong> {state.data.destination}</p><p><strong>Expected arrival:</strong> {formatSchedule(state.data.expectedArrival)}</p><p><strong>Valid from:</strong> {formatSchedule(state.data.validFrom)}</p><p><strong>Valid until:</strong> {formatSchedule(state.data.expiresAt)}</p></div>{scheduled && <button type="button" onClick={() => void loadPass()} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white"><RefreshCw className="h-4 w-4" />Check activation</button>}</>}</section></div></KioskShell>;
 };
 
 export const VisitorStatusPage: React.FC = () => {
