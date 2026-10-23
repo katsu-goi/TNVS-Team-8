@@ -6,6 +6,14 @@
 @tailwind components;
 @tailwind utilities;
 
+.hirna-app .notification-focus-target {
+  outline: 3px solid #f59e0b;
+  outline-offset: 3px;
+  border-radius: 0.75rem;
+  background-color: #fffbeb;
+  transition: outline-color 160ms ease, background-color 160ms ease;
+}
+
 :root {
   --hirna-red: #b5121b;
   --hirna-red-strong: #c8102e;

@@ -49,7 +49,7 @@ const byDateDesc = (a: AppNotification, b: AppNotification) =>
   new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
 
 const authorizedNotificationPath = (notification: AppNotification, roles: string[]) =>
-  getNotificationDestination(roles, notification.relatedEntityType);
+  getNotificationDestination(roles, notification.relatedEntityType, notification.relatedEntityId);
 
 /**
  * Role-agnostic notification bell for the header of every portal layout.

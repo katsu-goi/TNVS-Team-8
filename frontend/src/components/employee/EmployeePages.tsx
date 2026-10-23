@@ -276,7 +276,7 @@ export const EmpReservationsPage: React.FC = () => {
               const editable = (r.status || '').toUpperCase() === 'PENDING';
               const cancellable = !['CHECKED_IN', 'COMPLETED', 'CANCELLED', 'REJECTED'].includes((r.status || '').toUpperCase());
               return (
-                <div key={r.id} className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
+                <div key={r.id} data-notification-entity-id={r.id} className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-semibold text-slate-900">{r.title}</p>
@@ -429,7 +429,7 @@ export const EmpVisitorsPage: React.FC = () => {
             {rows.map((v) => {
               const editable = (v.status || '').toUpperCase() === 'REGISTERED';
               return (
-                <div key={v.id} className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
+                <div key={v.id} data-notification-entity-id={v.id} className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-semibold text-slate-900">{v.fullName}</p>
@@ -530,7 +530,7 @@ export const EmpDocumentsPage: React.FC = () => {
             {rows.map((d) => {
               const approved = (d.status || '').toUpperCase() === 'APPROVED';
               return (
-                <div key={d.id} className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
+                <div key={d.id} data-notification-entity-id={d.id} className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-semibold text-slate-900">{d.title}</p>
@@ -634,7 +634,7 @@ export const EmpRequestsPage: React.FC = () => {
             {rows.map((r) => {
               const cancellable = ['PENDING', 'IN_REVIEW'].includes((r.status || '').toUpperCase());
               return (
-                <div key={r.id} className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
+                <div key={r.id} data-notification-entity-id={r.id} className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between gap-4">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-semibold text-slate-900">{r.title}</p>

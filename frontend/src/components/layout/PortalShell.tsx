@@ -16,6 +16,7 @@ import {
 import {
   getPortalDestinations, getPortalLoadingMessage, normalizePortalPath, shouldStartPortalNavigation,
 } from './portalNavigation';
+import { NotificationFocusManager } from './NotificationFocusManager';
 
 export type PortalNavItem = {
   id: string;
@@ -253,6 +254,7 @@ const PortalShellFrame: React.FC<PortalShellProps> = ({
       {mobileOpen && <button type="button" className="fixed inset-0 z-30 bg-slate-950/45 backdrop-blur-sm lg:hidden" onClick={() => setMobileOpen(false)} aria-label="Close navigation overlay" />}
 
       <main inert={compact && mobileOpen} className="hirna-main min-h-screen lg:pl-72">
+        <NotificationFocusManager />
         <header className="hirna-topbar sticky top-0 z-20 flex min-h-[76px] items-center gap-3 border-b px-4 py-3 sm:px-6 lg:px-8">
           <button ref={menuTriggerRef} type="button" aria-expanded={mobileOpen} onClick={() => setMobileOpen(true)} className="rounded-control border border-[var(--hirna-border)] bg-[var(--hirna-surface)] p-2 text-slate-600 shadow-sm lg:hidden" aria-label="Open navigation">
             <Menu className="h-5 w-5" />

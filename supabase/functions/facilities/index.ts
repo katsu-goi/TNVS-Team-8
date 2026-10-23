@@ -4,6 +4,7 @@ import { jsonResponse } from "../_shared/cors.ts";
 import { ok, fail } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
 import { managementRoutes } from "./management.ts";
+import { buildFacilityPermitNotification } from "./facility-permit-notification.ts";
 
 const db = adminDb();
 
@@ -702,26 +703,12 @@ async function handleRouteFacilityDocument(ctx: AuthContext | null, _req: Reques
   if (savedResult.error) throw new Error(`facility document routing failed: ${savedResult.error.message}`);
 
   if (isRegulatoryPermit) {
-    const { data: complianceOfficer, error: officerError } = await db
-      .from("users")
-      .select("id")
-      .eq("email", "co@photonicomega.com")
-      .eq("is_deleted", false)
-      .maybeSingle();
-    if (officerError) throw new Error(`compliance officer lookup failed: ${officerError.message}`);
-    if (complianceOfficer) {
-      const { error: notificationError } = await db.from("employee_notifications").insert({
-        recipient_id: complianceOfficer.id,
-        title: `Permit routed for review: ${documentCategory}`,
-        message: `${facility.name ?? "TNVS hub"} has a new regulatory document awaiting Compliance Officer review.`,
-        type: "FACILITY_PERMIT_REVIEW",
-        related_entity_type: "FacilityComplianceDocument",
-        related_entity_id: savedResult.data.id,
-        is_read: false,
-        created_by: ctx?.email ?? "SYSTEM",
-      });
-      if (notificationError) throw new Error(`permit notification failed: ${notificationError.message}`);
-    }
+    const { error: notificationError } = await db.rpc("phase5_notify_roles", buildFacilityPermitNotification({
+      facilityName: facility.name ?? "TNVS hub",
+      documentCategory,
+      recordId: savedResult.data.id,
+    }));
+    if (notificationError) throw new Error(`permit notification failed: ${notificationError.message}`);
   }
   return jsonResponse(ok({ ...savedResult.data, routed: isRegulatoryPermit, hubName: facility.name }), 201);
 }

@@ -34,4 +34,12 @@ describe('role registry routing', () => {
     expect(getNotificationDestination(['EMPLOYEE'], {})).toBe('/employee');
     expect(getNotificationDestination(['EMPLOYEE'], [])).toBe('/employee');
   });
+
+  it('routes facility permit reviews to compliance documents and focuses valid record ids', () => {
+    const recordId = '1b8a9977-9874-4ea6-a79b-1b71c2a7b5ef';
+    expect(getNotificationDestination(['COMPLIANCE_OFFICER'], 'FacilityComplianceDocument', recordId))
+      .toBe(`/compliance/documents?focus=${recordId}`);
+    expect(getNotificationDestination(['COMPLIANCE_OFFICER'], 'FacilityComplianceDocument', 'not-a-record-id'))
+      .toBe('/compliance/documents');
+  });
 });

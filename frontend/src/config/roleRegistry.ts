@@ -181,20 +181,26 @@ const notificationDestinations: Partial<Record<CanonicalRole, Record<string, str
   INFOSEC_OFFICER: { incident: '/information-security/cyber-incidents', security_alert: '/information-security/cyber-incidents' },
   FACILITIES_MANAGER: { reservation: '/facilities/reservations' },
   FACILITIES_OFFICER: { reservation: '/facilities-officer/reservations', visitor: '/facilities-officer/visitors', document: '/facilities-officer/documents' },
-  COMPLIANCE_OFFICER: { contract: '/compliance/contracts', document: '/compliance/documents', retention: '/compliance/retention', audit: '/compliance/audit' },
+  COMPLIANCE_OFFICER: { contract: '/compliance/contracts', document: '/compliance/documents', facilitycompliancedocument: '/compliance/documents', retention: '/compliance/retention', audit: '/compliance/audit' },
   LEGAL_OFFICER: { employeerequest: '/legal/requests-review', contract: '/legal/contracts', document: '/legal/documents' },
   CONTRACT_OFFICER: { employeerequest: '/procurement/requests-review', contract: '/procurement/contracts', document: '/procurement/documents' },
   EMPLOYEE: { reservation: '/employee/reservations', visitor: '/employee/visitors', employeerequest: '/employee/requests', document: '/employee/documents' },
 };
 
-export function getNotificationDestination(roles: string[], entityType?: unknown): string | null {
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function getNotificationDestination(roles: string[], entityType?: unknown, entityId?: unknown): string | null {
   const entity = typeof entityType === 'string'
     ? entityType.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
     : '';
   for (const role of roles.map(normalizeRole)) {
     const destinations = notificationDestinations[role];
     const configured = destinations?.[entity] || destinations?.[entity.replace(/_/g, '')];
-    if (configured) return configured;
+    if (configured) {
+      return typeof entityId === 'string' && UUID_PATTERN.test(entityId)
+        ? `${configured}?focus=${encodeURIComponent(entityId)}`
+        : configured;
+    }
   }
   const dashboard = getDashboardPathForRoles(roles);
   return dashboard === '/' ? null : dashboard;

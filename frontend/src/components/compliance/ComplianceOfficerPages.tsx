@@ -254,7 +254,7 @@ export const CoDocumentsPage: React.FC = () => {
                   const status = (d.status || '').toUpperCase();
                   const busy = busyId === d.id;
                   return (
-                    <tr key={d.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                    <tr key={d.id} data-notification-entity-id={d.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
                       <td className="p-3">
                         <p className="font-medium text-slate-900">{d.title}</p>
                         <p className="text-[11px] text-slate-400 font-mono">{d.fileName}</p>
@@ -457,7 +457,7 @@ export const CoContractsPage: React.FC = () => {
               </thead>
               <tbody>
                 {contracts.map((c: any) => (
-                  <tr key={c.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                  <tr key={c.id} data-notification-entity-id={c.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
                     <td className="p-3">
                       <p className="font-medium text-slate-900">{c.title}</p>
                       <p className="text-[11px] text-slate-400 font-mono">{c.contractNumber} · {c.type}</p>
