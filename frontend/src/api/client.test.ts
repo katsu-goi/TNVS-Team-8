@@ -9,6 +9,15 @@ describe('safeFetchJson', () => {
 });
 
 describe('Supabase Edge Function routing', () => {
+  it('does not add a non-deployed correlation request header to auth calls', async () => {
+    const adapter = vi.fn(async (config) => ({
+      data: {}, status: 200, statusText: 'OK', headers: {}, config,
+    }));
+    await apiClient.get('/auth/me', { adapter });
+    const headers = adapter.mock.calls[0][0].headers;
+    expect(headers?.['X-Request-ID']).toBeUndefined();
+  });
+
   it('preserves role aliases after the deployed function name', () => {
     expect(getApiUrl('/facilities-officer/dashboard/summary')).toMatch(/\/facilities\/facilities-officer\/dashboard\/summary$/);
     expect(getApiUrl('/facilities-manager/dashboard/kpi')).toMatch(/\/facilities\/facilities-manager\/dashboard\/kpi$/);

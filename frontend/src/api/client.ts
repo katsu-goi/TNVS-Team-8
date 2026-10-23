@@ -140,9 +140,6 @@ const prepareRequest = (config: InternalAxiosRequestConfig) => {
   if (oversightSessionId) {
     config.headers['X-Oversight-Session'] = oversightSessionId;
   }
-  if (!config.headers['X-Request-ID']) {
-    config.headers['X-Request-ID'] = crypto.randomUUID();
-  }
   return config;
 };
 
