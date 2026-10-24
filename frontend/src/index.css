@@ -14,6 +14,16 @@
   transition: outline-color 160ms ease, background-color 160ms ease;
 }
 
+@keyframes qr-result-enter {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes qr-scan-line {
+  0%, 100% { transform: translateY(-70px); opacity: 0.35; }
+  50% { transform: translateY(70px); opacity: 1; }
+}
+
 :root {
   --hirna-red: #b5121b;
   --hirna-red-strong: #c8102e;

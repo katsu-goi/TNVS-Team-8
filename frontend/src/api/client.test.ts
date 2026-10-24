@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { apiClient, extractErrorMessage, getApiUrl, safeFetchJson, shouldRenewSessionForRequest } from './client';
+import {
+  apiClient, extractErrorMessage, extractRequestId, getApiUrl, safeFetchJson, shouldRenewSessionForRequest,
+} from './client';
 
 describe('safeFetchJson', () => {
   it('throws a normalized error instead of converting failures to null', async () => {
@@ -9,6 +11,15 @@ describe('safeFetchJson', () => {
 });
 
 describe('Supabase Edge Function routing', () => {
+  it('does not add a non-deployed correlation request header to auth calls', async () => {
+    const adapter = vi.fn(async (config) => ({
+      data: {}, status: 200, statusText: 'OK', headers: {}, config,
+    }));
+    await apiClient.get('/auth/me', { adapter });
+    const headers = adapter.mock.calls[0][0].headers;
+    expect(headers?.['X-Request-ID']).toBeUndefined();
+  });
+
   it('preserves role aliases after the deployed function name', () => {
     expect(getApiUrl('/facilities-officer/dashboard/summary')).toMatch(/\/facilities\/facilities-officer\/dashboard\/summary$/);
     expect(getApiUrl('/facilities-manager/dashboard/kpi')).toMatch(/\/facilities\/facilities-manager\/dashboard\/kpi$/);
@@ -17,6 +28,18 @@ describe('Supabase Edge Function routing', () => {
   it('preserves the plural visitor API beneath the singular function name', () => {
     expect(getApiUrl('/visitors')).toMatch(/\/visitor\/visitors$/);
     expect(getApiUrl('/visitors/occupancy')).toMatch(/\/visitor\/visitors\/occupancy$/);
+  });
+
+  it('builds the full function-prefixed pathname for the public kiosk configuration', () => {
+    expect(getApiUrl('/visitor-kiosk/config')).toBe(
+      'https://dunijfrvfozwlykpkfhy.supabase.co/functions/v1/visitor/visitor-kiosk/config',
+    );
+  });
+
+  it('routes the secure visitor status request through the deployed visitor function', () => {
+    expect(getApiUrl('/visitor-status/inspect')).toBe(
+      'https://dunijfrvfozwlykpkfhy.supabase.co/functions/v1/visitor/visitor-status/inspect',
+    );
   });
 
   it('does not duplicate an API prefix that already matches its function', () => {
@@ -34,6 +57,10 @@ describe('extractErrorMessage', () => {
         headers: { 'retry-after': '42' },
       },
     })).toBe('AI processing is temporarily unavailable. Try again in 42 seconds.');
+  });
+
+  it('reads a safe support correlation ID from response headers', () => {
+    expect(extractRequestId({ response: { headers: { 'x-request-id': 'request-1234' } } })).toBe('request-1234');
   });
 });
 

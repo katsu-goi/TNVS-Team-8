@@ -30,6 +30,7 @@ const SecurityCenterPage = lazyNamed(() => import('./components/sysadmin/AdminPa
 const AuditLogsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'AuditLogsPage');
 const BackupPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'BackupPage');
 const SettingsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'SettingsPage');
+const VisitorKioskConfigPage = lazyNamed(() => import('./components/sysadmin/VisitorKioskConfigPage'), 'VisitorKioskConfigPage');
 const NotificationsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'NotificationsPage');
 const SystemHealthPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'SystemHealthPage');
 const SessionsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'SessionsPage');
@@ -78,6 +79,9 @@ const AccountLockoutsPage = lazyNamed(() => import('./components/sysadmin/Accoun
 const Team8LoginPage = lazyNamed(() => import('./components/reservation-portal/Team8LoginPage'), 'Team8LoginPage');
 const ReservationPortalPage = lazyNamed(() => import('./components/reservation-portal/ReservationPortalPage'), 'ReservationPortalPage');
 const ReservationPassPage = lazyNamed(() => import('./components/reservation-portal/ReservationPassPage'), 'ReservationPassPage');
+const VisitorKioskPage = lazyNamed(() => import('./components/visitor-kiosk/VisitorKioskPage'), 'VisitorKioskPage');
+const VisitorPassPage = lazyNamed(() => import('./components/visitor-kiosk/VisitorKioskPage'), 'VisitorPassPage');
+const VisitorStatusPage = lazyNamed(() => import('./components/visitor-kiosk/VisitorKioskPage'), 'VisitorStatusPage');
 
 class ErrorBoundary extends React.Component<
   { fallback: React.ReactNode; children: React.ReactNode },
@@ -270,6 +274,9 @@ export const AppRoutes: React.FC = () => (
         <Route path="/reservation-portal/login" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><Team8LoginPage /></Suspense>} />
         <Route path="/reservation-portal/pass" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><ReservationPassPage /></Suspense>} />
         <Route path="/guest-pass/:token" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><ReservationPassPage /></Suspense>} />
+        <Route path="/visitor-kiosk" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><VisitorKioskPage /></Suspense>} />
+        <Route path="/visitor-pass/:token" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><VisitorPassPage /></Suspense>} />
+        <Route path="/visitor-status/:token" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><VisitorStatusPage /></Suspense>} />
         <Route element={<AuthenticatedSessionBoundary />}>
         <Route path="/reservation-portal" element={<Team8PortalRoute><Suspense fallback={<SessionBootstrapPlaceholder />}><ReservationPortalPage /></Suspense></Team8PortalRoute>} />
         <Route element={
@@ -288,6 +295,7 @@ export const AppRoutes: React.FC = () => (
           <Route path="admin/ai-services" element={<SystemAdminRoute><AiServicesPage /></SystemAdminRoute>} />
           <Route path="admin/backup" element={<SystemAdminRoute><BackupPage /></SystemAdminRoute>} />
           <Route path="admin/settings" element={<SystemAdminRoute><SettingsPage /></SystemAdminRoute>} />
+          <Route path="admin/visitor-kiosk" element={<AdminPortalRoute><VisitorKioskConfigPage /></AdminPortalRoute>} />
           <Route path="admin/notifications" element={<AdminPortalRoute><NotificationsPage /></AdminPortalRoute>} />
           <Route path="admin/system-health" element={<SystemAdminRoute><SystemHealthPage /></SystemAdminRoute>} />
            <Route path="admin/sessions" element={<SystemAdminRoute><SessionsPage /></SystemAdminRoute>} />

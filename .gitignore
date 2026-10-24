@@ -8,6 +8,8 @@ supabase/.temp/
 *.log
 *.err
 *.gz
+frontend/public/tesseract/
+frontend/public/tesseract-core/
 .env
 .env.local
 .DS_Store

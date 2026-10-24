@@ -3,9 +3,38 @@ import { createHandler, AuthContext, RouteParams } from "../_shared/guard.ts";
 import { jsonResponse } from "../_shared/cors.ts";
 import { ok, fail } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
-import { naiveIso } from "../_shared/auth-users.ts";
+import { findUserById, isAccountActive, naiveIso } from "../_shared/auth-users.ts";
 import { writeAudit } from "../_shared/lockout.ts";
 import { resolveClientIp } from "../_shared/ip.ts";
+import { config } from "../_shared/config.ts";
+import {
+  evaluateVisitorKioskReadiness,
+  parsePurposeDepartmentRoutes,
+  publicVisitorKioskPrivacy,
+  splitVisitorKioskList,
+  VISITOR_KIOSK_FIXED_DEPARTMENT_PURPOSES,
+  VISITOR_KIOSK_PURPOSES,
+  type VisitorKioskPolicy,
+} from "../_shared/visitor-kiosk-config.ts";
+import {
+  buildGmailAuthorizationUrl,
+  decryptGmailSecret,
+  encryptGmailSecret,
+  exchangeGmailAuthorizationCode,
+  GMAIL_SEND_SCOPE,
+  GmailOAuthError,
+  gmailOAuthConfigurationStatus,
+  gmailOAuthRedirectUri,
+  gmailOAuthSecrets,
+  randomOAuthValue,
+  revokeGoogleRefreshToken,
+  sendGmailMessage,
+  sha256Hex,
+  VISITOR_GMAIL_SENDER,
+  type GmailMessagePayload,
+} from "../_shared/visitor-gmail.ts";
+import QRCode from "npm:qrcode@1.5.4";
+import { checkVisitorBiometricTechnicalReadiness } from "../_shared/visitor-biometric.ts";
 
 const db = adminDb();
 
@@ -24,6 +53,205 @@ function toUtcIso(s: string): string {
   if (/[zZ]|[+-]\d{2}:\d{2}$/.test(s)) return new Date(s).toISOString();
   const naive = s.includes("T") ? s : `${s}T00:00:00`;
   return naive + "Z";
+}
+
+const PURPOSE_VALUES = new Set(VISITOR_KIOSK_PURPOSES.map((purpose) => purpose.value));
+const FIXED_DEPARTMENT_PURPOSES = new Set<string>(VISITOR_KIOSK_FIXED_DEPARTMENT_PURPOSES);
+const IMAGE_BUCKET = "visitor-identity-private";
+const MAX_ID_IMAGE_BYTES = 5 * 1024 * 1024;
+const FACIAL_RESULTS = new Set(["MATCH_INDICATED", "MISMATCH_INDICATED", "INCONCLUSIVE", "NO_FACE_DETECTED", "MULTIPLE_FACES_DETECTED", "PROCESSING_FAILED"]);
+
+function envText(name: string): string {
+  return Deno.env.get(name)?.trim() ?? "";
+}
+
+type KioskConfigRow = {
+  organization_name: string | null; controller_name: string | null; controller_contact: string | null;
+  dpo_contact: string | null; processing_purposes: string | null; lawful_basis: string | null;
+  privacy_notice_text: string | null; acknowledgement_text: string | null; notice_version: string | null;
+  retention_policy: string | null; retention_days: number | null; rights_process: string | null;
+  processors: string | null; safeguards: string | null; alternative_verification: string | null;
+  accepted_id_types: string[] | null; purpose_department_routes: Record<string, unknown> | null;
+  registration_enabled: boolean; privacy_review_approved: boolean; security_review_approved: boolean;
+  operations_review_approved: boolean;
+  biometric_processing_enabled: boolean; biometric_notice_text: string | null; biometric_authorization_text: string | null;
+  biometric_privacy_approved: boolean; biometric_pia_approved: boolean; biometric_security_approved: boolean;
+  biometric_license_approved: boolean;
+  biometric_privacy_evidence: string | null; biometric_pia_evidence: string | null;
+  biometric_security_evidence: string | null; biometric_license_evidence: string | null;
+  biometric_retention_approved: boolean; biometric_retention_evidence: string | null;
+};
+
+function preferDatabase(value: string | null | undefined, envName: string): string {
+  return value?.trim() || envText(envName);
+}
+
+type FacialScreening = {
+  status: string; provider: string | null; model: string | null; detector: string | null;
+  distance: number | null; threshold: number | null; antiSpoofingStatus: string;
+};
+
+async function runFacialScreening(requestId: string, idImage: string, selfieImage: string): Promise<FacialScreening> {
+  const endpoint = envText("VISITOR_BIOMETRIC_SERVICE_URL").replace(/\/+$/, "");
+  const key = envText("VISITOR_BIOMETRIC_SERVICE_KEY");
+  const fallback: FacialScreening = {
+    status: "PROCESSING_FAILED", provider: "DEEPFACE", model: null, detector: null,
+    distance: null, threshold: null, antiSpoofingStatus: "INCONCLUSIVE",
+  };
+  try {
+    const response = await fetch(`${endpoint}/v1/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Visitor-Verification-Key": key },
+      body: JSON.stringify({ requestId, idImage, selfieImage }),
+      signal: AbortSignal.timeout(50_000),
+    });
+    if (!response.ok) {
+      console.error(`visitor biometric service failed category=HTTP_${response.status}`);
+      return fallback;
+    }
+    const result = await response.json() as Record<string, unknown>;
+    const status = String(result.status ?? "").toUpperCase();
+    if (!FACIAL_RESULTS.has(status)) {
+      console.error("visitor biometric service failed category=INVALID_RESULT");
+      return fallback;
+    }
+    const numeric = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : null;
+    const anti = String(result.antiSpoofingStatus ?? "NOT_PERFORMED").toUpperCase();
+    return {
+      status,
+      provider: String(result.provider ?? "DEEPFACE").slice(0, 80),
+      model: String(result.model ?? "").slice(0, 80) || null,
+      detector: String(result.detector ?? "").slice(0, 80) || null,
+      distance: numeric(result.distance), threshold: numeric(result.threshold),
+      antiSpoofingStatus: ["NOT_PERFORMED", "REAL_INDICATED", "SPOOF_INDICATED", "INCONCLUSIVE"].includes(anti) ? anti : "INCONCLUSIVE",
+    };
+  } catch (error) {
+    console.error(`visitor biometric service failed category=${error instanceof DOMException && error.name === "TimeoutError" ? "TIMEOUT" : "UNAVAILABLE"}`);
+    return fallback;
+  }
+}
+
+async function kioskPrivacyConfig(activeDepartments: string[]) {
+  const { data, error } = await db.from("visitor_kiosk_configuration").select("*").eq("id", 1).maybeSingle();
+  if (error) throw new Error(`visitor kiosk configuration load failed: ${error.message}`);
+  const row = data as KioskConfigRow | null;
+  const retentionFallback = Number(envText("VISITOR_IDENTITY_RETENTION_DAYS"));
+  const databaseRoutes = parsePurposeDepartmentRoutes(row?.purpose_department_routes);
+  const policy: VisitorKioskPolicy = {
+    organizationName: row?.organization_name?.trim() || "HIRNA TNVS",
+    controllerName: preferDatabase(row?.controller_name, "VISITOR_PRIVACY_CONTROLLER_NAME"),
+    controllerContact: preferDatabase(row?.controller_contact, "VISITOR_PRIVACY_CONTROLLER_CONTACT"),
+    dpoContact: preferDatabase(row?.dpo_contact, "VISITOR_PRIVACY_DPO_CONTACT"),
+    processingPurposes: row?.processing_purposes?.trim() || "",
+    lawfulBasis: preferDatabase(row?.lawful_basis, "VISITOR_PRIVACY_LAWFUL_BASIS"),
+    privacyNoticeText: row?.privacy_notice_text?.trim() || "",
+    acknowledgementText: row?.acknowledgement_text?.trim() || "",
+    noticeVersion: preferDatabase(row?.notice_version, "VISITOR_PRIVACY_NOTICE_VERSION"),
+    retentionPolicy: preferDatabase(row?.retention_policy, "VISITOR_IDENTITY_RETENTION_POLICY"),
+    retentionDays: row?.retention_days ?? (Number.isInteger(retentionFallback) && retentionFallback > 0 ? retentionFallback : null),
+    rightsProcess: preferDatabase(row?.rights_process, "VISITOR_PRIVACY_RIGHTS_PROCESS"),
+    processors: preferDatabase(row?.processors, "VISITOR_PRIVACY_PROCESSORS"),
+    safeguards: preferDatabase(row?.safeguards, "VISITOR_PRIVACY_SAFEGUARDS"),
+    alternativeVerification: preferDatabase(row?.alternative_verification, "VISITOR_ALTERNATIVE_VERIFICATION_PROCEDURE"),
+    acceptedIdTypes: row?.accepted_id_types?.length
+      ? splitVisitorKioskList(row.accepted_id_types)
+      : splitVisitorKioskList(envText("VISITOR_ACCEPTED_ID_TYPES")),
+    purposeDepartmentRoutes: Object.keys(databaseRoutes).length
+      ? databaseRoutes
+      : parsePurposeDepartmentRoutes(envText("VISITOR_PURPOSE_DEPARTMENT_ROUTES")),
+    registrationEnabled: row?.registration_enabled === true,
+    privacyReviewApproved: row?.privacy_review_approved === true,
+    securityReviewApproved: row?.security_review_approved === true,
+    operationsReviewApproved: row?.operations_review_approved === true,
+    biometricProcessingEnabled: row?.biometric_processing_enabled === true,
+    biometricNoticeText: row?.biometric_notice_text?.trim() || "",
+    biometricAuthorizationText: row?.biometric_authorization_text?.trim() || "",
+    biometricPrivacyApproved: row?.biometric_privacy_approved === true,
+    biometricPiaApproved: row?.biometric_pia_approved === true,
+    biometricSecurityApproved: row?.biometric_security_approved === true,
+    biometricLicenseApproved: row?.biometric_license_approved === true,
+  };
+  const readiness = evaluateVisitorKioskReadiness(policy, activeDepartments);
+  const evidenceReady = Boolean(row?.biometric_privacy_evidence?.trim()
+    && row?.biometric_pia_evidence?.trim()
+    && row?.biometric_security_evidence?.trim()
+    && row?.biometric_license_evidence?.trim()
+    && row?.biometric_retention_approved === true
+    && row?.biometric_retention_evidence?.trim());
+  const shouldCheckRuntime = policy.biometricProcessingEnabled === true
+    && policy.biometricPrivacyApproved === true && policy.biometricPiaApproved === true
+    && policy.biometricSecurityApproved === true && policy.biometricLicenseApproved === true
+    && evidenceReady;
+  const biometricRuntimeReady = shouldCheckRuntime
+    ? (await checkVisitorBiometricTechnicalReadiness(false)).ready
+    : false;
+  return {
+    policy,
+    privacy: publicVisitorKioskPrivacy(policy, readiness, biometricRuntimeReady),
+  };
+}
+
+function emailLooksValid(value: string): boolean {
+  return value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function base64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function sha256(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function signedVisitorToken(prefix: "vst_" | "vss_", purpose: string, visitorId: string, issuedAt: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(config.jwtSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`${purpose}:${visitorId}:${issuedAt}`),
+  );
+  return `${prefix}${base64Url(new Uint8Array(signature))}`;
+}
+
+function referenceNumber(): string {
+  const bytes = new Uint8Array(5);
+  crypto.getRandomValues(bytes);
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  return `HV-${date}-${base64Url(bytes).toUpperCase()}`;
+}
+
+type ParsedImage = { bytes: Uint8Array; mime: "image/jpeg" | "image/png" | "image/webp"; extension: string };
+
+function parseImageDataUrl(raw: unknown): ParsedImage | null {
+  if (typeof raw !== "string") return null;
+  const match = raw.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) return null;
+  let decoded: string;
+  try { decoded = atob(match[2]); } catch { return null; }
+  if (decoded.length === 0 || decoded.length > MAX_ID_IMAGE_BYTES) return null;
+  const bytes = Uint8Array.from(decoded, (char) => char.charCodeAt(0));
+  const mime = match[1] as ParsedImage["mime"];
+  const signatureValid = mime === "image/jpeg"
+    ? bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[bytes.length - 2] === 0xff && bytes[bytes.length - 1] === 0xd9
+    : mime === "image/png"
+      ? bytes.slice(0, 8).every((value, index) => value === [137, 80, 78, 71, 13, 10, 26, 10][index])
+      : bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+        && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50;
+  if (!signatureValid) return null;
+  return { bytes, mime, extension: mime === "image/jpeg" ? "jpg" : mime.split("/")[1] };
+}
+
+function htmlEscape(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]!));
 }
 
 // ---------------------------------------------------------------------------
@@ -54,6 +282,51 @@ type VisitorRow = {
   badge_number: string | null;
   host_id: string | null;
   current_verification_id: string | null;
+  reference_number?: string | null;
+  registration_source?: string | null;
+  purpose_category?: string | null;
+  other_purpose?: string | null;
+  receiving_department?: string | null;
+  id_type?: string | null;
+  id_number_last4?: string | null;
+  privacy_notice_version?: string | null;
+  privacy_acknowledged_at?: string | null;
+  identity_verification_status?: string | null;
+  identity_verification_provider?: string | null;
+  ocr_processing_status?: string | null;
+  document_classification?: string | null;
+  document_detected_type?: string | null;
+  document_expiration_text?: string | null;
+  document_issuing_authority?: string | null;
+  document_screening_warnings?: unknown[] | null;
+  ocr_text_quality?: string | null;
+  facial_comparison_status?: string | null;
+  facial_comparison_provider?: string | null;
+  facial_comparison_model?: string | null;
+  facial_comparison_detector?: string | null;
+  facial_comparison_distance?: number | null;
+  facial_comparison_threshold?: number | null;
+  facial_comparison_at?: string | null;
+  anti_spoofing_status?: string | null;
+  manual_identity_review_required?: boolean | null;
+  approval_status?: string | null;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  declined_by?: string | null;
+  declined_at?: string | null;
+  approval_reason?: string | null;
+  access_status?: string | null;
+  qr_token_hash?: string | null;
+  qr_issued_at?: string | null;
+  qr_expires_at?: string | null;
+  qr_revoked_at?: string | null;
+  email_delivery_status?: string | null;
+  email_provider_id?: string | null;
+  email_delivery_error?: string | null;
+  email_attempted_at?: string | null;
+  status_token_hash?: string | null;
+  status_token_issued_at?: string | null;
+  status_token_expires_at?: string | null;
   users?: HostUser | null;
 };
 
@@ -134,13 +407,52 @@ function toVisitorDto(v: VisitorRow, verification?: VerificationRow | null, incl
     actualDeparture: v.actual_departure,
     status: v.status,
     denialReason: v.denial_reason,
-    qrCodeToken: v.qr_code_token,
+    // Raw pass credentials must never be returned by staff list APIs.
+    qrCodeToken: null,
     badgeNumber: v.badge_number,
     currentVerificationId: v.current_verification_id,
     clearanceState: verification?.clearance_state ?? null,
     automatedClearance: verification?.automated_clearance ?? null,
     verificationStatus: verification?.verification_status ?? null,
     verificationReviewedAt: verification?.reviewed_at ?? null,
+    referenceNumber: v.reference_number ?? null,
+    registrationSource: v.registration_source ?? "STAFF",
+    purposeCategory: v.purpose_category ?? null,
+    otherPurpose: v.other_purpose ?? null,
+    receivingDepartment: v.receiving_department ?? h?.department ?? null,
+    idType: v.id_type ?? verification?.id_type ?? null,
+    idNumberLast4: v.id_number_last4 ?? null,
+    privacyNoticeVersion: v.privacy_notice_version ?? null,
+    identityVerificationStatus: v.identity_verification_status ?? null,
+    identityVerificationProvider: v.identity_verification_provider ?? null,
+    ocrProcessingStatus: v.ocr_processing_status ?? "NOT_REQUESTED",
+    documentClassification: v.document_classification ?? "NOT_SCREENED",
+    documentDetectedType: v.document_detected_type ?? null,
+    documentExpirationText: v.document_expiration_text ?? null,
+    documentIssuingAuthority: v.document_issuing_authority ?? null,
+    documentScreeningWarnings: Array.isArray(v.document_screening_warnings) ? v.document_screening_warnings : [],
+    ocrTextQuality: v.ocr_text_quality ?? null,
+    facialComparisonStatus: v.facial_comparison_status ?? "PROVIDER_NOT_CONFIGURED",
+    facialComparisonProvider: v.facial_comparison_provider ?? null,
+    facialComparisonModel: v.facial_comparison_model ?? null,
+    facialComparisonDetector: v.facial_comparison_detector ?? null,
+    facialComparisonDistance: v.facial_comparison_distance ?? null,
+    facialComparisonThreshold: v.facial_comparison_threshold ?? null,
+    facialComparisonAt: v.facial_comparison_at ?? null,
+    antiSpoofingStatus: v.anti_spoofing_status ?? "NOT_PERFORMED",
+    manualIdentityReviewRequired: v.manual_identity_review_required ?? true,
+    approvalStatus: v.approval_status ?? "NOT_REQUIRED",
+    approvedAt: v.approved_at ?? null,
+    declinedAt: v.declined_at ?? null,
+    approvalReason: v.approval_reason ?? null,
+    accessStatus: v.access_status ?? "NOT_AUTHORIZED",
+    qrIssuedAt: v.qr_issued_at ?? null,
+    qrExpiresAt: v.qr_expires_at ?? null,
+    qrRevokedAt: v.qr_revoked_at ?? null,
+    emailDeliveryStatus: v.email_delivery_status ?? "NOT_REQUESTED",
+    emailProviderId: v.email_provider_id ?? null,
+    emailDeliveryError: v.email_delivery_error ?? null,
+    emailAttemptedAt: v.email_attempted_at ?? null,
   };
 }
 
@@ -259,6 +571,1251 @@ function workflowResponse(result: WorkflowRpcResult, successMessage: string) {
 // Handlers
 // ---------------------------------------------------------------------------
 
+async function loadKioskDestinations() {
+  const { data: users, error } = await db.from("users")
+    .select("id, first_name, last_name, department, position")
+    .eq("status", "ACTIVE")
+    .eq("is_deleted", false)
+    .not("department", "is", null)
+    .order("last_name")
+    .limit(500);
+  if (error) throw new Error(`kiosk destination load failed: ${error.message}`);
+  const hosts = (users ?? []).map((user) => ({
+    id: user.id,
+    name: `${user.first_name ?? ""} ${user.last_name ?? ""}`.trim(),
+    department: user.department,
+    position: user.position,
+  })).filter((user) => user.name);
+  const departments = [...new Set(hosts.map((host) => String(host.department ?? "").trim()).filter(Boolean))].sort();
+  return { hosts, departments };
+}
+
+function visitorStatusExpiresAt(expectedArrival: Date): string {
+  const now = Date.now();
+  const thirtyDays = now + 30 * 24 * 60 * 60_000;
+  const sevenDaysAfterVisit = expectedArrival.getTime() + 7 * 24 * 60 * 60_000;
+  const oneYear = now + 365 * 24 * 60 * 60_000;
+  return new Date(Math.min(Math.max(thirtyDays, sevenDaysAfterVisit), oneYear)).toISOString();
+}
+
+async function handleKioskConfig() {
+  const { hosts, departments } = await loadKioskDestinations();
+  const { policy, privacy } = await kioskPrivacyConfig(departments);
+  return jsonResponse(ok({
+    privacy,
+    purposes: VISITOR_KIOSK_PURPOSES.map((purpose) => ({ ...purpose, department: policy.purposeDepartmentRoutes[purpose.value] ?? null })),
+    hosts,
+    departments,
+  }, privacy.ready ? "Visitor kiosk configuration loaded" : "Visitor kiosk requires privacy configuration before collecting personal information"), 200);
+}
+
+async function handleKioskRegister(_ctx: AuthContext | null, req: Request, body: unknown) {
+  const { departments } = await loadKioskDestinations();
+  const { policy, privacy } = await kioskPrivacyConfig(departments);
+  if (!privacy.ready) {
+    return jsonResponse(fail(
+      "Visitor registration is unavailable until the organization configures the required privacy notice and approved ID policy.",
+      "KIOSK_PRIVACY_CONFIGURATION_REQUIRED",
+      privacy.missing,
+    ), 503);
+  }
+
+  const b = (body ?? {}) as Record<string, unknown>;
+  const fullName = String(b.fullName ?? "").trim().replace(/\s+/g, " ");
+  const email = String(b.email ?? "").trim().toLowerCase();
+  const phoneNumber = String(b.phoneNumber ?? "").trim() || null;
+  const company = String(b.company ?? "").trim() || null;
+  const purposeCategory = String(b.purposeCategory ?? "").trim().toUpperCase();
+  const otherPurpose = String(b.otherPurpose ?? "").trim() || null;
+  const expectedRaw = String(b.expectedArrival ?? "").trim();
+  const hostId = String(b.hostId ?? "").trim() || null;
+  let receivingDepartment = String(b.receivingDepartment ?? "").trim() || null;
+  const routedDepartment = policy.purposeDepartmentRoutes[purposeCategory] ?? null;
+  if (FIXED_DEPARTMENT_PURPOSES.has(purposeCategory)) receivingDepartment = routedDepartment;
+  const idType = String(b.idType ?? "").trim();
+  const idNumberLast4 = String(b.idNumberLast4 ?? "").replace(/[^A-Za-z0-9]/g, "").slice(-4).toUpperCase() || null;
+  const idempotencyKey = String(b.idempotencyKey ?? "").trim();
+  const privacyVersion = String(b.privacyNoticeVersion ?? "").trim();
+  const idImageDataUrl = String((b.idImage as Record<string, unknown> | undefined)?.dataUrl ?? "");
+  const image = parseImageDataUrl(idImageDataUrl);
+  const readabilityConfirmed = (b.idImage as Record<string, unknown> | undefined)?.confirmedReadable === true;
+  const selfieDataUrl = String((b.selfieImage as Record<string, unknown> | undefined)?.dataUrl ?? "");
+  const selfie = selfieDataUrl ? parseImageDataUrl(selfieDataUrl) : null;
+  const biometricAuthorization = b.biometricAuthorization === true;
+  const manualAlternativeRequested = b.manualAlternativeRequested === true;
+  const biometricEnabled = privacy.identityVerification.status === "ENABLED";
+  const screening = (b.documentScreening ?? {}) as Record<string, unknown>;
+  const ocrStatus = String(screening.ocrStatus ?? "").trim().toUpperCase();
+  const documentClassification = String(screening.classification ?? "").trim().toUpperCase();
+  const detectedIdType = String(screening.detectedIdType ?? "").trim().slice(0, 100) || null;
+  const textQuality = String(screening.textQuality ?? "").trim().toUpperCase();
+  const screeningWarnings = Array.isArray(screening.warnings)
+    ? screening.warnings.map((value) => String(value).trim().slice(0, 300)).filter(Boolean).slice(0, 8)
+    : [];
+  const documentExpiration = String(b.idExpirationDate ?? "").trim().slice(0, 40) || null;
+  const documentIssuingAuthority = String(b.idIssuingAuthority ?? "").trim().slice(0, 120) || null;
+
+  if (fullName.length < 2 || fullName.length > 150) return badRequest("Enter a valid visitor name (2–150 characters).", "VALIDATION_ERROR");
+  if (!emailLooksValid(email)) return badRequest("Enter a valid email address for visit updates and the QR pass.", "VALIDATION_ERROR");
+  if (phoneNumber && phoneNumber.length > 30) return badRequest("Phone number is too long.", "VALIDATION_ERROR");
+  if (company && company.length > 150) return badRequest("Organization name is too long.", "VALIDATION_ERROR");
+  if (purposeCategory === "GOVERNMENT_REGULATORY" && !company) return badRequest("Government or regulatory visits require the organization name.", "ORGANIZATION_REQUIRED");
+  if (!PURPOSE_VALUES.has(purposeCategory as never)) return badRequest("Select an approved purpose of visit.", "VALIDATION_ERROR");
+  if (purposeCategory === "OTHER" && (!otherPurpose || otherPurpose.length < 3 || otherPurpose.length > 500)) {
+    return badRequest("Other Purpose requires an explanation of 3–500 characters.", "OTHER_PURPOSE_REQUIRED");
+  }
+  if (purposeCategory !== "OTHER" && otherPurpose) return badRequest("An Other Purpose explanation is only accepted for Other Purpose.", "VALIDATION_ERROR");
+  if (!privacy.acceptedIdTypes.includes(idType)) return badRequest("Select an ID type approved by company policy.", "ID_TYPE_NOT_ACCEPTED");
+  if (ocrStatus !== "SUCCEEDED" || documentClassification !== "SUPPORTED_ID_TYPE") {
+    return badRequest("The document must pass local OCR category screening before it can be submitted. Use an approved ID or request manual assistance.", "DOCUMENT_SCREENING_REQUIRED");
+  }
+  if (!detectedIdType || !privacy.acceptedIdTypes.includes(detectedIdType) || detectedIdType !== idType) {
+    return badRequest("The detected document type must match the selected administrator-approved category.", "DOCUMENT_TYPE_NOT_ACCEPTED");
+  }
+  if (!["HIGH", "MEDIUM", "LOW"].includes(textQuality)) return badRequest("The OCR quality result is invalid.", "DOCUMENT_SCREENING_INVALID");
+  if (!image || !readabilityConfirmed) return badRequest("A valid, readable JPEG, PNG, or WebP ID image up to 5 MB is required.", "ID_IMAGE_INVALID");
+  if (!biometricEnabled && selfieDataUrl) return badRequest("Biometric processing is disabled; a selfie cannot be accepted.", "BIOMETRIC_FEATURE_DISABLED");
+  if (biometricEnabled && !manualAlternativeRequested && (!selfie || !biometricAuthorization)) {
+    return badRequest("Authorize and capture the selfie, or choose the approved manual verification alternative.", "BIOMETRIC_AUTHORIZATION_REQUIRED");
+  }
+  if (biometricEnabled && manualAlternativeRequested && selfieDataUrl) {
+    return badRequest("Do not include a selfie when requesting manual verification.", "BIOMETRIC_ALTERNATIVE_INVALID");
+  }
+  if (privacyVersion !== privacy.noticeVersion || b.privacyAcknowledged !== true) {
+    return badRequest("Acknowledge the current privacy notice before submitting.", "PRIVACY_NOTICE_REQUIRED");
+  }
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(idempotencyKey)) return badRequest("The submission key is invalid. Reset the kiosk and try again.", "IDEMPOTENCY_KEY_INVALID");
+
+  const expectedArrival = new Date(expectedRaw);
+  if (Number.isNaN(expectedArrival.getTime()) || expectedArrival.getTime() <= Date.now() - 5 * 60_000
+    || expectedArrival.getTime() > Date.now() + 366 * 24 * 60 * 60_000) {
+    return badRequest("Choose a valid expected arrival within the next year.", "VISIT_TIME_INVALID");
+  }
+
+  let host: { id: string; department: string | null } | null = null;
+  if (hostId) {
+    const { data, error } = await db.from("users").select("id, department")
+      .eq("id", hostId).eq("status", "ACTIVE").eq("is_deleted", false).maybeSingle();
+    if (error) throw new Error(`kiosk host lookup failed: ${error.message}`);
+    if (!data) return badRequest("The selected host is no longer available.", "VISITOR_HOST_REQUIRED");
+    host = data;
+    receivingDepartment = data.department ?? receivingDepartment;
+  }
+  if (purposeCategory === "MEETING_EMPLOYEE" && !host) return badRequest("Select an active employee host.", "VISITOR_HOST_REQUIRED");
+  if (FIXED_DEPARTMENT_PURPOSES.has(purposeCategory) && !routedDepartment) return badRequest("The selected purpose has no configured receiving department.", "VISITOR_DESTINATION_REQUIRED");
+  if (!host && !receivingDepartment) return badRequest("Select a receiving department or employee host.", "VISITOR_DESTINATION_REQUIRED");
+  if (receivingDepartment) {
+    const { count, error } = await db.from("users").select("id", { count: "exact", head: true })
+      .eq("department", receivingDepartment).eq("status", "ACTIVE").eq("is_deleted", false);
+    if (error) throw new Error(`kiosk department validation failed: ${error.message}`);
+    if (!count) return badRequest("The selected receiving department is unavailable.", "VISITOR_DESTINATION_REQUIRED");
+  }
+
+  const submissionKeyHash = await sha256(idempotencyKey);
+  const { data: existing, error: duplicateError } = await db.from("visitors")
+    .select("id, reference_number, approval_status, email_delivery_status, status_token_issued_at")
+    .eq("submission_key_hash", submissionKeyHash).maybeSingle();
+  if (duplicateError) throw new Error(`kiosk duplicate lookup failed: ${duplicateError.message}`);
+  if (existing) {
+    const statusToken = existing.status_token_issued_at
+      ? await signedVisitorToken("vss_", "visitor-status", existing.id, existing.status_token_issued_at)
+      : null;
+    return jsonResponse(ok({
+      referenceNumber: existing.reference_number,
+      approvalStatus: existing.approval_status,
+      emailDeliveryStatus: existing.email_delivery_status,
+      statusToken,
+      duplicate: true,
+    }, "This registration was already received"), 200);
+  }
+
+  const facial = biometricEnabled && selfie && biometricAuthorization
+    ? await runFacialScreening(crypto.randomUUID(), idImageDataUrl, selfieDataUrl)
+    : {
+      status: biometricEnabled ? "INCONCLUSIVE" : "PROVIDER_NOT_CONFIGURED",
+      provider: null, model: null, detector: null, distance: null, threshold: null,
+      antiSpoofingStatus: "NOT_PERFORMED",
+    };
+
+  const visitorId = crypto.randomUUID();
+  const statusTokenIssuedAt = new Date().toISOString();
+  const statusToken = await signedVisitorToken("vss_", "visitor-status", visitorId, statusTokenIssuedAt);
+  const statusTokenHash = await sha256(statusToken);
+  const storagePath = `${visitorId}/id-front-${crypto.randomUUID()}.${image.extension}`;
+  const { error: uploadError } = await db.storage.from(IMAGE_BUCKET).upload(storagePath, image.bytes, {
+    contentType: image.mime,
+    upsert: false,
+  });
+  if (uploadError) throw new Error(`secure ID image upload failed: ${uploadError.message}`);
+
+  const retentionDays = Number(policy.retentionDays);
+  const deleteAfter = Number.isInteger(retentionDays) && retentionDays > 0
+    ? new Date(Date.now() + retentionDays * 24 * 60 * 60_000).toISOString()
+    : null;
+  const reference = referenceNumber();
+  const purposeLabel = VISITOR_KIOSK_PURPOSES.find((item) => item.value === purposeCategory)?.label ?? purposeCategory;
+  const { data: saved, error: insertError } = await db.from("visitors").insert({
+    id: visitorId,
+    full_name: fullName,
+    email,
+    phone_number: phoneNumber,
+    company,
+    id_number: null,
+    id_type: idType,
+    id_number_last4: idNumberLast4,
+    host_id: host?.id ?? null,
+    receiving_department: receivingDepartment,
+    purpose_category: purposeCategory,
+    purpose_of_visit: otherPurpose ? `${purposeLabel}: ${otherPurpose}` : purposeLabel,
+    other_purpose: otherPurpose,
+    expected_arrival: expectedArrival.toISOString(),
+    status: "REGISTERED",
+    registration_source: "KIOSK",
+    reference_number: reference,
+    privacy_notice_version: privacy.noticeVersion,
+    privacy_acknowledged_at: new Date().toISOString(),
+    identity_verification_status: biometricEnabled ? "NEEDS_MANUAL_REVIEW" : "PROVIDER_NOT_CONFIGURED",
+    identity_verification_provider: facial.provider,
+    ocr_processing_status: ocrStatus,
+    document_classification: documentClassification,
+    document_detected_type: detectedIdType,
+    document_expiration_text: documentExpiration,
+    document_issuing_authority: documentIssuingAuthority,
+    document_screening_warnings: screeningWarnings,
+    ocr_text_quality: textQuality,
+    facial_comparison_status: facial.status,
+    facial_comparison_provider: facial.provider,
+    facial_comparison_model: facial.model,
+    facial_comparison_detector: facial.detector,
+    facial_comparison_distance: facial.distance,
+    facial_comparison_threshold: facial.threshold,
+    facial_comparison_at: facial.provider ? new Date().toISOString() : null,
+    anti_spoofing_status: facial.antiSpoofingStatus,
+    manual_identity_review_required: true,
+    approval_status: "PENDING",
+    access_status: "NOT_AUTHORIZED",
+    email_delivery_status: "NOT_REQUESTED",
+    submission_key_hash: submissionKeyHash,
+    status_token_hash: statusTokenHash,
+    status_token_issued_at: statusTokenIssuedAt,
+    status_token_expires_at: visitorStatusExpiresAt(expectedArrival),
+    qr_code_token: null,
+    created_by: "visitor-kiosk",
+    updated_at: naiveIso(),
+  }).select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)").single();
+  if (insertError) {
+    await db.storage.from(IMAGE_BUCKET).remove([storagePath]);
+    if (insertError.code === "23505") {
+      const { data: retry } = await db.from("visitors")
+        .select("id, reference_number, approval_status, email_delivery_status, status_token_issued_at")
+        .eq("submission_key_hash", submissionKeyHash).maybeSingle();
+      if (retry) {
+        const retryStatusToken = retry.status_token_issued_at
+          ? await signedVisitorToken("vss_", "visitor-status", retry.id, retry.status_token_issued_at)
+          : null;
+        return jsonResponse(ok({
+          referenceNumber: retry.reference_number,
+          approvalStatus: retry.approval_status,
+          emailDeliveryStatus: retry.email_delivery_status,
+          statusToken: retryStatusToken,
+          duplicate: true,
+        }, "This registration was already received"), 200);
+      }
+    }
+    throw new Error(`kiosk visitor registration failed: ${insertError.message}`);
+  }
+
+  const { error: artifactError } = await db.from("visitor_identity_artifacts").insert({
+    visitor_id: visitorId,
+    artifact_type: "ID_FRONT",
+    storage_path: storagePath,
+    mime_type: image.mime,
+    byte_size: image.bytes.length,
+    delete_after: deleteAfter,
+  });
+  if (artifactError) {
+    await Promise.all([
+      db.storage.from(IMAGE_BUCKET).remove([storagePath]),
+      db.from("visitors").delete().eq("id", visitorId),
+    ]);
+    throw new Error(`visitor identity artifact metadata failed: ${artifactError.message}`);
+  }
+
+  if (host?.id) {
+    const { error: notificationError } = await db.from("employee_notifications").insert({
+      recipient_id: host.id,
+      title: `Visitor approval requested: ${reference}`,
+      message: `${fullName} submitted a ${purposeLabel.toLowerCase()} request for ${expectedArrival.toLocaleString("en-PH", { timeZone: "Asia/Manila" })}. Identity requires authorized manual review.`,
+      type: "VISITOR_APPROVAL_REQUIRED",
+      related_entity_type: "Visitor",
+      related_entity_id: visitorId,
+      dedup_key: `visitor-kiosk:${visitorId}:approval-required`,
+      is_read: false,
+      created_at: naiveIso(),
+      updated_at: naiveIso(),
+    });
+    if (notificationError && notificationError.code !== "23505") console.error(`visitor host notification failed: ${notificationError.message}`);
+  }
+  const acknowledgment = await sendRegistrationAcknowledgment(saved as unknown as VisitorRow, statusToken);
+  await writeAudit(null, "KIOSK_VISITOR_SUBMITTED", MODULE, "Visitor", visitorId,
+    `Kiosk request ${reference} submitted pending identity review and approval; acknowledgment status ${acknowledgment.status}.`, resolveClientIp(req).ip, "INFO");
+  return jsonResponse(ok({
+    id: saved.id,
+    referenceNumber: saved.reference_number,
+    approvalStatus: saved.approval_status,
+    identityVerificationStatus: biometricEnabled ? "NEEDS_MANUAL_REVIEW" : "PROVIDER_NOT_CONFIGURED",
+    emailDeliveryStatus: acknowledgment.status,
+    statusToken,
+  }, "Visitor request submitted for approval"), 201);
+}
+
+async function handleIdentityArtifacts(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
+  const { data: visitor, error: visitorError } = await db.from("visitors")
+    .select("id, registration_source, is_deleted").eq("id", p.id).maybeSingle();
+  if (visitorError) throw new Error(`visitor identity owner load failed: ${visitorError.message}`);
+  if (!visitor || visitor.is_deleted || visitor.registration_source !== "KIOSK") return emptyNotFound();
+  const { data, error } = await db.from("visitor_identity_artifacts")
+    .select("id, artifact_type, storage_path, mime_type, byte_size, captured_at, delete_after")
+    .eq("visitor_id", p.id).is("deleted_at", null).order("captured_at");
+  if (error) throw new Error(`visitor identity artifact load failed: ${error.message}`);
+  const invalidArtifact = (data ?? []).find((artifact) => !["image/jpeg", "image/png", "image/webp"].includes(artifact.mime_type));
+  if (invalidArtifact) {
+    return jsonResponse(fail("The stored identity artifact has an unsupported media type.", "IDENTITY_ARTIFACT_MEDIA_TYPE_INVALID"), 422);
+  }
+  const expiresAt = new Date(Date.now() + 300_000).toISOString();
+  const signed = await Promise.all((data ?? []).map(async (artifact) => {
+    const { data: signedData, error: signedError } = await db.storage.from(IMAGE_BUCKET)
+      .createSignedUrl(artifact.storage_path, 300);
+    if (signedError) throw new Error(`visitor identity artifact signing failed: ${signedError.message}`);
+    return {
+      id: artifact.id,
+      type: artifact.artifact_type,
+      mimeType: artifact.mime_type,
+      byteSize: artifact.byte_size,
+      capturedAt: artifact.captured_at,
+      deleteAfter: artifact.delete_after,
+      signedUrl: signedData.signedUrl,
+      expiresInSeconds: 300,
+      expiresAt,
+    };
+  }));
+  await writeAudit(ctx!.user, "VISITOR_IDENTITY_ARTIFACT_LINKS_ISSUED", MODULE, "Visitor", p.id,
+    `Temporary links issued for ${signed.length} private identity artifact(s).`, resolveClientIp(req).ip, "HIGH");
+  return jsonResponse(ok(signed, "Temporary identity-artifact links created"), 200);
+}
+
+async function handleManualIdentityReview(ctx: AuthContext | null, req: Request, body: unknown, p: RouteParams) {
+  const visitor = await loadVisitor(p.id);
+  if (!visitor || visitor.registration_source !== "KIOSK") return emptyNotFound();
+  const b = (body ?? {}) as Record<string, unknown>;
+  const decision = String(b.decision ?? "").trim().toUpperCase();
+  const notes = String(b.notes ?? "").trim();
+  if (!['APPROVE', 'REJECT'].includes(decision) || notes.length < 5 || notes.length > 1000) {
+    return badRequest("A manual-review decision and notes of 5–1000 characters are required.", "MANUAL_REVIEW_DETAILS_REQUIRED");
+  }
+  const { count, error: artifactError } = await db.from("visitor_identity_artifacts")
+    .select("id", { count: "exact", head: true }).eq("visitor_id", visitor.id).eq("artifact_type", "ID_FRONT").is("deleted_at", null);
+  if (artifactError) throw new Error(`identity artifact validation failed: ${artifactError.message}`);
+  if (!count) return badRequest("The visitor has no available ID image for manual review.", "IDENTITY_ARTIFACT_REQUIRED");
+
+  const approved = decision === "APPROVE";
+  const now = new Date().toISOString();
+  const { data: verification, error: verificationError } = await db.from("visitor_verifications").insert({
+    visitor_id: visitor.id,
+    id_type: visitor.id_type ?? "OTHER",
+    id_number: null,
+    extracted_fields: { source: "AUTHORIZED_MANUAL_REVIEW", retainedIdentifier: visitor.id_number_last4 ? "LAST_FOUR_ONLY" : "NONE" },
+    match_score: null,
+    watchlist_status: "NOT_AUTOMATED",
+    verification_status: approved ? "VERIFIED" : "FAILED",
+    verified_at: now,
+    verified_by: ctx!.email,
+    notes,
+    automated_clearance: "REVIEW_REQUIRED",
+    clearance_state: approved ? "CLEAR" : "BLOCKED",
+    reviewed_by: ctx!.userId,
+    reviewed_at: now,
+    review_notes: notes,
+    created_by: ctx!.email,
+  }).select("*").single();
+  if (verificationError) throw new Error(`manual visitor verification failed: ${verificationError.message}`);
+  const { error: updateError } = await db.from("visitors").update({
+    current_verification_id: verification.id,
+    identity_verification_status: approved ? "MANUAL_REVIEW_APPROVED" : "FAILED",
+    access_status: approved ? "NOT_AUTHORIZED" : "REVOKED",
+    updated_by: ctx!.email,
+    updated_at: naiveIso(),
+  }).eq("id", visitor.id);
+  if (updateError) throw new Error(`manual visitor verification update failed: ${updateError.message}`);
+  await db.from("visitor_workflow_events").insert({
+    visitor_id: visitor.id,
+    verification_id: verification.id,
+    event_type: approved ? "MANUAL_IDENTITY_APPROVED" : "MANUAL_IDENTITY_REJECTED",
+    actor_id: ctx!.userId,
+    actor_email: ctx!.email,
+    actor_role: "FACILITIES_OFFICER",
+    details: { notes },
+  });
+  await writeAudit(ctx!.user, approved ? "MANUAL_IDENTITY_APPROVED" : "MANUAL_IDENTITY_REJECTED", MODULE,
+    "Visitor", visitor.id, `Manual identity review recorded for request ${visitor.reference_number ?? visitor.id}.`, resolveClientIp(req).ip, approved ? "INFO" : "HIGH");
+  return jsonResponse(ok(toVerificationDto(verification as unknown as VerificationRow), "Manual identity review recorded"), 200);
+}
+
+type GmailConfigurationRow = {
+  encrypted_refresh_token: string | null;
+  granted_scopes: string[] | null;
+  connection_status: "NOT_CONNECTED" | "CONNECTED" | "ERROR";
+  connected_by: string | null;
+  connected_at: string | null;
+  disconnected_at: string | null;
+  last_error_code: string | null;
+  last_error_at: string | null;
+  updated_at: string;
+};
+
+const emptyGmailConfiguration = (): GmailConfigurationRow => ({
+  encrypted_refresh_token: null,
+  granted_scopes: [],
+  connection_status: "NOT_CONNECTED",
+  connected_by: null,
+  connected_at: null,
+  disconnected_at: null,
+  last_error_code: null,
+  last_error_at: null,
+  updated_at: new Date().toISOString(),
+});
+
+const GMAIL_OAUTH_STATE_TTL_MINUTES = 10;
+
+function gmailOAuthHtml(success: boolean, title: string, detail: string, status = 200): Response {
+  const color = success ? "#047857" : "#b91c1c";
+  const safeTitle = htmlEscape(title);
+  const safeDetail = htmlEscape(detail);
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safeTitle}</title></head><body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#172033"><main style="max-width:560px;margin:12vh auto;padding:32px"><section style="border:1px solid #e2e8f0;border-radius:18px;background:#fff;padding:28px;box-shadow:0 16px 40px rgba(15,23,42,.08)"><div style="font-size:12px;font-weight:800;letter-spacing:.12em;color:#b91c1c">HIRNA TNVS</div><h1 style="margin:12px 0;color:${color};font-size:26px">${safeTitle}</h1><p style="line-height:1.65;color:#475569">${safeDetail}</p><p style="margin-top:24px;font-size:13px;color:#64748b">You may close this window and return to Visitor Kiosk Configuration.</p></section></main></body></html>`;
+  return new Response(html, {
+    status,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store, max-age=0",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "DENY",
+    },
+  });
+}
+
+async function loadGmailConfiguration(): Promise<GmailConfigurationRow> {
+  const { data, error } = await db.from("visitor_gmail_oauth_configuration")
+    .select("encrypted_refresh_token,granted_scopes,connection_status,connected_by,connected_at,disconnected_at,last_error_code,last_error_at,updated_at")
+    .eq("id", 1).maybeSingle();
+  if (error) throw new GmailOAuthError("GMAIL_CONFIGURATION_DATABASE_ERROR", "The Gmail OAuth configuration could not be loaded.");
+  return data ? data as GmailConfigurationRow : emptyGmailConfiguration();
+}
+
+async function handleGmailOAuthStatus() {
+  try {
+    const row = await loadGmailConfiguration();
+    const serverConfiguration = gmailOAuthConfigurationStatus();
+    let redirectUri = "";
+    try { redirectUri = gmailOAuthRedirectUri(config.url); } catch { /* returned as a safe configuration state */ }
+    return jsonResponse(ok({
+      provider: "GMAIL",
+      senderEmail: VISITOR_GMAIL_SENDER,
+      scope: GMAIL_SEND_SCOPE,
+      redirectUri,
+      serverSecretsConfigured: serverConfiguration.configured && Boolean(redirectUri),
+      serverConfigurationStatus: redirectUri ? serverConfiguration.status : "INVALID",
+      configurationErrorCode: redirectUri ? serverConfiguration.errorCode : "GMAIL_REDIRECT_URI_INVALID",
+      connected: row.connection_status === "CONNECTED" && Boolean(row.encrypted_refresh_token),
+      connectionStatus: row.connection_status,
+      connectedAt: row.connected_at,
+      disconnectedAt: row.disconnected_at,
+      lastErrorCode: row.last_error_code,
+      lastErrorAt: row.last_error_at,
+    }, "Gmail OAuth status loaded"), 200);
+  } catch (error) {
+    const code = error instanceof GmailOAuthError ? error.code : "GMAIL_CONFIGURATION_DATABASE_ERROR";
+    console.error(`[visitor-gmail] status failed code=${code}`);
+    return jsonResponse(fail("Gmail connection status is temporarily unavailable.", code), 503);
+  }
+}
+
+async function handleGmailOAuthAuthorize(ctx: AuthContext | null, req: Request) {
+  try {
+    const secrets = gmailOAuthSecrets();
+    const redirectUri = gmailOAuthRedirectUri(config.url);
+    const state = randomOAuthValue(32);
+    const codeVerifier = randomOAuthValue(64);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + GMAIL_OAUTH_STATE_TTL_MINUTES * 60_000).toISOString();
+    const [stateHash, encryptedVerifier] = await Promise.all([
+      sha256Hex(state),
+      encryptGmailSecret(codeVerifier, "pkce-verifier", secrets.encryptionKey),
+    ]);
+
+    await db.from("visitor_gmail_oauth_states").delete().lt("expires_at", now.toISOString());
+    const { error } = await db.from("visitor_gmail_oauth_states").insert({
+      state_hash: stateHash,
+      encrypted_code_verifier: encryptedVerifier,
+      initiated_by: ctx!.userId,
+      initiated_ip: resolveClientIp(req).ip,
+      expires_at: expiresAt,
+    });
+    if (error) throw new GmailOAuthError("GMAIL_CONFIGURATION_DATABASE_ERROR", "The secure Gmail authorization state could not be stored.");
+
+    const authorizationUrl = await buildGmailAuthorizationUrl({
+      clientId: secrets.clientId,
+      redirectUri,
+      state,
+      codeVerifier,
+    });
+    await writeAudit(ctx!.user, "VISITOR_GMAIL_OAUTH_STARTED", MODULE, "VisitorGmailOAuth", "1",
+      `A send-only Gmail OAuth connection was initiated for ${VISITOR_GMAIL_SENDER}.`, resolveClientIp(req).ip, "HIGH");
+    return jsonResponse(ok({ authorizationUrl, redirectUri, scope: GMAIL_SEND_SCOPE, expiresAt }, "Gmail authorization initialized"), 200);
+  } catch (error) {
+    const code = error instanceof GmailOAuthError ? error.code : "GMAIL_OAUTH_INITIALIZATION_FAILED";
+    const status = code === "GMAIL_OAUTH_NOT_CONFIGURED" || code === "GMAIL_ENCRYPTION_KEY_INVALID"
+      || code === "GMAIL_REDIRECT_URI_INVALID" || code === "GMAIL_CONFIGURATION_DATABASE_ERROR" ? 503 : 502;
+    const message = code === "GMAIL_ENCRYPTION_KEY_INVALID"
+      ? "Gmail OAuth cannot start because the server encryption key is invalid. Configure a base64 key that decodes to exactly 32 bytes."
+      : code === "GMAIL_OAUTH_NOT_CONFIGURED"
+      ? "Gmail OAuth cannot start because required server credentials are missing."
+      : code === "GMAIL_CONFIGURATION_DATABASE_ERROR"
+      ? "Gmail OAuth cannot start because its secure server-side storage is unavailable."
+      : "Gmail OAuth authorization could not be initialized.";
+    console.error(`[visitor-gmail] authorize failed code=${code}`);
+    return jsonResponse(fail(message, code), status);
+  }
+}
+
+async function consumeGmailOAuthState(state: string) {
+  const now = new Date().toISOString();
+  const stateHash = await sha256Hex(state);
+  const { data, error } = await db.from("visitor_gmail_oauth_states").update({ consumed_at: now })
+    .eq("state_hash", stateHash).is("consumed_at", null).gt("expires_at", now)
+    .select("encrypted_code_verifier,initiated_by").maybeSingle();
+  if (error) throw new Error(`Gmail OAuth state validation failed: ${error.message}`);
+  return data as { encrypted_code_verifier: string; initiated_by: string } | null;
+}
+
+async function handleGmailOAuthCallback(_ctx: AuthContext | null, req: Request) {
+  const query = new URL(req.url).searchParams;
+  const state = query.get("state")?.trim() ?? "";
+  if (state.length < 32 || state.length > 256) {
+    return gmailOAuthHtml(false, "Gmail connection rejected", "The authorization state is missing or invalid. Start again from the authenticated admin page.", 400);
+  }
+
+  let savedState: Awaited<ReturnType<typeof consumeGmailOAuthState>>;
+  try {
+    savedState = await consumeGmailOAuthState(state);
+  } catch {
+    console.error("[visitor-gmail] callback state validation failed code=GMAIL_CONFIGURATION_DATABASE_ERROR");
+    return gmailOAuthHtml(false, "Gmail connection unavailable", "The secure authorization state could not be validated. Return to the admin page and try again later.", 503);
+  }
+  if (!savedState) {
+    return gmailOAuthHtml(false, "Gmail connection rejected", "This authorization request is invalid, expired, or has already been used.", 400);
+  }
+  const actor = await findUserById(savedState.initiated_by);
+  if (!actor || !isAccountActive(actor) || !actor.assignedRoles.includes("SUPER_ADMIN")) {
+    return gmailOAuthHtml(false, "Gmail connection rejected", "The administrator who started this request is no longer authorized.", 403);
+  }
+  const oauthError = query.get("error")?.trim();
+  if (oauthError) {
+    await writeAudit(actor, "VISITOR_GMAIL_OAUTH_DENIED", MODULE, "VisitorGmailOAuth", "1",
+      `Google authorization did not complete (${oauthError.slice(0, 80)}).`, resolveClientIp(req).ip, "HIGH");
+    return gmailOAuthHtml(false, "Gmail connection not completed", "Google authorization was denied or cancelled. No credential was stored.", 400);
+  }
+  const code = query.get("code")?.trim() ?? "";
+  if (!code || code.length > 4096) {
+    return gmailOAuthHtml(false, "Gmail connection rejected", "Google did not return a valid authorization code.", 400);
+  }
+
+  try {
+    const secrets = gmailOAuthSecrets();
+    const codeVerifier = await decryptGmailSecret(savedState.encrypted_code_verifier, "pkce-verifier", secrets.encryptionKey);
+    const tokens = await exchangeGmailAuthorizationCode({
+      code,
+      codeVerifier,
+      redirectUri: gmailOAuthRedirectUri(config.url),
+      secrets,
+    });
+    const encryptedRefreshToken = await encryptGmailSecret(tokens.refreshToken, "refresh-token", secrets.encryptionKey);
+    const connectedAt = new Date().toISOString();
+    const { error } = await db.from("visitor_gmail_oauth_configuration").upsert({
+      id: 1,
+      sender_email: VISITOR_GMAIL_SENDER,
+      encrypted_refresh_token: encryptedRefreshToken,
+      granted_scopes: tokens.scopes,
+      connection_status: "CONNECTED",
+      connected_by: actor.row.id,
+      connected_at: connectedAt,
+      disconnected_by: null,
+      disconnected_at: null,
+      last_error_code: null,
+      last_error_at: null,
+      updated_at: connectedAt,
+    }, { onConflict: "id" });
+    if (error) throw new GmailOAuthError("GMAIL_CONFIGURATION_DATABASE_ERROR", "The encrypted Gmail credential could not be stored.");
+    await writeAudit(actor, "VISITOR_GMAIL_OAUTH_CONNECTED", MODULE, "VisitorGmailOAuth", "1",
+      `Gmail send-only authorization was connected for ${VISITOR_GMAIL_SENDER}.`, resolveClientIp(req).ip, "HIGH");
+    return gmailOAuthHtml(true, "Gmail connected", `${VISITOR_GMAIL_SENDER} is authorized for visitor notification sending. No test email was sent.`);
+  } catch (error) {
+    const code = error instanceof GmailOAuthError ? error.code : "GMAIL_OAUTH_CALLBACK_FAILED";
+    console.error(`[visitor-gmail] callback failed code=${code}`);
+    await writeAudit(actor, "VISITOR_GMAIL_OAUTH_FAILED", MODULE, "VisitorGmailOAuth", "1",
+      `Gmail OAuth callback failed with ${code}. No live email was sent.`, resolveClientIp(req).ip, "HIGH");
+    return gmailOAuthHtml(false, "Gmail connection failed", "The secure token exchange could not be completed. Return to the admin page and review the server configuration.", 502);
+  }
+}
+
+async function handleGmailOAuthDisconnect(ctx: AuthContext | null, req: Request, body: unknown) {
+  const reason = String((body as Record<string, unknown> | null)?.reason ?? "").trim();
+  if (reason.length < 10 || reason.length > 500) {
+    return badRequest("A disconnect reason of 10–500 characters is required.", "GMAIL_DISCONNECT_REASON_REQUIRED");
+  }
+  let row: GmailConfigurationRow;
+  try {
+    row = await loadGmailConfiguration();
+  } catch {
+    console.error("[visitor-gmail] disconnect failed code=GMAIL_CONFIGURATION_DATABASE_ERROR");
+    return jsonResponse(fail("Gmail cannot be disconnected because its secure server-side storage is unavailable.", "GMAIL_CONFIGURATION_DATABASE_ERROR"), 503);
+  }
+  if (row.connection_status !== "CONNECTED" || !row.encrypted_refresh_token) {
+    return jsonResponse(fail("Gmail is not connected.", "GMAIL_NOT_CONNECTED"), 409);
+  }
+  try {
+    const secrets = gmailOAuthSecrets();
+    const refreshToken = await decryptGmailSecret(row.encrypted_refresh_token, "refresh-token", secrets.encryptionKey);
+    await revokeGoogleRefreshToken(refreshToken);
+  } catch (error) {
+    const errorCode = error instanceof GmailOAuthError ? error.code : "GMAIL_REVOKE_FAILED";
+    console.error(`[visitor-gmail] disconnect revocation failed code=${errorCode}`);
+    await db.from("visitor_gmail_oauth_configuration").update({
+      connection_status: "ERROR", last_error_code: errorCode, last_error_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }).eq("id", 1);
+    return jsonResponse(fail("Google token revocation failed; the stored credential was not removed.", errorCode), 502);
+  }
+  const disconnectedAt = new Date().toISOString();
+  const { error } = await db.from("visitor_gmail_oauth_configuration").update({
+    encrypted_refresh_token: null,
+    granted_scopes: [],
+    connection_status: "NOT_CONNECTED",
+    disconnected_by: ctx!.userId,
+    disconnected_at: disconnectedAt,
+    last_error_code: null,
+    last_error_at: null,
+    updated_at: disconnectedAt,
+  }).eq("id", 1);
+  if (error) {
+    console.error("[visitor-gmail] disconnect storage failed code=GMAIL_CONFIGURATION_DATABASE_ERROR");
+    return jsonResponse(fail("Google revoked the authorization, but the local connection record could not be cleared. Contact the system administrator.", "GMAIL_CONFIGURATION_DATABASE_ERROR"), 503);
+  }
+  await writeAudit(ctx!.user, "VISITOR_GMAIL_OAUTH_DISCONNECTED", MODULE, "VisitorGmailOAuth", "1",
+    `Gmail authorization for ${VISITOR_GMAIL_SENDER} was revoked. Reason: ${reason}`, resolveClientIp(req).ip, "HIGH");
+  return jsonResponse(ok({ connected: false }, "Gmail authorization revoked"), 200);
+}
+
+type VisitorEmailType = "REGISTRATION_ACKNOWLEDGMENT" | "APPROVAL_PASS" | "DECLINE";
+type PassEmailResult = {
+  status: "ACCEPTED" | "FAILED" | "NOT_CONFIGURED";
+  providerId?: string;
+  provider?: "GMAIL" | "RESEND";
+  error?: string;
+};
+type ResendPayload = GmailMessagePayload;
+
+function visitorSiteUrl(): string {
+  return (envText("PORTAL_PUBLIC_URL") || envText("VISITOR_KIOSK_PUBLIC_URL")).replace(/\/+$/, "");
+}
+
+function visitorPassValidFrom(visitor: VisitorRow): Date | null {
+  const expected = new Date(visitor.expected_arrival ?? "");
+  const earlyMinutes = Number(envText("VISITOR_PASS_EARLY_MINUTES"));
+  if (Number.isNaN(expected.getTime()) || !Number.isFinite(earlyMinutes)) return null;
+  return new Date(expected.getTime() - earlyMinutes * 60_000);
+}
+
+function formatVisitorSchedule(value: string | Date | null | undefined): string {
+  const date = value instanceof Date ? value : new Date(value ?? "");
+  if (Number.isNaN(date.getTime())) return "See approved schedule";
+  return `${new Intl.DateTimeFormat("en-PH", {
+    timeZone: "Asia/Manila",
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date)} PHT`;
+}
+
+function brandedEmail(title: string, content: string, action?: { label: string; url: string }): string {
+  const button = action
+    ? `<p style="margin:28px 0"><a href="${htmlEscape(action.url)}" style="display:inline-block;background:#b91c1c;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:700">${htmlEscape(action.label)}</a></p>`
+    : "";
+  return `<div style="margin:0;background:#f8fafc;padding:24px;font-family:Arial,sans-serif;color:#172033"><div style="max-width:640px;margin:0 auto;overflow:hidden;border:1px solid #e2e8f0;border-radius:16px;background:#fff"><div style="background:#0f172a;padding:20px 24px;color:#fff"><div style="font-size:12px;font-weight:800;letter-spacing:.12em;color:#fca5a5">HIRNA TNVS</div><div style="margin-top:6px;font-size:22px;font-weight:800">${htmlEscape(title)}</div></div><div style="padding:24px;font-size:15px;line-height:1.65">${content}${button}<p style="margin-top:28px;padding-top:18px;border-top:1px solid #e2e8f0;color:#64748b;font-size:12px">This is an automated visitor workflow message. Do not forward status links or QR passes.</p></div></div></div>`;
+}
+
+function notificationKey(visitorId: string, type: VisitorEmailType): string {
+  return `visitor/${type.toLowerCase()}/${visitorId}`;
+}
+
+async function syncVisitorEmailResult(visitorId: string, result: PassEmailResult) {
+  const { error } = await db.from("visitors").update({
+    email_delivery_status: result.status,
+    email_provider_id: result.providerId ?? null,
+    email_delivery_error: result.error?.slice(0, 500) ?? null,
+    email_attempted_at: new Date().toISOString(),
+    updated_at: naiveIso(),
+  }).eq("id", visitorId);
+  if (error) throw new Error(`visitor email delivery status failed: ${error.message}`);
+}
+
+async function tryConnectedGmailDelivery(
+  visitor: VisitorRow,
+  payload: GmailMessagePayload,
+  idempotencyKey: string,
+): Promise<PassEmailResult | null> {
+  const gmail = await loadGmailConfiguration();
+  if (gmail.connection_status !== "CONNECTED" || !gmail.encrypted_refresh_token) return null;
+  if (!gmail.granted_scopes?.length || gmail.granted_scopes.some((scope) => scope !== GMAIL_SEND_SCOPE)) {
+    return { status: "FAILED", provider: "GMAIL", error: "The stored Gmail authorization is not send-only." };
+  }
+  try {
+    const secrets = gmailOAuthSecrets();
+    const refreshToken = await decryptGmailSecret(gmail.encrypted_refresh_token, "refresh-token", secrets.encryptionKey);
+    const providerId = await sendGmailMessage({
+      to: visitor.email!, payload, idempotencyKey, refreshToken, secrets,
+    });
+    return { status: "ACCEPTED", provider: "GMAIL", providerId };
+  } catch (error) {
+    const errorCode = error instanceof GmailOAuthError ? error.code : "GMAIL_DELIVERY_FAILED";
+    const permanentCredentialFailure = errorCode.includes("INVALID_GRANT")
+      || errorCode === "GMAIL_SECRET_UNAVAILABLE" || errorCode === "GMAIL_SCOPE_REJECTED";
+    if (permanentCredentialFailure) {
+      const at = new Date().toISOString();
+      await db.from("visitor_gmail_oauth_configuration").update({
+        connection_status: "ERROR", last_error_code: errorCode, last_error_at: at, updated_at: at,
+      }).eq("id", 1);
+    }
+    return {
+      status: errorCode === "GMAIL_OAUTH_NOT_CONFIGURED" ? "NOT_CONFIGURED" : "FAILED",
+      provider: "GMAIL",
+      error: error instanceof Error ? error.message : "Gmail delivery failed.",
+    };
+  }
+}
+
+async function sendTrackedVisitorEmail(
+  visitor: VisitorRow,
+  type: VisitorEmailType,
+  payload: ResendPayload,
+  preflightFailure?: PassEmailResult,
+): Promise<PassEmailResult> {
+  const idempotencyKey = notificationKey(visitor.id, type);
+  const { error: seedError } = await db.from("visitor_email_notifications").upsert({
+    visitor_id: visitor.id,
+    notification_type: type,
+    delivery_status: "NOT_REQUESTED",
+    idempotency_key: idempotencyKey,
+  }, { onConflict: "visitor_id,notification_type", ignoreDuplicates: true });
+  if (seedError) throw new Error(`visitor email ledger initialization failed: ${seedError.message}`);
+
+  const { data: existing, error: existingError } = await db.from("visitor_email_notifications")
+    .select("id, delivery_status, delivery_provider, provider_id, attempt_count").eq("visitor_id", visitor.id)
+    .eq("notification_type", type).single();
+  if (existingError) throw new Error(`visitor email ledger load failed: ${existingError.message}`);
+  if (existing.delivery_status === "ACCEPTED") {
+    const accepted = {
+      status: "ACCEPTED" as const,
+      provider: existing.delivery_provider ?? undefined,
+      providerId: existing.provider_id ?? undefined,
+    } as PassEmailResult;
+    await syncVisitorEmailResult(visitor.id, accepted);
+    return accepted;
+  }
+
+  const attemptedAt = new Date().toISOString();
+  const { error: pendingError } = await db.from("visitor_email_notifications").update({
+    delivery_status: "PENDING",
+    attempt_count: Number(existing.attempt_count ?? 0) + 1,
+    last_attempted_at: attemptedAt,
+    delivery_error: null,
+    updated_at: attemptedAt,
+  }).eq("id", existing.id).neq("delivery_status", "ACCEPTED");
+  if (pendingError) throw new Error(`visitor email attempt could not be recorded: ${pendingError.message}`);
+
+  let result: PassEmailResult;
+  const apiKey = envText("RESEND_API_KEY");
+  const from = envText("RESEND_FROM_EMAIL");
+  if (preflightFailure) {
+    result = preflightFailure;
+  } else {
+    const gmailResult = await tryConnectedGmailDelivery(visitor, payload, idempotencyKey);
+    if (gmailResult) {
+      // Never fail over after Gmail was selected: a timed-out provider request
+      // may already have accepted the message and fallback could duplicate it.
+      result = gmailResult;
+    } else if (!apiKey || !from) {
+      result = { status: "NOT_CONFIGURED", error: "Neither connected Gmail nor Resend sender credentials are configured." };
+    } else {
+      try {
+        const response = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+            "Idempotency-Key": idempotencyKey,
+          },
+          body: JSON.stringify({ from, to: [visitor.email], ...payload }),
+        });
+        const responseBody = await response.json().catch(() => ({})) as { id?: string; message?: string };
+        result = response.ok
+          ? { status: "ACCEPTED", provider: "RESEND", providerId: responseBody.id }
+          : { status: "FAILED", provider: "RESEND", error: responseBody.message || `Resend returned HTTP ${response.status}` };
+      } catch (error) {
+        result = { status: "FAILED", provider: "RESEND", error: error instanceof Error ? error.message : "Email provider request failed" };
+      }
+    }
+  }
+
+  const completedAt = new Date().toISOString();
+  const { error: ledgerError } = await db.from("visitor_email_notifications").update({
+    delivery_status: result.status,
+    delivery_provider: result.provider ?? null,
+    provider_id: result.providerId ?? null,
+    delivery_error: result.error?.slice(0, 500) ?? null,
+    accepted_at: result.status === "ACCEPTED" ? completedAt : null,
+    updated_at: completedAt,
+  }).eq("id", existing.id);
+  if (ledgerError) throw new Error(`visitor email ledger update failed: ${ledgerError.message}`);
+  await syncVisitorEmailResult(visitor.id, result);
+  return result;
+}
+
+async function sendRegistrationAcknowledgment(visitor: VisitorRow, statusToken: string): Promise<PassEmailResult> {
+  const publicUrl = visitorSiteUrl();
+  const statusUrl = publicUrl ? `${publicUrl}/visitor-status/${encodeURIComponent(statusToken)}` : "";
+  const reference = visitor.reference_number ?? "";
+  const subject = `HIRNA TNVS visitor request received — ${reference}`;
+  const text = [
+    `Your HIRNA TNVS visitor request ${reference} was received and remains PENDING.`,
+    "Identity review and visit approval are still required. This acknowledgment does not authorize entry.",
+    statusUrl ? `Check status securely: ${statusUrl}` : "",
+  ].filter(Boolean).join("\n");
+  const content = `<p>Your visitor request <strong>${htmlEscape(reference)}</strong> was received.</p><p style="padding:12px;border-radius:10px;background:#fef3c7;color:#78350f"><strong>Status: PENDING</strong></p><p>Identity review and visit approval are still required. This acknowledgment does not authorize entry and no QR credential is active.</p>`;
+  return await sendTrackedVisitorEmail(visitor, "REGISTRATION_ACKNOWLEDGMENT", {
+    subject,
+    text,
+    html: brandedEmail("Visitor request received", content, statusUrl ? { label: "Check request status", url: statusUrl } : undefined),
+  }, publicUrl ? undefined : { status: "NOT_CONFIGURED", error: "The public visitor application URL is not configured." });
+}
+
+async function sendDeclineEmail(visitor: VisitorRow): Promise<PassEmailResult> {
+  const publicUrl = visitorSiteUrl();
+  const statusToken = visitor.status_token_issued_at
+    ? await signedVisitorToken("vss_", "visitor-status", visitor.id, visitor.status_token_issued_at)
+    : "";
+  const statusUrl = publicUrl && statusToken ? `${publicUrl}/visitor-status/${encodeURIComponent(statusToken)}` : "";
+  const reference = visitor.reference_number ?? "";
+  const subject = `HIRNA TNVS visitor request update — ${reference}`;
+  const text = [
+    `Your HIRNA TNVS visitor request ${reference} is DECLINED.`,
+    "No visitor pass or entry credential has been issued.",
+    statusUrl ? `Check status securely: ${statusUrl}` : "",
+  ].filter(Boolean).join("\n");
+  const content = `<p>Your visitor request <strong>${htmlEscape(reference)}</strong> has been updated.</p><p style="padding:12px;border-radius:10px;background:#ffe4e6;color:#9f1239"><strong>Status: DECLINED</strong></p><p>No visitor pass or entry credential has been issued. Internal security and identity-review details are not included in this message.</p>`;
+  return await sendTrackedVisitorEmail(visitor, "DECLINE", {
+    subject,
+    text,
+    html: brandedEmail("Visitor request update", content, statusUrl ? { label: "View request status", url: statusUrl } : undefined),
+  }, publicUrl && statusToken ? undefined : { status: "NOT_CONFIGURED", error: "The secure visitor status URL could not be created." });
+}
+
+async function sendVisitorPassEmail(visitor: VisitorRow, token: string): Promise<PassEmailResult> {
+  const publicUrl = visitorSiteUrl();
+  if (!publicUrl) {
+    return await sendTrackedVisitorEmail(visitor, "APPROVAL_PASS", {
+      subject: "HIRNA TNVS visitor request approved",
+      text: "Your request was approved, but the visitor pass URL is not configured.",
+      html: brandedEmail("Visitor request approved", "<p>The visitor pass URL is not configured.</p>"),
+    }, { status: "NOT_CONFIGURED", error: "The public visitor application URL is not configured." });
+  }
+  const passUrl = `${publicUrl}/visitor-pass/${encodeURIComponent(token)}`;
+  let qrDataUrl: string;
+  try {
+    qrDataUrl = await QRCode.toDataURL(passUrl, { errorCorrectionLevel: "M", width: 480, margin: 2 });
+  } catch (error) {
+    return await sendTrackedVisitorEmail(visitor, "APPROVAL_PASS", {
+      subject: "HIRNA TNVS visitor request approved",
+      text: "Your request was approved, but QR generation failed.",
+      html: brandedEmail("Visitor request approved", "<p>The QR pass could not be generated.</p>"),
+    }, { status: "FAILED", error: error instanceof Error ? error.message : "QR generation failed" });
+  }
+  const qrBase64 = qrDataUrl.split(",", 2)[1] ?? "";
+  const host = hostOf(visitor);
+  const destination = host
+    ? `${host.first_name ?? ""} ${host.last_name ?? ""}`.trim()
+    : visitor.receiving_department ?? "Receiving department";
+  const subject = `HIRNA TNVS approved visitor pass — ${visitor.reference_number ?? ""}`.trim();
+  const validFrom = visitorPassValidFrom(visitor);
+  const expectedArrival = formatVisitorSchedule(visitor.expected_arrival);
+  const validFromText = formatVisitorSchedule(validFrom);
+  const expiresAt = formatVisitorSchedule(visitor.qr_expires_at);
+  const text = [
+    `Your Hirna TNVS visitor request ${visitor.reference_number ?? ""} is approved.`,
+    `Visit: ${visitor.purpose_of_visit}`,
+    `Destination: ${destination}`,
+    `Expected arrival: ${expectedArrival}`,
+    `Pass valid from: ${validFromText}`,
+    `Pass valid until: ${expiresAt}`,
+    "The pass page can be opened before entry begins, but check-in remains unavailable until the valid-from time.",
+    "Present the attached QR pass to authorized security staff. Approval does not waive on-site security checks.",
+  ].join("\n");
+  const content = `<p>Your request <strong>${htmlEscape(visitor.reference_number ?? "")}</strong> is approved.</p><p style="padding:12px;border-radius:10px;background:#d1fae5;color:#065f46"><strong>Status: APPROVED</strong></p><p><strong>Visit:</strong> ${htmlEscape(visitor.purpose_of_visit ?? "")}</p><p><strong>Destination:</strong> ${htmlEscape(destination)}</p><p><strong>Expected arrival:</strong> ${htmlEscape(expectedArrival)}</p><p><strong>Valid from:</strong> ${htmlEscape(validFromText)}</p><p><strong>Valid until:</strong> ${htmlEscape(expiresAt)}</p><p>You may view the approved pass details before entry begins, but check-in remains unavailable until the valid-from time.</p><p>The QR pass is attached. Present it to authorized security staff. Approval does not waive on-site security checks.</p>`;
+  return await sendTrackedVisitorEmail(visitor, "APPROVAL_PASS", {
+    subject,
+    text,
+    html: brandedEmail("Visitor pass approved", content, { label: "View visitor pass details", url: passUrl }),
+    attachments: [{ filename: `${visitor.reference_number ?? "visitor-pass"}.png`, content: qrBase64 }],
+  });
+}
+
+async function issueAndEmailVisitorPass(visitor: VisitorRow, actorEmail: string): Promise<VisitorRow> {
+  const ttlHours = Number(envText("VISITOR_PASS_TTL_HOURS"));
+  const earlyMinutes = Number(envText("VISITOR_PASS_EARLY_MINUTES"));
+  if (!Number.isFinite(ttlHours) || ttlHours <= 0 || ttlHours > 168 || !Number.isFinite(earlyMinutes) || earlyMinutes < 0 || earlyMinutes > 1440) {
+    throw new Error("VISITOR_PASS_POLICY_NOT_CONFIGURED");
+  }
+  const arrival = new Date(visitor.expected_arrival ?? "");
+  if (Number.isNaN(arrival.getTime())) throw new Error("VISITOR_EXPECTED_ARRIVAL_INVALID");
+  const expiresAt = new Date(arrival.getTime() + ttlHours * 60 * 60_000);
+  if (expiresAt.getTime() <= Date.now()) throw new Error("VISITOR_PASS_WINDOW_EXPIRED");
+  let issuedAt = visitor.qr_issued_at ?? new Date().toISOString();
+  let token = await signedVisitorToken("vst_", "visitor-pass", visitor.id, issuedAt);
+  let tokenHash = await sha256(token);
+  let issued = visitor;
+  if (!visitor.qr_token_hash) {
+    const { data, error: issueError } = await db.from("visitors").update({
+      qr_token_hash: tokenHash,
+      qr_code_token: null,
+      qr_issued_at: issuedAt,
+      qr_expires_at: expiresAt.toISOString(),
+      qr_revoked_at: null,
+      access_status: "AUTHORIZED",
+      email_delivery_status: "PENDING",
+      email_provider_id: null,
+      email_delivery_error: null,
+      email_attempted_at: issuedAt,
+      updated_by: actorEmail,
+      updated_at: naiveIso(),
+    }).eq("id", visitor.id).select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)").single();
+    if (issueError) throw new Error(`visitor pass issue failed: ${issueError.message}`);
+    issued = data as unknown as VisitorRow;
+  } else if (visitor.qr_revoked_at || !visitor.qr_expires_at || new Date(visitor.qr_expires_at).getTime() <= Date.now()) {
+    throw new Error("VISITOR_PASS_NOT_RETRYABLE");
+  } else if (visitor.qr_token_hash !== tokenHash) {
+    // Backward-compatible recovery for credentials issued before deterministic
+    // server-side reconstruction was introduced. The old hash is replaced, so
+    // only one pass can remain active.
+    issuedAt = new Date().toISOString();
+    token = await signedVisitorToken("vst_", "visitor-pass", visitor.id, issuedAt);
+    tokenHash = await sha256(token);
+    const { data, error: replacementError } = await db.from("visitors").update({
+      qr_token_hash: tokenHash,
+      qr_issued_at: issuedAt,
+      qr_revoked_at: null,
+      email_delivery_status: "PENDING",
+      email_provider_id: null,
+      email_delivery_error: null,
+      email_attempted_at: issuedAt,
+      updated_by: actorEmail,
+      updated_at: naiveIso(),
+    }).eq("id", visitor.id).eq("qr_token_hash", visitor.qr_token_hash)
+      .select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)").single();
+    if (replacementError) throw new Error(`legacy visitor pass replacement failed: ${replacementError.message}`);
+    issued = data as unknown as VisitorRow;
+  }
+  await sendVisitorPassEmail(issued as unknown as VisitorRow, token);
+  const { data: saved, error: deliveryError } = await db.from("visitors")
+    .select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)")
+    .eq("id", visitor.id).single();
+  if (deliveryError) throw new Error(`visitor pass delivery reload failed: ${deliveryError.message}`);
+  return saved as unknown as VisitorRow;
+}
+
+async function approveAndIssueVisitorPass(
+  visitor: VisitorRow,
+  actor: AuthContext,
+  reason: string,
+  requestId?: string,
+): Promise<VisitorRow | null> {
+  // Validate the approved pass policy and visit window before committing the
+  // final approval. Approval and the active credential must become visible as
+  // one state transition; email delivery is tracked separately afterward.
+  const ttlHours = Number(envText("VISITOR_PASS_TTL_HOURS"));
+  const earlyMinutes = Number(envText("VISITOR_PASS_EARLY_MINUTES"));
+  if (!Number.isFinite(ttlHours) || ttlHours <= 0 || ttlHours > 168 || !Number.isFinite(earlyMinutes) || earlyMinutes < 0 || earlyMinutes > 1440) {
+    throw new Error("VISITOR_PASS_POLICY_NOT_CONFIGURED");
+  }
+  const arrival = new Date(visitor.expected_arrival ?? "");
+  if (Number.isNaN(arrival.getTime())) throw new Error("VISITOR_EXPECTED_ARRIVAL_INVALID");
+  const expiresAt = new Date(arrival.getTime() + ttlHours * 60 * 60_000);
+  if (expiresAt.getTime() <= Date.now()) throw new Error("VISITOR_PASS_WINDOW_EXPIRED");
+
+  const issuedAt = new Date().toISOString();
+  const token = await signedVisitorToken("vst_", "visitor-pass", visitor.id, issuedAt);
+  const tokenHash = await sha256(token);
+  const { data, error } = await db.from("visitors").update({
+    approval_status: "APPROVED",
+    approved_by: actor.userId,
+    approved_at: issuedAt,
+    approval_reason: reason || null,
+    qr_token_hash: tokenHash,
+    qr_code_token: null,
+    qr_issued_at: issuedAt,
+    qr_expires_at: expiresAt.toISOString(),
+    qr_revoked_at: null,
+    access_status: "AUTHORIZED",
+    email_delivery_status: "PENDING",
+    email_provider_id: null,
+    email_delivery_error: null,
+    email_attempted_at: issuedAt,
+    updated_by: actor.email,
+    updated_at: naiveIso(),
+  }).eq("id", visitor.id).eq("approval_status", "PENDING")
+    .select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)").maybeSingle();
+  if (error) throw new Error(`visitor approval and pass issue failed: ${error.message}`);
+  if (!data) return null;
+
+  const issued = data as unknown as VisitorRow;
+  try {
+    await sendVisitorPassEmail(issued, token);
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: "visitor_pass_email_failed",
+      requestId: requestId ?? null,
+      category: error instanceof Error && /^[A-Z][A-Z0-9_]+$/.test(error.message)
+        ? error.message
+        : "VISITOR_PASS_EMAIL_INTERNAL_ERROR",
+    }));
+    await db.from("visitors").update({
+      email_delivery_status: "FAILED",
+      email_provider_id: null,
+      email_delivery_error: "VISITOR_PASS_EMAIL_INTERNAL_ERROR",
+      email_attempted_at: new Date().toISOString(),
+      updated_at: naiveIso(),
+    }).eq("id", visitor.id);
+  }
+
+  const saved = await loadVisitor(visitor.id);
+  if (!saved) throw new Error("VISITOR_PASS_DELIVERY_RELOAD_FAILED");
+  return saved;
+}
+
+async function handleApprovalDecision(ctx: AuthContext | null, req: Request, body: unknown, p: RouteParams) {
+  const visitor = await loadVisitor(p.id);
+  if (!visitor || visitor.registration_source !== "KIOSK") return emptyNotFound();
+  const b = (body ?? {}) as Record<string, unknown>;
+  const decision = String(b.decision ?? "").trim().toUpperCase();
+  const reason = String(b.reason ?? "").trim();
+  if (!['APPROVE', 'DECLINE'].includes(decision)) return badRequest("Decision must be APPROVE or DECLINE.", "VALIDATION_ERROR");
+  if (visitor.approval_status !== "PENDING") return jsonResponse(fail("This request already has a final approval decision.", "VISITOR_APPROVAL_ALREADY_DECIDED"), 409);
+  if (decision === "DECLINE") {
+    if (reason.length < 5 || reason.length > 1000) return badRequest("A decline reason of 5–1000 characters is required.", "DECLINE_REASON_REQUIRED");
+    const now = new Date().toISOString();
+    const { data, error } = await db.from("visitors").update({
+      approval_status: "DECLINED",
+      declined_by: ctx!.userId,
+      declined_at: now,
+      approval_reason: reason,
+      access_status: "REVOKED",
+      qr_revoked_at: now,
+      email_delivery_status: "PENDING",
+      updated_by: ctx!.email,
+      updated_at: naiveIso(),
+    }).eq("id", visitor.id).eq("approval_status", "PENDING")
+      .select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)").maybeSingle();
+    if (error) throw new Error(`visitor decline failed: ${error.message}`);
+    if (!data) return jsonResponse(fail("This request was already decided.", "VISITOR_APPROVAL_ALREADY_DECIDED"), 409);
+    const delivery = await sendDeclineEmail(data as unknown as VisitorRow);
+    const delivered = await loadVisitor(visitor.id);
+    if (!delivered) return emptyNotFound();
+    await writeAudit(ctx!.user, "DECLINE_KIOSK_VISITOR", MODULE, "Visitor", visitor.id,
+      `Visitor request ${visitor.reference_number ?? visitor.id} declined; notification status ${delivery.status}.`, resolveClientIp(req).ip, "INFO");
+    return jsonResponse(ok(toVisitorDto(delivered), delivery.status === "ACCEPTED"
+      ? "Visitor request declined and notification accepted by the email provider"
+      : "Visitor request declined; notification delivery requires staff attention"), 200);
+  }
+
+  if (!['VERIFIED', 'MANUAL_REVIEW_APPROVED'].includes(visitor.identity_verification_status ?? "")) {
+    return jsonResponse(fail("Identity verification or an authorized manual identity review must be completed before approval.", "VISITOR_IDENTITY_REVIEW_REQUIRED"), 409);
+  }
+  let delivered: VisitorRow;
+  try {
+    const approved = await approveAndIssueVisitorPass(visitor, ctx!, reason, req.headers.get("X-Request-ID") ?? undefined);
+    if (!approved) return jsonResponse(fail("This request was already decided.", "VISITOR_APPROVAL_ALREADY_DECIDED"), 409);
+    delivered = approved;
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "VISITOR_PASS_ISSUE_FAILED";
+    if (code === "VISITOR_PASS_POLICY_NOT_CONFIGURED") {
+      console.error(JSON.stringify({ event: "visitor_approval_unavailable", requestId: req.headers.get("X-Request-ID"), category: code }));
+      return jsonResponse(fail("Pass issuance is temporarily unavailable because the approved pass-validity policy is not configured. The visit remains pending and no credential was issued.", code), 503);
+    }
+    if (code === "VISITOR_PASS_WINDOW_EXPIRED" || code === "VISITOR_EXPECTED_ARRIVAL_INVALID") {
+      return jsonResponse(fail("The visit cannot be approved because its pass-validity window is invalid or has elapsed. Update the visit schedule before approving it.", code), 409);
+    }
+    throw error;
+  }
+  await writeAudit(ctx!.user, "APPROVE_KIOSK_VISITOR", MODULE, "Visitor", visitor.id,
+    `Visitor request ${visitor.reference_number ?? visitor.id} approved; pass email status ${delivered.email_delivery_status}.`, resolveClientIp(req).ip, "INFO");
+  return jsonResponse(ok(toVisitorDto(delivered), delivered.email_delivery_status === "ACCEPTED"
+    ? "Visitor approved and pass accepted by the email provider"
+    : "Visitor approved; pass delivery requires staff attention"), 200);
+}
+
+async function handleRetryPassEmail(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
+  const visitor = await loadVisitor(p.id);
+  if (!visitor || visitor.registration_source !== "KIOSK") return emptyNotFound();
+  if (visitor.email_delivery_status === "ACCEPTED") return jsonResponse(fail("The provider already accepted this visitor notification. A retry was not sent.", "VISITOR_EMAIL_ALREADY_ACCEPTED"), 409);
+  if (!['FAILED', 'NOT_CONFIGURED'].includes(visitor.email_delivery_status ?? "")) {
+    return jsonResponse(fail("This visitor email is not eligible for retry.", "VISITOR_EMAIL_NOT_RETRYABLE"), 409);
+  }
+
+  let result: PassEmailResult;
+  if (visitor.approval_status === "APPROVED") {
+    if (!['VERIFIED', 'MANUAL_REVIEW_APPROVED'].includes(visitor.identity_verification_status ?? "")) {
+      return jsonResponse(fail("Only an approved, identity-cleared visit can receive a pass.", "VISITOR_NOT_CLEARED"), 409);
+    }
+    const saved = await issueAndEmailVisitorPass(visitor, ctx!.email);
+    result = { status: saved.email_delivery_status as PassEmailResult["status"], providerId: saved.email_provider_id ?? undefined, error: saved.email_delivery_error ?? undefined };
+  } else if (visitor.approval_status === "DECLINED") {
+    result = await sendDeclineEmail(visitor);
+  } else if (visitor.approval_status === "PENDING" && visitor.status_token_issued_at) {
+    const statusToken = await signedVisitorToken("vss_", "visitor-status", visitor.id, visitor.status_token_issued_at);
+    result = await sendRegistrationAcknowledgment(visitor, statusToken);
+  } else {
+    return jsonResponse(fail("This visitor request has no retryable notification.", "VISITOR_EMAIL_NOT_RETRYABLE"), 409);
+  }
+  const saved = await loadVisitor(visitor.id);
+  if (!saved) return emptyNotFound();
+  await writeAudit(ctx!.user, "RETRY_VISITOR_EMAIL", MODULE, "Visitor", visitor.id,
+    `Visitor ${visitor.approval_status?.toLowerCase()} notification retried; provider status ${result.status}.`, resolveClientIp(req).ip, "INFO");
+  return jsonResponse(ok(toVisitorDto(saved), result.status === "ACCEPTED"
+    ? "Visitor notification accepted by the email provider"
+    : "Visitor notification delivery was not accepted"), 200);
+}
+
+async function visitorByPassToken(token: string): Promise<VisitorRow | null> {
+  if (!/^vst_[A-Za-z0-9_-]{40,60}$/.test(token)) return null;
+  const tokenHash = await sha256(token);
+  const { data, error } = await db.from("visitors")
+    .select("*, users(id, first_name, last_name, email, employee_id, department, position, avatar_url, phone_number, status)")
+    .eq("qr_token_hash", tokenHash).eq("registration_source", "KIOSK").eq("is_deleted", false).maybeSingle();
+  if (error) throw new Error(`visitor pass lookup failed: ${error.message}`);
+  return data as unknown as VisitorRow | null;
+}
+
+async function visitorByStatusToken(token: string): Promise<VisitorRow | null> {
+  if (!/^vss_[A-Za-z0-9_-]{40,60}$/.test(token)) return null;
+  const tokenHash = await sha256(token);
+  const { data, error } = await db.from("visitors")
+    .select("id, reference_number, registration_source, approval_status, access_status, qr_expires_at, qr_revoked_at, status_token_expires_at, updated_at, is_deleted")
+    .eq("status_token_hash", tokenHash).eq("registration_source", "KIOSK").eq("is_deleted", false).maybeSingle();
+  if (error) throw new Error(`visitor status lookup failed: ${error.message}`);
+  return data as unknown as VisitorRow | null;
+}
+
+async function handleInspectVisitorStatus(_ctx: AuthContext | null, _req: Request, body: unknown) {
+  const token = String((body as Record<string, unknown> | null)?.token ?? "").trim();
+  const visitor = await visitorByStatusToken(token);
+  if (!visitor) return jsonResponse(fail("This visitor status link is invalid.", "VISITOR_STATUS_INVALID"), 404);
+  if (!visitor.status_token_expires_at || new Date(visitor.status_token_expires_at).getTime() <= Date.now()) {
+    return jsonResponse(fail("This visitor status link has expired.", "VISITOR_STATUS_EXPIRED"), 410);
+  }
+  const passExpired = Boolean(visitor.qr_expires_at && new Date(visitor.qr_expires_at).getTime() <= Date.now());
+  const status = visitor.approval_status === "DECLINED"
+    ? "DECLINED"
+    : visitor.approval_status !== "APPROVED"
+      ? "PENDING_REVIEW"
+      : visitor.qr_revoked_at || visitor.access_status === "REVOKED"
+        ? "PASS_REVOKED"
+        : passExpired
+          ? "PASS_EXPIRED"
+          : visitor.access_status === "AUTHORIZED" && visitor.qr_expires_at
+            ? "APPROVED"
+            : "TEMPORARILY_UNAVAILABLE";
+  const message = status === "APPROVED"
+    ? "Your visit is approved. Use only the QR pass delivered to your registered email address."
+    : status === "DECLINED"
+      ? "Your visitor request was declined. No entry credential was issued."
+      : status === "PASS_EXPIRED"
+        ? "Your approved visitor pass has expired. Contact reception if your visit needs to be rescheduled."
+        : status === "PASS_REVOKED"
+          ? "Your visitor pass is no longer active. Contact reception if you need assistance."
+          : status === "TEMPORARILY_UNAVAILABLE"
+            ? "Your request has been reviewed, but an active visitor pass is not currently available. Contact reception for assistance."
+            : "Your visitor request remains pending identity review and visit approval. No entry credential is active.";
+  return jsonResponse(ok({
+    referenceNumber: visitor.reference_number,
+    status,
+    message,
+    updatedAt: visitor.updated_at,
+  }, "Visitor request status retrieved"), 200);
+}
+
+function validateVisitorPass(visitor: VisitorRow): { code: string; message: string } | null {
+  if (visitor.approval_status !== "APPROVED") return { code: "VISITOR_NOT_APPROVED", message: "This visitor request is not approved." };
+  if (!['VERIFIED', 'MANUAL_REVIEW_APPROVED'].includes(visitor.identity_verification_status ?? "")) return { code: "VISITOR_IDENTITY_NOT_CLEARED", message: "Identity clearance is incomplete." };
+  if (visitor.access_status !== "AUTHORIZED" || visitor.qr_revoked_at) return { code: "VISITOR_PASS_REVOKED", message: "This visitor pass is not active." };
+  if (!visitor.qr_expires_at || new Date(visitor.qr_expires_at).getTime() <= Date.now()) return { code: "VISITOR_PASS_EXPIRED", message: "This visitor pass has expired." };
+  const earlyMinutes = Number(envText("VISITOR_PASS_EARLY_MINUTES"));
+  const expected = new Date(visitor.expected_arrival ?? "").getTime();
+  if (Number.isFinite(earlyMinutes) && Number.isFinite(expected) && Date.now() < expected - earlyMinutes * 60_000) {
+    return { code: "VISITOR_PASS_TOO_EARLY", message: "This visitor pass is not valid yet." };
+  }
+  return null;
+}
+
+async function handleInspectVisitorPass(_ctx: AuthContext | null, _req: Request, body: unknown) {
+  const token = String((body as Record<string, unknown> | null)?.token ?? "").trim();
+  const visitor = await visitorByPassToken(token);
+  if (!visitor) return jsonResponse(fail("This visitor pass is invalid.", "VISITOR_PASS_INVALID"), 404);
+  const invalid = validateVisitorPass(visitor);
+  const host = hostOf(visitor);
+  const validFrom = visitorPassValidFrom(visitor);
+  if (invalid && invalid.code !== "VISITOR_PASS_TOO_EARLY") {
+    return jsonResponse(fail(invalid.message, invalid.code), 409);
+  }
+  const pass = {
+    referenceNumber: visitor.reference_number,
+    visitorName: visitor.full_name.split(/\s+/)[0],
+    purpose: visitor.purpose_category,
+    destination: host ? `${host.first_name ?? ""} ${host.last_name ?? ""}`.trim() : visitor.receiving_department,
+    expectedArrival: visitor.expected_arrival,
+    validFrom: validFrom?.toISOString() ?? visitor.expected_arrival,
+    expiresAt: visitor.qr_expires_at,
+    status: invalid?.code === "VISITOR_PASS_TOO_EARLY" ? "NOT_YET_VALID" : "ACTIVE",
+    active: !invalid,
+  };
+  return jsonResponse(ok(pass, invalid
+    ? "Visitor pass is approved and scheduled, but entry is not active yet"
+    : "Visitor pass is active"), 200);
+}
+
+async function handleVisitorPassScan(ctx: AuthContext | null, req: Request, body: unknown, checkOut: boolean) {
+  const token = String((body as Record<string, unknown> | null)?.token ?? "").trim();
+  const visitor = await visitorByPassToken(token);
+  if (!visitor) return jsonResponse(fail("This visitor pass is invalid.", "VISITOR_PASS_INVALID"), 404);
+  const invalid = validateVisitorPass(visitor);
+  if (invalid) return jsonResponse(fail(invalid.message, invalid.code), 409);
+  if (!checkOut && visitor.status !== "REGISTERED") {
+    return jsonResponse(fail(visitor.status === "CHECKED_IN" ? "This pass has already been checked in." : "This pass cannot be checked in again.", "VISITOR_PASS_ALREADY_USED"), 409);
+  }
+  if (checkOut && visitor.status !== "CHECKED_IN") return jsonResponse(fail("This visitor is not currently checked in.", "VISITOR_NOT_CHECKED_IN"), 409);
+  const response = checkOut
+    ? await handleCheckOut(ctx, req, body, { id: visitor.id })
+    : await handleCheckIn(ctx, req, body, { id: visitor.id });
+  return response;
+}
+
 async function handleListVisitors(ctx: AuthContext | null) {
   const { data, error } = await db
     .from("visitors")
@@ -309,7 +1866,7 @@ async function handleRegister(ctx: AuthContext | null, req: Request, body: unkno
     purpose_of_visit: purpose,
     expected_arrival: toUtcIso(expectedArrival),
     status: "REGISTERED",
-    qr_code_token: "QR-" + crypto.randomUUID().substring(0, 8).toUpperCase(),
+    qr_code_token: null,
     badge_number: typeof b.badgeNumber === "string" ? b.badgeNumber : null,
     created_by: ctx!.email,
     updated_at: naiveIso(),
@@ -322,7 +1879,7 @@ async function handleRegister(ctx: AuthContext | null, req: Request, body: unkno
     (saved as { id: string }).id, "Visitor registration created for an active host.",
     resolveClientIp(req).ip, "INFO");
 
-  return jsonResponse(ok(toVisitorDto(saved as unknown as VisitorRow), "Visitor registered and pass generated"), 200);
+  return jsonResponse(ok(toVisitorDto(saved as unknown as VisitorRow), "Visitor registered; no entry pass has been issued"), 200);
 }
 
 async function handleCheckIn(ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
@@ -603,13 +2160,28 @@ function parseIdType(raw: unknown): string | null {
 
 const VISITOR_VIEW_ROLES = ["FACILITIES_OFFICER", "FACILITIES_MANAGER"];
 const VISITOR_OPERATIONS_ROLES = ["FACILITIES_OFFICER"];
+const DIRECT_SUPER_ADMIN = { kind: "assignedRoles", roles: ["SUPER_ADMIN"] } as const;
 
 const routes = [
+  { method: "GET", path: "/admin/gmail-oauth/callback", guard: { kind: "public" }, handler: handleGmailOAuthCallback },
+  { method: "GET", path: "/admin/gmail-oauth/status", guard: DIRECT_SUPER_ADMIN, handler: handleGmailOAuthStatus },
+  { method: "POST", path: "/admin/gmail-oauth/authorize", guard: DIRECT_SUPER_ADMIN, handler: handleGmailOAuthAuthorize },
+  { method: "POST", path: "/admin/gmail-oauth/disconnect", guard: DIRECT_SUPER_ADMIN, handler: handleGmailOAuthDisconnect },
+  { method: "GET", path: "/visitor-kiosk/config", guard: { kind: "public" }, handler: handleKioskConfig },
+  { method: "POST", path: "/visitor-kiosk/register", guard: { kind: "public" }, handler: handleKioskRegister },
+  { method: "POST", path: "/visitor-pass/inspect", guard: { kind: "public" }, handler: handleInspectVisitorPass },
+  { method: "POST", path: "/visitor-status/inspect", guard: { kind: "public" }, handler: handleInspectVisitorStatus },
+  { method: "POST", path: "/visitor-passes/check-in", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: (ctx: AuthContext | null, req: Request, body: unknown) => handleVisitorPassScan(ctx, req, body, false) },
+  { method: "POST", path: "/visitor-passes/check-out", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: (ctx: AuthContext | null, req: Request, body: unknown) => handleVisitorPassScan(ctx, req, body, true) },
   // Backward compatibility for clients that previously collapsed /visitors
   // to the deployed singular function path /visitor.
   { method: "GET", path: "/visitor", guard: { kind: "roles", roles: VISITOR_VIEW_ROLES }, handler: handleListVisitors },
   { method: "GET", path: "/visitors", guard: { kind: "roles", roles: VISITOR_VIEW_ROLES }, handler: handleListVisitors },
   { method: "POST", path: "/visitors/register", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleRegister },
+  { method: "GET", path: "/visitors/:id/identity-artifacts", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleIdentityArtifacts },
+  { method: "POST", path: "/visitors/:id/manual-identity-review", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleManualIdentityReview },
+  { method: "POST", path: "/visitors/:id/approval", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleApprovalDecision },
+  { method: "POST", path: "/visitors/:id/email-retry", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleRetryPassEmail },
   { method: "POST", path: "/visitors/:id/check-in", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleCheckIn },
   { method: "POST", path: "/visitors/:id/check-out", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleCheckOut },
   { method: "POST", path: "/visitors/:id/verify", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: handleVerify },

@@ -3,8 +3,9 @@ import {
   AlertCircle, RefreshCw, FileText, Bell, Eye,
   ShieldCheck, ShieldAlert, Plus, Loader2,
   ScanLine, XCircle, Camera, UserCheck, CheckCircle2, MapPin, Clock3,
+  Volume2, VolumeX,
 } from 'lucide-react';
-import { safeFetchJson, extractErrorMessage } from '../../api/client';
+import { safeFetchJson } from '../../api/client';
 import { facilitiesService } from '../../api/facilitiesService';
 import { notificationService, type AppNotification } from '../../api/notificationService';
 import { DocumentUploadPanel } from '../documents/DocumentUploadPanel';
@@ -21,6 +22,12 @@ import { DashboardHero } from '../ui/DashboardPrimitives';
 import {
   cameraFailureMessage, cameraRecoverySteps, listVideoDevices, queryCameraPermission,
 } from './qrCamera';
+import { KioskVisitorReviewModal } from './KioskVisitorReviewModal';
+import { QrScannerResultModal } from './QrScannerResultModal';
+import {
+  failedQrFeedback, missingTokenFeedback, successfulQrFeedback, type QrResultFeedback,
+} from './qrScannerFeedback';
+import { useQrVoiceGuidance } from './useQrVoiceGuidance';
 
 const LoadingSkeleton: React.FC = () => (
   <div className="space-y-4">
@@ -77,7 +84,9 @@ const VisitorVerificationSection: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      setRows(await visitorService.listVisitors());
+      // Kiosk requests use the explicit manual-review + approval workflow
+      // below. They must never enter the legacy verify-and-immediate-check-in path.
+      setRows((await visitorService.listVisitors()).filter((row) => row.registrationSource !== 'KIOSK'));
     } catch (err: any) {
       setError(err?.message || 'Failed to load visitors');
     } finally {
@@ -457,6 +466,18 @@ const VisitorWatchlistSection: React.FC = () => {
   );
 };
 
+const KioskRequestReview: React.FC<{ visitors: any[]; onChanged: () => Promise<void> }> = ({ visitors, onChanged }) => {
+  const kioskVisitors = visitors.filter((visitor) => visitor.registrationSource === 'KIOSK');
+  const [selected, setSelected] = useState<any | null>(null);
+
+  return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-black text-slate-900">Self-service kiosk approval queue</h3><p className="mt-1 text-xs text-slate-500">Identity review, visit approval, pass issuance, and provider-confirmed email status remain separate.</p></div><span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">{kioskVisitors.filter((visitor) => visitor.approvalStatus === 'PENDING').length} pending</span></div>
+    {kioskVisitors.length === 0 ? <p className="mt-5 rounded-xl bg-slate-50 p-5 text-center text-xs text-slate-500">No kiosk requests have been submitted.</p> : <div className="mt-4 overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b border-slate-100 text-left"><th className="p-2 text-[10px] uppercase text-slate-500">Reference / visitor</th><th className="p-2 text-[10px] uppercase text-slate-500">Purpose / destination</th><th className="p-2 text-[10px] uppercase text-slate-500">Identity</th><th className="p-2 text-[10px] uppercase text-slate-500">Approval</th><th className="p-2 text-[10px] uppercase text-slate-500">QR / email</th><th className="p-2 text-[10px] uppercase text-slate-500">Action</th></tr></thead><tbody>{kioskVisitors.map((visitor) => <tr key={visitor.id} className="border-b border-slate-50 align-top"><td className="p-2"><p className="font-mono text-[11px] font-bold text-red-700">{visitor.referenceNumber}</p><p className="mt-1 font-semibold">{visitor.fullName}</p><p className="text-xs text-slate-500">{visitor.email}</p></td><td className="p-2 text-xs text-slate-600"><p>{visitor.purposeOfVisit}</p><p className="mt-1 font-semibold">{visitor.host?.fullName || visitor.receivingDepartment}</p></td><td className="p-2"><span className="rounded-full bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700">{String(visitor.identityVerificationStatus || 'PENDING').replace(/_/g, ' ')}</span></td><td className="p-2"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${visitor.approvalStatus === 'APPROVED' ? 'bg-emerald-50 text-emerald-700' : visitor.approvalStatus === 'DECLINED' ? 'bg-rose-50 text-rose-700' : 'bg-blue-50 text-blue-700'}`}>{visitor.approvalStatus}</span></td><td className="p-2 text-xs"><p>{visitor.accessStatus}</p><p className="mt-1 text-slate-500">Email: {visitor.emailDeliveryStatus}</p></td><td className="p-2"><button type="button" onClick={() => setSelected(visitor)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"><Eye className="h-3.5 w-3.5" />Review</button></td></tr>)}</tbody></table></div>}
+
+    {selected && <KioskVisitorReviewModal visitor={selected} onClose={() => setSelected(null)} onChanged={onChanged} />}
+  </section>;
+};
+
 export const FoVisitorManagementPage: React.FC = () => {
   const [visitors, setVisitors] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -509,6 +530,8 @@ export const FoVisitorManagementPage: React.FC = () => {
         <Eye className="w-4 h-4 text-amber-500" />
         <span>Server-validated clearance, entry, departure, and visitor audit workflow</span>
       </div>
+
+      <KioskRequestReview visitors={visitors} onChanged={load} />
 
       {visitors.length === 0 ? (
         <EmptyState icon={Eye} title="No Visitors" desc="No facility-linked visitors found." />
@@ -720,22 +743,28 @@ type QrCheckInResult = {
   startTime: string;
   status: string;
   facilityName: string;
+  credentialType?: 'RESERVATION' | 'VISITOR';
 };
 
 type QrScanRecord = QrCheckInResult & { scannedAt: string };
+type QrScannerPhase = 'PAUSED' | 'INITIALIZING' | 'READY' | 'SCANNING' | 'VERIFYING' | 'RESULT';
 
-function qrTokenFromValue(rawValue: string): string {
+function qrCredentialFromValue(rawValue: string): { token: string; kind: 'RESERVATION' | 'VISITOR' } {
   const value = rawValue.trim();
-  if (!value) return '';
+  if (!value) return { token: '', kind: 'RESERVATION' };
   try {
     const url = new URL(value);
     const queryToken = url.searchParams.get('token')?.trim();
-    if (queryToken) return queryToken;
+    if (queryToken) return { token: queryToken, kind: queryToken.startsWith('vst_') ? 'VISITOR' : 'RESERVATION' };
     const segments = url.pathname.split('/').filter(Boolean);
+    const visitorPassIndex = segments.findIndex((segment) => segment.toLowerCase() === 'visitor-pass');
+    if (visitorPassIndex >= 0) return { token: decodeURIComponent(segments[visitorPassIndex + 1] ?? '').trim(), kind: 'VISITOR' };
     const guestPassIndex = segments.findIndex((segment) => segment.toLowerCase() === 'guest-pass');
-    return guestPassIndex >= 0 ? decodeURIComponent(segments[guestPassIndex + 1] ?? '').trim() : value;
+    return guestPassIndex >= 0
+      ? { token: decodeURIComponent(segments[guestPassIndex + 1] ?? '').trim(), kind: 'RESERVATION' }
+      : { token: value, kind: value.startsWith('vst_') ? 'VISITOR' : 'RESERVATION' };
   } catch {
-    return value;
+    return { token: value, kind: value.startsWith('vst_') ? 'VISITOR' : 'RESERVATION' };
   }
 }
 
@@ -751,7 +780,9 @@ export const QrCheckInPage: React.FC = () => {
   const cameraSessionRef = React.useRef(0);
   const resumeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const scanLockRef = React.useRef(false);
-  const lastCameraScanRef = React.useRef<{ token: string; scannedAt: number } | null>(null);
+  const suppressedCameraTokenRef = React.useRef<string | null>(null);
+  const lastQrSeenAtRef = React.useRef(0);
+  const outcomeOpenRef = React.useRef(false);
   const cameraScanHandlerRef = React.useRef<(value: string) => void>(() => undefined);
   const manualTokenRef = React.useRef<HTMLInputElement>(null);
   const [cameraActive, setCameraActive] = useState(false);
@@ -761,10 +792,12 @@ export const QrCheckInPage: React.FC = () => {
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [manualToken, setManualToken] = useState('');
   const [processing, setProcessing] = useState(false);
-  const [error, setError] = useState('');
   const [result, setResult] = useState<QrCheckInResult | null>(null);
+  const [resultFeedback, setResultFeedback] = useState<QrResultFeedback | null>(null);
+  const [scannerPhase, setScannerPhase] = useState<QrScannerPhase>('PAUSED');
   const [history, setHistory] = useState<QrScanRecord[]>([]);
   const [scanMode, setScanMode] = useState<'CHECK_IN' | 'CHECK_OUT'>('CHECK_IN');
+  const voice = useQrVoiceGuidance();
 
   const stopDecoder = useCallback(() => {
     if (resumeTimerRef.current) {
@@ -786,8 +819,10 @@ export const QrCheckInPage: React.FC = () => {
     }
     setCameraActive(false);
     setCameraStarting(false);
+    setScannerPhase('PAUSED');
     scanLockRef.current = false;
-  }, [stopDecoder]);
+    voice.cancel();
+  }, [stopDecoder, voice.cancel]);
 
   const startDecoder = useCallback(async (stream: MediaStream, session: number) => {
     const video = videoRef.current;
@@ -799,7 +834,12 @@ export const QrCheckInPage: React.FC = () => {
     });
     reader.possibleFormats = [BarcodeFormat.QR_CODE];
     const controls = await reader.decodeFromVideoElement(video, (scanResult) => {
-      if (scanResult) cameraScanHandlerRef.current(scanResult.getText());
+      if (scanResult) {
+        lastQrSeenAtRef.current = Date.now();
+        cameraScanHandlerRef.current(scanResult.getText());
+      } else if (suppressedCameraTokenRef.current && Date.now() - lastQrSeenAtRef.current > 1500) {
+        suppressedCameraTokenRef.current = null;
+      }
     });
 
     if (streamRef.current !== stream || cameraSessionRef.current !== session) {
@@ -810,58 +850,78 @@ export const QrCheckInPage: React.FC = () => {
   }, []);
 
   const checkIn = useCallback(async (rawValue: string, source: 'camera' | 'manual' = 'manual') => {
-    const token = qrTokenFromValue(rawValue);
+    const { token, kind } = qrCredentialFromValue(rawValue);
     if (!token) {
-      setError('No guest-pass token was found in that QR code or entry. Scan a valid Hirna guest pass or paste its token.');
+      const feedback = missingTokenFeedback();
+      outcomeOpenRef.current = true;
+      setResultFeedback(feedback);
+      setScannerPhase('RESULT');
+      voice.speak(`outcome-${Date.now()}`, feedback.speech, feedback.filipinoSpeech, 'OUTCOME');
       return;
     }
-    if (scanLockRef.current) return;
+    if (scanLockRef.current || outcomeOpenRef.current) return;
 
     if (source === 'camera') {
-      const lastScan = lastCameraScanRef.current;
-      const now = Date.now();
-      if (lastScan?.token === token && now - lastScan.scannedAt < 5000) return;
-      lastCameraScanRef.current = { token, scannedAt: now };
+      lastQrSeenAtRef.current = Date.now();
+      if (suppressedCameraTokenRef.current === token) return;
+      suppressedCameraTokenRef.current = token;
     }
 
     scanLockRef.current = true;
     stopDecoder();
     setProcessing(true);
-    setError('');
+    setScannerPhase('VERIFYING');
+    voice.speak('qr-detected', 'QR code detected. Verifying your visitor pass.', 'Nakita ang QR code. Bineberipika ang inyong visitor pass.');
     try {
-      const scanResult = (scanMode === 'CHECK_IN'
-        ? await reservationPortalService.checkInPass(token)
-        : await reservationPortalService.checkOutPass(token)) as QrCheckInResult;
+      let scanResult: QrCheckInResult;
+      if (kind === 'VISITOR') {
+        const visitor = await visitorService.scanVisitorPass(token, scanMode);
+        scanResult = {
+          inviteeEmail: visitor.email,
+          checkedIn: visitor.status === 'CHECKED_IN',
+          checkedInAt: visitor.actualArrival,
+          checkedOutAt: visitor.actualDeparture,
+          title: visitor.purposeOfVisit,
+          startTime: visitor.expectedArrival,
+          status: visitor.status,
+          facilityName: visitor.host?.fullName || visitor.receivingDepartment || 'Visitor reception',
+          credentialType: 'VISITOR',
+        };
+      } else {
+        const reservation = (scanMode === 'CHECK_IN'
+          ? await reservationPortalService.checkInPass(token)
+          : await reservationPortalService.checkOutPass(token)) as QrCheckInResult;
+        scanResult = { ...reservation, credentialType: 'RESERVATION' };
+      }
       setResult(scanResult);
       setHistory((current) => [{ ...scanResult, scannedAt: new Date().toISOString() }, ...current].slice(0, 8));
       setManualToken('');
+      const feedback = successfulQrFeedback(scanMode, scanResult.credentialType);
+      outcomeOpenRef.current = true;
+      setResultFeedback(feedback);
+      setScannerPhase('RESULT');
+      voice.speak(`outcome-${Date.now()}`, feedback.speech, feedback.filipinoSpeech, 'OUTCOME');
     } catch (checkInError) {
-      setError(extractErrorMessage(checkInError));
+      const feedback = failedQrFeedback(checkInError);
+      outcomeOpenRef.current = true;
+      setResultFeedback(feedback);
+      setScannerPhase('RESULT');
+      voice.speak(`outcome-${Date.now()}`, feedback.speech, feedback.filipinoSpeech, 'OUTCOME');
     } finally {
       setProcessing(false);
       scanLockRef.current = false;
-      const stream = streamRef.current;
-      const session = cameraSessionRef.current;
-      if (stream?.getVideoTracks().some((track) => track.readyState === 'live')) {
-        resumeTimerRef.current = setTimeout(() => {
-          resumeTimerRef.current = null;
-          void startDecoder(stream, session).catch((scannerError) => {
-            stopCamera();
-            setCameraError(cameraFailureMessage(scannerError));
-          });
-        }, 1500);
-      }
     }
-  }, [scanMode, startDecoder, stopCamera, stopDecoder]);
+  }, [scanMode, stopDecoder, voice]);
 
   cameraScanHandlerRef.current = (value) => { void checkIn(value, 'camera'); };
 
   const startCamera = useCallback(async (deviceId = selectedDeviceId, restarting = false) => {
     if (!videoRef.current || (!restarting && (cameraActive || cameraStarting))) return;
     setCameraError('');
-    setError('');
     setResult(null);
     setCameraStarting(true);
+    setScannerPhase('INITIALIZING');
+    voice.speak('camera-initializing', 'Initializing scanner. Please wait.', 'Sinisimulan ang scanner. Mangyaring maghintay.');
     const session = cameraSessionRef.current + 1;
     cameraSessionRef.current = session;
     try {
@@ -915,6 +975,14 @@ export const QrCheckInPage: React.FC = () => {
 
       if (cameraSessionRef.current !== session) return;
       setCameraActive(true);
+      setScannerPhase('READY');
+      voice.speak('camera-ready', 'Scanner ready. Please present your QR code.', 'Handa na ang scanner. Mangyaring ipakita ang inyong QR code.');
+      resumeTimerRef.current = setTimeout(() => {
+        resumeTimerRef.current = null;
+        if (cameraSessionRef.current !== session || outcomeOpenRef.current) return;
+        setScannerPhase('SCANNING');
+        voice.speak('camera-scanning', 'Scanning. Please hold still.', 'Nag-scan. Mangyaring huwag gumalaw.');
+      }, 2500);
       void listVideoDevices().then((devices) => {
         setVideoDevices(devices);
         const activeDeviceId = stream.getVideoTracks()[0]?.getSettings?.().deviceId;
@@ -925,11 +993,12 @@ export const QrCheckInPage: React.FC = () => {
     } catch (cameraException) {
       stopCamera();
       setCameraError(cameraFailureMessage(cameraException));
+      voice.speak('camera-unavailable', 'Camera unavailable. Please use manual token entry.', 'Hindi available ang camera. Gamitin ang manual token entry.');
       manualTokenRef.current?.focus();
     } finally {
       setCameraStarting(false);
     }
-  }, [cameraActive, cameraStarting, selectedDeviceId, startDecoder, stopCamera]);
+  }, [cameraActive, cameraStarting, selectedDeviceId, startDecoder, stopCamera, voice]);
 
   const switchCamera = useCallback((deviceId: string) => {
     setSelectedDeviceId(deviceId);
@@ -947,13 +1016,76 @@ export const QrCheckInPage: React.FC = () => {
     return () => { mounted = false; };
   }, []);
 
+  const scanAgain = useCallback(() => {
+    outcomeOpenRef.current = false;
+    setResultFeedback(null);
+    voice.cancel();
+    const stream = streamRef.current;
+    const session = cameraSessionRef.current;
+    if (stream?.getVideoTracks().some((track) => track.readyState === 'live')) {
+      setScannerPhase('READY');
+      void startDecoder(stream, session).then(() => {
+        voice.speak('scanner-resumed', 'Scanner ready. Please present your QR code.', 'Handa na ang scanner. Mangyaring ipakita ang inyong QR code.');
+        resumeTimerRef.current = setTimeout(() => {
+          resumeTimerRef.current = null;
+          if (cameraSessionRef.current !== session || outcomeOpenRef.current) return;
+          setScannerPhase('SCANNING');
+          voice.speak('scanner-scanning', 'Scanning. Please hold still.', 'Nag-scan. Mangyaring huwag gumalaw.');
+        }, 2500);
+      }).catch((scannerError) => {
+        stopCamera();
+        setCameraError(cameraFailureMessage(scannerError));
+      });
+    } else {
+      setScannerPhase('PAUSED');
+      manualTokenRef.current?.focus();
+    }
+  }, [startDecoder, stopCamera, voice]);
+
+  const scannerInstruction = scannerPhase === 'INITIALIZING'
+      ? 'Starting camera...'
+    : scannerPhase === 'VERIFYING'
+      ? 'QR detected. Verifying...'
+      : scannerPhase === 'SCANNING'
+        ? 'Scanning QR code...'
+      : scannerPhase === 'RESULT'
+        ? 'Scan paused while the result is open.'
+        : cameraActive
+          ? 'Position the QR code inside the frame.'
+          : 'Camera is paused';
+  const guideColor = scannerPhase === 'VERIFYING'
+    ? 'border-blue-400'
+    : resultFeedback?.kind === 'SUCCESS'
+      ? 'border-emerald-400'
+      : resultFeedback
+        ? 'border-rose-400'
+        : 'border-white';
+
   return (
     <div className="space-y-6">
-      <DashboardHero title="QR Guest Check-in" subtitle="Scan a Team 8 digital pass to record guest arrival or departure." actions={
+      <DashboardHero title="QR Guest Check-in" subtitle="Scan an approved visitor pass or Team 8 reservation pass to record arrival or departure." actions={
         <div className="portal-header-badge flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-semibold"><ShieldCheck className="h-3.5 w-3.5" />Facilities Officer control</div>
       } />
 
-      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-2 shadow-sm"><span className="px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Scan mode</span><button type="button" onClick={() => setScanMode('CHECK_IN')} className={`rounded-lg px-3 py-2 text-xs font-bold ${scanMode === 'CHECK_IN' ? 'bg-red-700 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Check-In</button><button type="button" onClick={() => setScanMode('CHECK_OUT')} className={`rounded-lg px-3 py-2 text-xs font-bold ${scanMode === 'CHECK_OUT' ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Check-Out</button></div>
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2 shadow-sm"><span className="px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Scan mode</span><button type="button" onClick={() => setScanMode('CHECK_IN')} disabled={Boolean(resultFeedback) || processing} className={`rounded-lg px-3 py-2 text-xs font-bold disabled:opacity-50 ${scanMode === 'CHECK_IN' ? 'bg-red-700 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Check-In</button><button type="button" onClick={() => setScanMode('CHECK_OUT')} disabled={Boolean(resultFeedback) || processing} className={`rounded-lg px-3 py-2 text-xs font-bold disabled:opacity-50 ${scanMode === 'CHECK_OUT' ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>Check-Out</button></div>
+
+      <section aria-labelledby="voice-guidance-heading" className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-start gap-3"><div className="rounded-xl bg-red-50 p-2 text-red-700">{voice.preferences.muted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}</div><div><h3 id="voice-guidance-heading" className="text-sm font-bold text-slate-900">Voice guidance</h3><p className="mt-0.5 text-xs text-slate-500">Optional on-device announcements never speak names, IDs, or pass tokens.</p></div></div>
+          {!voice.supported ? <p role="status" className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">Voice synthesis is unavailable in this browser. Visual guidance remains active.</p> : !voice.preferences.enabled ? (
+            <button type="button" onClick={voice.enable} className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-xs font-bold text-white hover:bg-red-800"><Volume2 className="h-4 w-4" />Enable Voice Guidance</button>
+          ) : (
+            <div className="flex flex-wrap items-end gap-3">
+              <button type="button" onClick={() => voice.update('muted', !voice.preferences.muted)} aria-pressed={voice.preferences.muted} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">{voice.preferences.muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}{voice.preferences.muted ? 'Unmute' : 'Mute'}</button>
+              <label className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Language<select aria-label="Voice language" value={voice.preferences.language} onChange={(event) => voice.update('language', event.target.value as 'en-PH' | 'fil-PH')} className="mt-1 block min-h-10 rounded-lg border border-slate-300 bg-white px-2 text-xs font-medium normal-case tracking-normal text-slate-700"><option value="en-PH">English (Philippines preferred)</option><option value="fil-PH">Filipino (when available)</option></select></label>
+              <label className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Device voice<select aria-label="Device voice" value={voice.preferences.voiceURI} onChange={(event) => voice.update('voiceURI', event.target.value)} className="mt-1 block min-h-10 max-w-[230px] rounded-lg border border-slate-300 bg-white px-2 text-xs font-medium normal-case tracking-normal text-slate-700"><option value="">Automatic professional voice</option>{voice.voices.map((availableVoice) => <option key={availableVoice.voiceURI} value={availableVoice.voiceURI}>{availableVoice.name} ({availableVoice.lang})</option>)}</select></label>
+              <label className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Rate <span className="normal-case text-slate-400">{voice.preferences.rate.toFixed(2)}x</span><input aria-label="Speaking rate" type="range" min="0.75" max="1.25" step="0.05" value={voice.preferences.rate} onChange={(event) => voice.update('rate', Number(event.target.value))} className="mt-2 block w-28 accent-red-700" /></label>
+              <label className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Volume <span className="normal-case text-slate-400">{Math.round(voice.preferences.volume * 100)}%</span><input aria-label="Voice volume" type="range" min="0" max="1" step="0.1" value={voice.preferences.volume} onChange={(event) => voice.update('volume', Number(event.target.value))} className="mt-2 block w-28 accent-red-700" /></label>
+            </div>
+          )}
+        </div>
+        {voice.preferences.enabled && voice.voices.length > 0 && <p className="mt-3 text-[11px] text-slate-400">Browser voice metadata does not reliably identify gender. Choose any available voice by its device-provided name.</p>}
+      </section>
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -963,8 +1095,8 @@ export const QrCheckInPage: React.FC = () => {
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
                 <span>Current action: <span className="font-bold text-red-700">{scanMode === 'CHECK_IN' ? 'Check-In' : 'Check-Out'}</span></span>
                 <span className="inline-flex items-center gap-1.5" aria-live="polite">
-                  <span className={`h-2 w-2 rounded-full ${cameraError ? 'bg-amber-500' : cameraActive ? 'bg-emerald-500' : cameraStarting ? 'animate-pulse bg-slate-400' : 'bg-slate-300'}`} />
-                  {cameraError ? 'Camera needs attention' : cameraActive ? 'Camera active' : cameraStarting ? 'Camera starting' : 'Camera paused'}
+                  <span className={`h-2 w-2 rounded-full ${cameraError ? 'bg-amber-500' : scannerPhase === 'VERIFYING' ? 'animate-pulse bg-blue-500' : cameraActive ? 'bg-emerald-500' : cameraStarting ? 'animate-pulse bg-slate-400' : 'bg-slate-300'}`} />
+                  {cameraError ? 'Camera needs attention' : scannerInstruction}
                 </span>
               </div>
             </div>
@@ -986,13 +1118,14 @@ export const QrCheckInPage: React.FC = () => {
             {cameraActive && <>
               <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center p-10">
                 <div className="relative aspect-square max-h-[72%] max-w-[72%] flex-1">
-                  <span className="absolute left-0 top-0 h-10 w-10 rounded-tl-lg border-l-4 border-t-4 border-white drop-shadow" />
-                  <span className="absolute right-0 top-0 h-10 w-10 rounded-tr-lg border-r-4 border-t-4 border-white drop-shadow" />
-                  <span className="absolute bottom-0 left-0 h-10 w-10 rounded-bl-lg border-b-4 border-l-4 border-white drop-shadow" />
-                  <span className="absolute bottom-0 right-0 h-10 w-10 rounded-br-lg border-b-4 border-r-4 border-white drop-shadow" />
+                  <span className={`absolute left-0 top-0 h-10 w-10 rounded-tl-lg border-l-4 border-t-4 drop-shadow transition-colors ${guideColor}`} />
+                  <span className={`absolute right-0 top-0 h-10 w-10 rounded-tr-lg border-r-4 border-t-4 drop-shadow transition-colors ${guideColor}`} />
+                  <span className={`absolute bottom-0 left-0 h-10 w-10 rounded-bl-lg border-b-4 border-l-4 drop-shadow transition-colors ${guideColor}`} />
+                  <span className={`absolute bottom-0 right-0 h-10 w-10 rounded-br-lg border-b-4 border-r-4 drop-shadow transition-colors ${guideColor}`} />
+                  {scannerPhase === 'READY' && <span className="absolute inset-x-3 top-1/2 h-0.5 bg-gradient-to-r from-transparent via-red-400 to-transparent shadow-[0_0_12px_rgba(248,113,113,0.9)] motion-safe:animate-[qr-scan-line_2.2s_ease-in-out_infinite]" />}
                 </div>
               </div>
-              <div aria-live="polite" className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 bg-slate-950/70 px-3 py-2 text-center text-xs font-semibold text-white"><ScanLine className={`h-4 w-4 shrink-0 ${processing ? '' : 'animate-pulse'}`} />{processing ? 'QR code detected — verifying pass...' : 'Camera active — align the QR code inside the frame'}</div>
+              <div aria-live="polite" className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 bg-slate-950/70 px-3 py-2 text-center text-xs font-semibold text-white"><ScanLine className={`h-4 w-4 shrink-0 ${processing ? '' : 'motion-safe:animate-pulse'}`} />{scannerInstruction}</div>
             </>}
             {cameraStarting && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-950/65 text-center text-white"><Loader2 className="h-9 w-9 animate-spin" /><p className="text-sm font-semibold">Starting camera...</p></div>}
             {!cameraActive && !cameraStarting && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center text-white/60"><ScanLine className="h-10 w-10 text-white/40" /><p className="text-sm">Camera is paused</p><p className="max-w-xs px-4 text-xs text-white/40">Start the camera or use the secure token fallback below.</p></div>}
@@ -1004,17 +1137,18 @@ export const QrCheckInPage: React.FC = () => {
           <section id="manual-token-entry" aria-labelledby="manual-token-heading" className={`mt-5 rounded-2xl border-2 p-4 ${cameraError ? 'border-amber-300 bg-amber-50/60' : 'border-red-200 bg-red-50/40'}`}>
             <div className="flex items-start gap-3"><div className="rounded-xl bg-white p-2 text-red-700 shadow-sm"><UserCheck className="h-5 w-5" /></div><div><h4 id="manual-token-heading" className="text-sm font-extrabold text-slate-900">Manual Token Entry</h4><p className="mt-1 text-xs leading-5 text-slate-600">Camera unavailable? Paste the guest pass URL or token to continue securely.</p></div></div>
             <form onSubmit={(event) => { event.preventDefault(); void checkIn(manualToken); }} className="mt-4 flex flex-col gap-3 sm:flex-row">
-              <label className="min-w-0 flex-1"><span className="sr-only">Guest pass URL or token</span><input ref={manualTokenRef} value={manualToken} onChange={(event) => setManualToken(event.target.value)} placeholder="Paste QR pass URL or token" autoComplete="off" spellCheck={false} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10" /></label>
-              <button type="submit" disabled={processing || !manualToken.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-xs font-bold text-white shadow-sm hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50">{processing ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4" />}{scanMode === 'CHECK_IN' ? 'Check in pass' : 'Check out pass'}</button>
+              <label className="min-w-0 flex-1"><span className="sr-only">Guest pass URL or token</span><input ref={manualTokenRef} value={manualToken} onChange={(event) => setManualToken(event.target.value)} placeholder="Paste visitor or reservation pass URL/token" autoComplete="off" spellCheck={false} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10" /></label>
+              <button type="submit" disabled={processing || Boolean(resultFeedback) || !manualToken.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-xs font-bold text-white shadow-sm hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50">{processing ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4" />}{scanMode === 'CHECK_IN' ? 'Check in pass' : 'Check out pass'}</button>
             </form>
           </section>
-          {(error || processing) && <div className={`mt-4 flex items-start gap-2 rounded-xl border px-4 py-3 text-sm ${error ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-blue-200 bg-blue-50 text-blue-700'}`}>{error ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> : <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />}<span>{error || `Verifying pass and recording ${scanMode === 'CHECK_IN' ? 'check-in' : 'check-out'}...`}</span></div>}
+          {processing && <div role="status" className="mt-4 flex items-start gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700"><Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" /><span>{`Verifying pass and recording ${scanMode === 'CHECK_IN' ? 'check-in' : 'check-out'}...`}</span></div>}
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">{result ? <><div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800"><CheckCircle2 className="h-5 w-5" />Pass {result.checkedIn ? 'checked in' : 'checked out'}</div><div className="mt-5 space-y-4"><div><p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Invitee</p><p className="mt-1 text-sm font-bold text-slate-900">{result.inviteeEmail}</p></div><div><p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Reservation</p><p className="mt-1 text-sm font-bold text-slate-900">{result.title}</p></div><div className="space-y-2 rounded-xl bg-slate-50 p-4 text-xs text-slate-600"><p className="flex items-center gap-2"><MapPin className="h-3.5 w-3.5 text-red-700" />{result.facilityName}</p><p className="flex items-center gap-2"><Clock3 className="h-3.5 w-3.5 text-red-700" />{qrDateTime(result.startTime)}</p><p className="flex items-center gap-2"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />{result.checkedIn ? `Checked in ${qrDateTime(result.checkedInAt ?? '')}` : `Checked out ${qrDateTime(result.checkedOutAt ?? '')}`}</p></div></div></> : <div className="flex min-h-[260px] flex-col items-center justify-center text-center"><UserCheck className="h-9 w-9 text-slate-300" /><p className="mt-3 text-sm font-semibold text-slate-600">No pass scanned yet</p><p className="mt-1 max-w-xs text-xs leading-5 text-slate-400">A successful scan displays the guest and reservation details here.</p></div>}</section>
       </div>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="mb-4 flex items-center justify-between"><div><h3 className="text-sm font-bold text-slate-900">Recent scans</h3><p className="mt-1 text-xs text-slate-500">This list is kept in the current officer session.</p></div><button type="button" onClick={() => setHistory([])} disabled={history.length === 0} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40"><RefreshCw className="h-3.5 w-3.5" />Clear</button></div>{history.length === 0 ? <p className="py-6 text-center text-xs text-slate-400">No scans in this session.</p> : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b border-slate-100"><th className="p-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Guest</th><th className="p-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Reservation</th><th className="p-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Location</th><th className="p-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Scanned</th></tr></thead><tbody>{history.map((scan) => <tr key={`${scan.inviteeEmail}-${scan.scannedAt}`} className="border-b border-slate-50"><td className="p-2 font-medium text-slate-800">{scan.inviteeEmail}</td><td className="p-2 text-slate-600">{scan.title}</td><td className="p-2 text-slate-600">{scan.facilityName}</td><td className="p-2 text-xs text-slate-400">{qrDateTime(scan.scannedAt)}</td></tr>)}</tbody></table></div>}</section>
+      {resultFeedback && <QrScannerResultModal feedback={resultFeedback} onScanAgain={scanAgain} />}
     </div>
   );
 };

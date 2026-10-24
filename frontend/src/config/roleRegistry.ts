@@ -36,6 +36,7 @@ const explicitRoles: RolePresentation[] = [
       { id: 'notifications', label: 'Notifications', path: '/admin/notifications', icon: Bell, exact },
       { id: 'rbac', label: 'Role & Permission Management', path: '/admin/rbac', icon: KeyRound, exact, group: 'Administration' },
       { id: 'user-oversight', label: 'User Oversight', path: '/super-admin/user-oversight', icon: Eye, exact, group: 'Administration' },
+      { id: 'visitor-kiosk', label: 'Visitor Kiosk Configuration', path: '/admin/visitor-kiosk', icon: ClipboardList, exact, group: 'Administration' },
       { id: 'security', label: 'Security Center', path: '/security', icon: ShieldCheck, exact, group: 'Audit & Security', children: [
         { id: 'security-audit', label: 'Audit Logs', path: '/security/audit-logs', icon: FileText, exact },
       ] },
@@ -50,6 +51,7 @@ const explicitRoles: RolePresentation[] = [
       { id: 'ai-services', label: 'AI Services', path: '/admin/ai-services', icon: Cpu, exact },
       { id: 'backup', label: 'Backup & Recovery', path: '/admin/backup', icon: Download, exact },
       { id: 'settings', label: 'System Settings', path: '/admin/settings', icon: Settings, exact },
+      { id: 'visitor-kiosk', label: 'Visitor Kiosk Configuration', path: '/admin/visitor-kiosk', icon: ClipboardList, exact },
       { id: 'notifications', label: 'Notifications', path: '/admin/notifications', icon: Bell, exact },
       { id: 'system-health', label: 'System Health', path: '/admin/system-health', icon: Monitor, exact },
       { id: 'sessions', label: 'Sessions', path: '/admin/sessions', icon: Activity, exact },

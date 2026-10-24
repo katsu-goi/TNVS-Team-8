@@ -67,6 +67,10 @@ const SUPABASE_FUNCTION_ALIASES: Record<string, string> = {
   rbac: 'auth',
   security: 'security',
   visitor: 'visitor',
+  'visitor-kiosk': 'visitor',
+  'visitor-pass': 'visitor',
+  'visitor-passes': 'visitor',
+  'visitor-status': 'visitor',
 };
 
 function normalizeApiPath(url: string): string {
@@ -259,11 +263,28 @@ export function extractErrorMessage(error: unknown): string {
       }
       return message;
     }
-    if (errObj.response?.data?.error) return errObj.response.data.error;
+    if (errObj.response?.data?.error?.message) return String(errObj.response.data.error.message);
+    if (errObj.response?.data?.error) return String(errObj.response.data.error);
     if (errObj.message) return errObj.message;
   }
   if (typeof error === 'string') return error;
   return 'An unexpected error occurred.';
+}
+
+export function extractApiErrorCode(error: unknown): string {
+  if (typeof error !== 'object' || error === null) return '';
+  const response = (error as { response?: { data?: { errorCode?: unknown } } }).response;
+  return typeof response?.data?.errorCode === 'string' ? response.data.errorCode : '';
+}
+
+export function extractRequestId(error: unknown): string {
+  if (typeof error !== 'object' || error === null) return '';
+  const headers = (error as { response?: { headers?: Record<string, unknown> & { get?: (name: string) => unknown } } }).response?.headers;
+  if (!headers) return '';
+  const value = typeof headers.get === 'function'
+    ? headers.get('x-request-id')
+    : headers['x-request-id'] ?? headers['X-Request-ID'];
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 export async function safeFetchJson<T = any>(url: string, options?: RequestInit): Promise<T> {

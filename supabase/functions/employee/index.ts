@@ -738,7 +738,7 @@ async function handleCreateVisitor(ctx: AuthContext | null, _req: Request, body:
     purpose_of_visit: purpose,
     expected_arrival: toUtcIso(arrivalRaw),
     status: "REGISTERED",
-    qr_code_token: `VIS-${crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`,
+    qr_code_token: null,
     created_by: ctx!.email,
   }).select("*").single();
   if (insErr) throw new Error(`visitor insert failed: ${insErr.message}`);
