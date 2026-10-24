@@ -24,7 +24,7 @@ const completePolicy = (): VisitorKioskPolicy => ({
   processors: 'Approved infrastructure and email processors.',
   safeguards: 'Private storage, role checks, audit logging, and time-limited signed access.',
   alternativeVerification: 'An authorized officer manually reviews the original ID and stored image.',
-  acceptedIdTypes: ['Approved government ID'],
+  acceptedIdTypes: ['Philippine Passport'],
   purposeDepartmentRoutes: Object.fromEntries(VISITOR_KIOSK_FIXED_DEPARTMENT_PURPOSES.map((purpose) => [purpose, 'Operations'])),
   registrationEnabled: true,
   privacyReviewApproved: true,

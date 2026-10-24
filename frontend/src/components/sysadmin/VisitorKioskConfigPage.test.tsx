@@ -15,7 +15,7 @@ const config = {
   privacyNoticeText: 'Approved visitor privacy notice containing the required transparent processing details.', acknowledgementText: 'I acknowledge that I read and understood this privacy notice.',
   noticeVersion: 'v1', retentionPolicy: 'Identity images are securely deleted after the approved retention period.', retentionDays: 30,
   rightsProcess: 'Contact the approved privacy channel to exercise applicable rights.', processors: 'Approved processors only.', safeguards: 'Private storage, authorization, signed URLs, and audit logging.',
-  alternativeVerification: 'Authorized Facilities staff manually review the supplied ID image.', acceptedIdTypes: ['Approved government ID'],
+  alternativeVerification: 'Authorized Facilities staff manually review the supplied ID image.', acceptedIdTypes: ['Philippine Passport'],
   purposeDepartmentRoutes: Object.fromEntries(purposes.map((purpose) => [purpose, 'Operations'])), registrationEnabled: false,
   privacyReviewApproved: true, securityReviewApproved: true, operationsReviewApproved: true, revision: 2, updatedAt: '2026-10-21T00:00:00Z',
   approvals: { privacy: { approved: true, approvedAt: '2026-10-21T00:00:00Z' }, security: { approved: true, approvedAt: '2026-10-21T00:00:00Z' }, operations: { approved: true, approvedAt: '2026-10-21T00:00:00Z' } },

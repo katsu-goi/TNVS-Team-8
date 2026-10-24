@@ -279,6 +279,19 @@ export const KioskVisitorReviewModal: React.FC<Props> = ({ visitor, onClose, onC
           </section>
 
           <aside className="space-y-4">
+            <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-slate-900" aria-labelledby="automated-screening-title">
+              <h3 id="automated-screening-title" className="text-sm font-black uppercase tracking-wide text-blue-950">Automated Identity Screening</h3>
+              <p className="mt-1 text-xs leading-5 text-blue-900">These are screening signals only. They cannot clear identity or establish that a document is authentic.</p>
+              <dl className="mt-3 grid gap-3">
+                <div><dt className="text-xs font-bold uppercase text-slate-500">Document screening</dt><dd className="mt-1 font-bold">{String(currentVisitor.documentClassification || 'NOT SCREENED').replace(/_/g, ' ')}</dd><dd className="text-xs text-slate-700">Detected type: {currentVisitor.documentDetectedType || 'Not determined'} · OCR: {String(currentVisitor.ocrProcessingStatus || 'NOT REQUESTED').replace(/_/g, ' ')} ({currentVisitor.ocrTextQuality || 'quality unavailable'})</dd></div>
+                {(currentVisitor.documentExpirationText || currentVisitor.documentIssuingAuthority) && <div><dt className="text-xs font-bold uppercase text-slate-500">Visitor-confirmed OCR fields</dt><dd className="mt-1 text-xs text-slate-700">Expiration: {currentVisitor.documentExpirationText || 'Not shown'} · Issuer: {currentVisitor.documentIssuingAuthority || 'Not shown'}</dd></div>}
+                {Array.isArray(currentVisitor.documentScreeningWarnings) && currentVisitor.documentScreeningWarnings.length > 0 && <div><dt className="text-xs font-bold uppercase text-slate-500">Warnings</dt><dd><ul className="mt-1 list-disc pl-5 text-xs text-amber-900">{currentVisitor.documentScreeningWarnings.map((warning: string) => <li key={warning}>{warning}</li>)}</ul></dd></div>}
+                <div><dt className="text-xs font-bold uppercase text-slate-500">Facial comparison</dt><dd className="mt-1 font-bold">{String(currentVisitor.facialComparisonStatus || 'PROVIDER NOT CONFIGURED').replace(/_/g, ' ')}</dd><dd className="text-xs text-slate-700">Anti-spoofing: {String(currentVisitor.antiSpoofingStatus || 'NOT PERFORMED').replace(/_/g, ' ')}{currentVisitor.facialComparisonModel ? ` · Model: ${currentVisitor.facialComparisonModel}` : ''}</dd></div>
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3"><dt className="text-xs font-black uppercase text-amber-950">Document authenticity</dt><dd className="mt-1 font-black text-amber-950">NOT INDEPENDENTLY VERIFIED</dd></div>
+                <div><dt className="text-xs font-bold uppercase text-slate-500">Manual identity review</dt><dd className="mt-1 font-bold">{String(currentVisitor.identityVerificationStatus || 'PENDING').replace(/_/g, ' ')}</dd></div>
+                <div><dt className="text-xs font-bold uppercase text-slate-500">Separate visit approval</dt><dd className="mt-1 font-bold">{currentVisitor.approvalStatus}</dd></div>
+              </dl>
+            </section>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-900">
               <dl className="grid gap-3">
                 <div><dt className="text-xs font-bold uppercase text-slate-500">Purpose / destination</dt><dd className="mt-1 font-bold">{currentVisitor.purposeOfVisit}</dd><dd className="text-slate-700">{currentVisitor.host?.fullName || currentVisitor.receivingDepartment}</dd></div>

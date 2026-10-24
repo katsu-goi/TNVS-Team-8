@@ -22,6 +22,13 @@ export type VisitorKioskAdminConfig = {
   privacyReviewApproved: boolean;
   securityReviewApproved: boolean;
   operationsReviewApproved: boolean;
+  biometricProcessingEnabled?: boolean;
+  biometricNoticeText?: string;
+  biometricAuthorizationText?: string;
+  biometricPrivacyApproved?: boolean;
+  biometricPiaApproved?: boolean;
+  biometricSecurityApproved?: boolean;
+  biometricLicenseApproved?: boolean;
   revision: number;
   updatedAt: string;
   approvals: Record<'privacy' | 'security' | 'operations', { approved: boolean; approvedAt: string | null }>;

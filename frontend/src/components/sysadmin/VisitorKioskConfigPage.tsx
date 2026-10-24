@@ -22,6 +22,14 @@ const purposeLabels: Record<string, string> = {
   GOVERNMENT_REGULATORY: 'Government or regulatory transaction',
 };
 
+const ocrSupportedIdTypes = [
+  'Philippine Passport',
+  "Philippine Driver's License",
+  'PRC Professional Identification Card',
+  'Company-Issued Employee ID',
+  'Postal ID',
+] as const;
+
 const fieldClass = 'mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-3 text-sm text-slate-900 outline-none transition focus:border-red-600 focus:ring-2 focus:ring-red-600/10';
 const sectionClass = 'rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6';
 
@@ -33,8 +41,8 @@ const Field: React.FC<React.InputHTMLAttributes<HTMLInputElement> & { label: str
   </label>
 );
 
-const PolicyArea: React.FC<React.TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string; hint?: string }> = ({ label, hint, ...props }) => (
-  <TextAreaField {...props} required label={label} hint={hint} className="min-h-28" />
+const PolicyArea: React.FC<React.TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string; hint?: string; requiredByPolicy?: boolean }> = ({ label, hint, requiredByPolicy = true, ...props }) => (
+  <TextAreaField {...props} required={requiredByPolicy} label={label} hint={hint} className="min-h-28" />
 );
 
 function localConfigurationComplete(config: VisitorKioskAdminConfig, fixedPurposes: string[], departments: string[]): boolean {
@@ -45,8 +53,9 @@ function localConfigurationComplete(config: VisitorKioskAdminConfig, fixedPurpos
     config.safeguards, config.alternativeVerification,
   ];
   const validRoutes = fixedPurposes.every((purpose) => departments.includes(config.purposeDepartmentRoutes[purpose] ?? ''));
+  const validIdTypes = config.acceptedIdTypes.length > 0 && config.acceptedIdTypes.every((type) => (ocrSupportedIdTypes as readonly string[]).includes(type));
   return textValues.every((value) => value.trim()) && Boolean(config.retentionDays && config.retentionDays > 0)
-    && config.acceptedIdTypes.length > 0 && validRoutes && config.privacyReviewApproved
+    && validIdTypes && validRoutes && config.privacyReviewApproved
     && config.securityReviewApproved && config.operationsReviewApproved
     && findUnresolvedPrivacyPolicyContent(config).length === 0;
 }
@@ -235,7 +244,7 @@ export const VisitorKioskConfigPage: React.FC = () => {
       <section className={sectionClass}>
         <h2 className="text-lg font-black text-slate-900">Identity data and retention</h2>
         <div className="mt-5 grid gap-5 md:grid-cols-2">
-          <div className="md:col-span-2"><PolicyArea label="Approved government or organization ID types" value={form.acceptedIdTypes.join('\n')} onChange={(e) => update('acceptedIdTypes', e.target.value.split(/\r?\n|\|/).map((value) => value.trim()).filter(Boolean))} hint="One approved ID label per line. No default list is assumed." /></div>
+          <fieldset className="md:col-span-2"><legend className="text-xs font-bold uppercase tracking-wide text-slate-600">Approved OCR-supported ID categories</legend><p className="mt-1 text-xs text-amber-700">Select only categories the organization has actually approved. Tesseract.js classification does not establish authenticity.</p><div className="mt-3 grid gap-2 sm:grid-cols-2">{ocrSupportedIdTypes.map((type) => <label key={type} className="flex items-start gap-3 rounded-xl border border-slate-200 p-3"><input type="checkbox" className="mt-0.5 h-5 w-5 accent-red-700" checked={form.acceptedIdTypes.includes(type)} onChange={(event) => update('acceptedIdTypes', event.target.checked ? [...new Set([...form.acceptedIdTypes, type])] : form.acceptedIdTypes.filter((value) => value !== type))} /><span className="text-sm font-semibold text-slate-800">{type}</span></label>)}</div></fieldset>
           <Field type="number" min={1} max={3650} label="Identity-image retention days" requiredByPolicy value={form.retentionDays ?? ''} onChange={(e) => update('retentionDays', e.target.value ? Number(e.target.value) : null)} />
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600"><p className="font-bold text-slate-800">Secure deletion</p><p className="mt-1">The existing private bucket and service-only cleanup function remain in force. An authorized scheduled cleanup job is still required operationally.</p></div>
           <div className="md:col-span-2"><PolicyArea label="Retention and secure deletion policy" value={form.retentionPolicy} onChange={(e) => update('retentionPolicy', e.target.value)} maxLength={4000} /></div>
@@ -250,6 +259,22 @@ export const VisitorKioskConfigPage: React.FC = () => {
         <h2 className="text-lg font-black text-slate-900">Purpose routing</h2>
         <p className="mt-1 text-sm text-slate-500">Each fixed-purpose route must reference a department with at least one active employee. Readiness automatically fails if that department becomes inactive.</p>
         <div className="mt-5 grid gap-4 md:grid-cols-2">{state.fixedDepartmentPurposes.map((purpose) => <label key={purpose} className="block"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">{purposeLabels[purpose] ?? purpose}</span><select className={fieldClass} value={form.purposeDepartmentRoutes[purpose] ?? ''} onChange={(e) => update('purposeDepartmentRoutes', { ...form.purposeDepartmentRoutes, [purpose]: e.target.value })}><option value="">Select an active department</option>{state.availableDepartments.map((department) => <option key={department} value={department}>{department}</option>)}</select></label>)}</div>
+      </section>
+
+      <section className={sectionClass}>
+        <h2 className="text-lg font-black text-slate-900">Optional DeepFace biometric screening</h2>
+        <p className="mt-1 text-sm text-amber-700">Disabled by default. Enabling this administrator setting is not sufficient: the Edge runtime flag and private Python service configuration must also be present. Facial comparison remains supporting evidence and never approves identity.</p>
+        <div className="mt-5 grid gap-4">
+          <PolicyArea requiredByPolicy={false} label="Approved biometric-processing notice" value={form.biometricNoticeText ?? ''} onChange={(e) => update('biometricNoticeText', e.target.value)} maxLength={8000} hint="Required only before biometric enablement. Supply only text approved by the organization after DPO/legal review and the privacy impact assessment." />
+          <PolicyArea requiredByPolicy={false} label="Separate visitor authorization statement" value={form.biometricAuthorizationText ?? ''} onChange={(e) => update('biometricAuthorizationText', e.target.value)} maxLength={2000} hint="Required only before biometric enablement. The public kiosk requires an affirmative action and always offers the approved manual alternative." />
+          <div className="grid gap-3 sm:grid-cols-2">{([
+            ['biometricPrivacyApproved', 'DPO/legal and lawful-basis review recorded'],
+            ['biometricPiaApproved', 'Privacy impact, necessity, proportionality, and accuracy review recorded'],
+            ['biometricSecurityApproved', 'Python service, retention, incident response, and access-control review recorded'],
+            ['biometricLicenseApproved', 'DeepFace model and dependency license review recorded'],
+          ] as const).map(([key, label]) => <label key={key} className="flex items-start gap-3 rounded-xl border border-slate-200 p-4"><input type="checkbox" className="mt-1 h-5 w-5 accent-red-700" checked={form[key] === true} onChange={(event) => update(key, event.target.checked)} /><span className="text-sm font-bold text-slate-800">{label}</span></label>)}</div>
+          <label className="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 p-4"><input type="checkbox" className="mt-1 h-5 w-5 accent-red-700" checked={form.biometricProcessingEnabled === true} onChange={(event) => update('biometricProcessingEnabled', event.target.checked)} /><span><span className="block text-sm font-black text-slate-900">Permit biometric processing after every server gate passes</span><span className="text-xs text-slate-600">This does not activate DeepFace unless the four reviews, notice, authorization statement, manual alternative, runtime feature flag, HTTPS service URL, and server key are all present.</span></span></label>
+        </div>
       </section>
 
       <section className={sectionClass}>

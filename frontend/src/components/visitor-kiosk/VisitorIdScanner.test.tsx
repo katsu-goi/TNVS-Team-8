@@ -4,6 +4,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as detection from './idDocumentDetection';
 import { VisitorIdScanner, visitorCameraFailureMessage } from './VisitorIdScanner';
 
+vi.mock('./visitorOcr', () => ({
+  clearOcrResultCache: vi.fn(),
+  screenIdentityDocument: vi.fn().mockResolvedValue({
+    ocrStatus: 'SUCCEEDED', classification: 'SUPPORTED_ID_TYPE', detectedIdType: 'Philippine Passport',
+    extracted: { fullName: '', detectedIdType: 'Philippine Passport', idNumberLast4: '', expirationDate: '', issuingAuthority: '' },
+    warnings: [], textQuality: 'HIGH',
+  }),
+}));
+
+const scannerProps = {
+  selectedIdType: 'Philippine Passport', acceptedIdTypes: ['Philippine Passport'], onScreeningChange: vi.fn(),
+};
+
 describe('VisitorIdScanner camera lifecycle', () => {
   const stop = vi.fn();
   const stream = {
@@ -34,7 +47,7 @@ describe('VisitorIdScanner camera lifecycle', () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
   it('mounts the video before requesting media, attaches the stream, and releases it on cleanup', async () => {
-    const { unmount } = render(<VisitorIdScanner image="" confirmed={false} onImageChange={vi.fn()} />);
+    const { unmount } = render(<VisitorIdScanner {...scannerProps} image="" confirmed={false} onImageChange={vi.fn()} />);
     const video = screen.getByLabelText('Live ID camera preview') as HTMLVideoElement;
     expect(video).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Use camera' }));
@@ -52,17 +65,16 @@ describe('VisitorIdScanner camera lifecycle', () => {
   it('captures a valid current frame manually once and clears the camera stream', async () => {
     const onImageChange = vi.fn();
     vi.spyOn(detection, 'captureDocumentFrame').mockReturnValue('data:image/jpeg;base64,captured');
-    render(<VisitorIdScanner image="" confirmed={false} onImageChange={onImageChange} />);
+    render(<VisitorIdScanner {...scannerProps} image="" confirmed={false} onImageChange={onImageChange} />);
     fireEvent.click(screen.getByRole('button', { name: 'Use camera' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Manual capture' }));
-    expect(onImageChange).toHaveBeenCalledTimes(1);
-    expect(onImageChange).toHaveBeenCalledWith('data:image/jpeg;base64,captured', false);
+    await waitFor(() => expect(onImageChange).toHaveBeenCalledWith('data:image/jpeg;base64,captured', false));
     expect(stop).toHaveBeenCalledTimes(1);
   });
 
   it('does not request media when permission is already denied and offers retry/upload guidance', async () => {
     vi.mocked(navigator.permissions.query).mockResolvedValue({ state: 'denied' } as PermissionStatus);
-    render(<VisitorIdScanner image="" confirmed={false} onImageChange={vi.fn()} />);
+    render(<VisitorIdScanner {...scannerProps} image="" confirmed={false} onImageChange={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Use camera' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(/permission was denied/i);
     expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
@@ -78,11 +90,11 @@ describe('VisitorIdScanner camera lifecycle', () => {
     vi.mocked(navigator.mediaDevices.enumerateDevices).mockResolvedValue(cameras as MediaDeviceInfo[]);
     const Harness = () => {
       const [photo, setPhoto] = React.useState({ image: 'data:image/jpeg;base64,review', confirmed: false });
-      return <VisitorIdScanner image={photo.image} confirmed={photo.confirmed} onImageChange={(image, confirmed) => setPhoto({ image, confirmed })} />;
+      return <VisitorIdScanner {...scannerProps} image={photo.image} confirmed={photo.confirmed} onImageChange={(image, confirmed) => setPhoto({ image, confirmed })} />;
     };
     render(<Harness />);
     fireEvent.click(screen.getByRole('button', { name: 'Use photo' }));
-    expect(await screen.findByText(/Photo selected for secure submission/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Photo passed document-category screening/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retake photo' }));
     await waitFor(() => expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled());
     const selector = await screen.findByRole('combobox', { name: 'Camera device' });

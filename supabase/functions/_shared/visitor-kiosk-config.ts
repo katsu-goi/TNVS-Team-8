@@ -18,6 +18,14 @@ export const VISITOR_KIOSK_FIXED_DEPARTMENT_PURPOSES = [
   "MAINTENANCE_SERVICE", "GOVERNMENT_REGULATORY",
 ] as const;
 
+export const VISITOR_KIOSK_OCR_SUPPORTED_ID_TYPES = [
+  "Philippine Passport",
+  "Philippine Driver's License",
+  "PRC Professional Identification Card",
+  "Company-Issued Employee ID",
+  "Postal ID",
+] as const;
+
 export type VisitorKioskPolicy = {
   organizationName: string;
   controllerName: string;
@@ -40,6 +48,13 @@ export type VisitorKioskPolicy = {
   privacyReviewApproved: boolean;
   securityReviewApproved: boolean;
   operationsReviewApproved: boolean;
+  biometricProcessingEnabled?: boolean;
+  biometricNoticeText?: string;
+  biometricAuthorizationText?: string;
+  biometricPrivacyApproved?: boolean;
+  biometricPiaApproved?: boolean;
+  biometricSecurityApproved?: boolean;
+  biometricLicenseApproved?: boolean;
 };
 
 export type VisitorKioskReadiness = {
@@ -98,6 +113,8 @@ export function evaluateVisitorKioskReadiness(
   unresolvedFields.forEach((field) => missing.push(`${field}:unresolvedPlaceholder`));
   if (!Number.isInteger(policy.retentionDays) || Number(policy.retentionDays) <= 0) missing.push("retentionDays");
   if (policy.acceptedIdTypes.length === 0) missing.push("acceptedIdTypes");
+  const ocrSupportedTypes = new Set<string>(VISITOR_KIOSK_OCR_SUPPORTED_ID_TYPES);
+  if (policy.acceptedIdTypes.some((value) => !ocrSupportedTypes.has(value))) missing.push("ocrSupportedIdTypes");
 
   const active = new Set(activeDepartments.map((department) => department.trim()).filter(Boolean));
   const routesComplete = VISITOR_KIOSK_FIXED_DEPARTMENT_PURPOSES.every((purpose) => {
@@ -137,8 +154,17 @@ export function splitVisitorKioskList(raw: unknown): string[] {
 }
 
 /** Public projection: deliberately excludes approval actors/timestamps, revisions, and audit reasons. */
-export function publicVisitorKioskPrivacy(policy: VisitorKioskPolicy, readiness: VisitorKioskReadiness) {
+export function publicVisitorKioskPrivacy(
+  policy: VisitorKioskPolicy,
+  readiness: VisitorKioskReadiness,
+  biometricRuntimeReady = false,
+) {
   const publishPolicy = readiness.configurationComplete;
+  const biometricApproved = policy.biometricPrivacyApproved && policy.biometricPiaApproved
+    && policy.biometricSecurityApproved && policy.biometricLicenseApproved
+    && Boolean(policy.biometricNoticeText?.trim()) && Boolean(policy.biometricAuthorizationText?.trim())
+    && Boolean(policy.alternativeVerification.trim());
+  const biometricEnabled = publishPolicy && policy.biometricProcessingEnabled && biometricApproved && biometricRuntimeReady;
   return {
     organizationName: publishPolicy ? policy.organizationName : "",
     controllerName: publishPolicy ? policy.controllerName : "",
@@ -160,11 +186,16 @@ export function publicVisitorKioskPrivacy(policy: VisitorKioskPolicy, readiness:
     configurationComplete: readiness.configurationComplete,
     registrationEnabled: readiness.registrationEnabled,
     missing: readiness.missing,
-    ocr: { status: "NOT_CONFIGURED" as const, message: "OCR is not configured. Visitors confirm their entered details and authorized staff review the ID image." },
+    ocr: { status: "BROWSER_LOCAL" as const, message: "Tesseract.js performs local transcription and category screening. OCR does not authenticate a document or verify identity." },
     identityVerification: {
-      status: "NOT_CONFIGURED" as const,
+      status: biometricEnabled ? "ENABLED" as const : "DISABLED" as const,
       livenessSupported: false,
-      message: "A biometric identity-verification provider is not configured. No face-match or liveness result will be fabricated; authorized staff must use the approved alternative procedure.",
+      message: biometricEnabled
+        ? "An authorized selfie may be compared with the ID portrait as supporting evidence. Facilities staff still make the identity decision."
+        : "Biometric comparison is disabled until the service and all privacy, impact, security, retention, and model-license reviews are approved. Authorized staff must use the approved alternative procedure.",
+      biometricNotice: biometricEnabled ? policy.biometricNoticeText ?? "" : "",
+      authorizationText: biometricEnabled ? policy.biometricAuthorizationText ?? "" : "",
+      authorizationRequired: biometricEnabled,
     },
   };
 }

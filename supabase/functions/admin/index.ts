@@ -12,6 +12,7 @@ import {
   parsePurposeDepartmentRoutes,
   splitVisitorKioskList,
   VISITOR_KIOSK_FIXED_DEPARTMENT_PURPOSES,
+  VISITOR_KIOSK_OCR_SUPPORTED_ID_TYPES,
   type VisitorKioskPolicy,
 } from "../_shared/visitor-kiosk-config.ts";
 import {
@@ -935,6 +936,11 @@ type VisitorKioskConfigRow = {
   security_review_approved_by: string | null; security_review_approved_at: string | null;
   operations_review_approved: boolean; operations_review_approved_by: string | null;
   operations_review_approved_at: string | null; revision: number; updated_at: string; updated_by: string | null;
+  biometric_processing_enabled: boolean; biometric_notice_text: string | null; biometric_authorization_text: string | null;
+  biometric_privacy_approved: boolean; biometric_privacy_approved_by: string | null; biometric_privacy_approved_at: string | null;
+  biometric_pia_approved: boolean; biometric_pia_approved_by: string | null; biometric_pia_approved_at: string | null;
+  biometric_security_approved: boolean; biometric_security_approved_by: string | null; biometric_security_approved_at: string | null;
+  biometric_license_approved: boolean; biometric_license_approved_by: string | null; biometric_license_approved_at: string | null;
 };
 
 function visitorConfigEnv(name: string): string {
@@ -974,6 +980,13 @@ function visitorPolicyFromRow(row: VisitorKioskConfigRow): VisitorKioskPolicy {
     privacyReviewApproved: row.privacy_review_approved,
     securityReviewApproved: row.security_review_approved,
     operationsReviewApproved: row.operations_review_approved,
+    biometricProcessingEnabled: row.biometric_processing_enabled === true,
+    biometricNoticeText: row.biometric_notice_text?.trim() || "",
+    biometricAuthorizationText: row.biometric_authorization_text?.trim() || "",
+    biometricPrivacyApproved: row.biometric_privacy_approved === true,
+    biometricPiaApproved: row.biometric_pia_approved === true,
+    biometricSecurityApproved: row.biometric_security_approved === true,
+    biometricLicenseApproved: row.biometric_license_approved === true,
   };
 }
 
@@ -1009,8 +1022,15 @@ function visitorKioskAdminDto(row: VisitorKioskConfigRow, policy: VisitorKioskPo
       publicUrl: visitorConfigEnv("PORTAL_PUBLIC_URL") || visitorConfigEnv("VISITOR_KIOSK_PUBLIC_URL"),
       emailDeliveryConfigured: Boolean(visitorConfigEnv("RESEND_API_KEY") && visitorConfigEnv("RESEND_FROM_EMAIL")),
       passPolicyConfigured: Boolean(visitorConfigEnv("VISITOR_PASS_TTL_HOURS") && visitorConfigEnv("VISITOR_PASS_EARLY_MINUTES")),
-      ocrStatus: "NOT_CONFIGURED",
-      identityVerificationStatus: "MANUAL_REVIEW_REQUIRED",
+      ocrStatus: "BROWSER_LOCAL_TESSERACT",
+      identityVerificationStatus: policy.biometricProcessingEnabled
+        && policy.biometricPrivacyApproved && policy.biometricPiaApproved
+        && policy.biometricSecurityApproved && policy.biometricLicenseApproved
+        && visitorConfigEnv("VISITOR_BIOMETRIC_ENABLED").toLowerCase() === "true"
+        && visitorConfigEnv("VISITOR_BIOMETRIC_SERVICE_URL").startsWith("https://")
+        && visitorConfigEnv("VISITOR_BIOMETRIC_SERVICE_KEY").length >= 32
+        ? "ENABLED_DEEPFACE_MANUAL_REVIEW_REQUIRED"
+        : "DISABLED_PENDING_BIOMETRIC_APPROVALS",
     },
   };
 }
@@ -1047,6 +1067,10 @@ async function handleUpdateVisitorKioskConfig(ctx: AuthContext | null, req: Requ
     }
     const acceptedIdTypes = splitVisitorKioskList(b.acceptedIdTypes).slice(0, 20);
     if (acceptedIdTypes.some((value) => value.length > 100)) throw new Error("Each accepted ID type must be 100 characters or fewer.");
+    const ocrSupported = new Set<string>(VISITOR_KIOSK_OCR_SUPPORTED_ID_TYPES);
+    if (acceptedIdTypes.some((value) => !ocrSupported.has(value))) {
+      throw new Error(`Accepted ID types must use the supported categories: ${VISITOR_KIOSK_OCR_SUPPORTED_ID_TYPES.join(", ")}.`);
+    }
     policy = {
       organizationName: requiredVisitorKioskText(b, "organizationName", 2, 200),
       controllerName: requiredVisitorKioskText(b, "controllerName", 2, 200),
@@ -1069,7 +1093,18 @@ async function handleUpdateVisitorKioskConfig(ctx: AuthContext | null, req: Requ
       privacyReviewApproved: b.privacyReviewApproved === true,
       securityReviewApproved: b.securityReviewApproved === true,
       operationsReviewApproved: b.operationsReviewApproved === true,
+      biometricProcessingEnabled: b.biometricProcessingEnabled === true,
+      biometricNoticeText: String(b.biometricNoticeText ?? "").trim().slice(0, 8000),
+      biometricAuthorizationText: String(b.biometricAuthorizationText ?? "").trim().slice(0, 2000),
+      biometricPrivacyApproved: b.biometricPrivacyApproved === true,
+      biometricPiaApproved: b.biometricPiaApproved === true,
+      biometricSecurityApproved: b.biometricSecurityApproved === true,
+      biometricLicenseApproved: b.biometricLicenseApproved === true,
     };
+    if (policy.biometricProcessingEnabled && (!policy.biometricNoticeText || !policy.biometricAuthorizationText
+      || !policy.biometricPrivacyApproved || !policy.biometricPiaApproved || !policy.biometricSecurityApproved || !policy.biometricLicenseApproved)) {
+      throw new Error("Biometric processing cannot be enabled until the approved notice, authorization text, PIA, privacy, security, and model-license reviews are recorded.");
+    }
   } catch (error) {
     return jsonResponse(fail((error as Error).message, "VALIDATION_ERROR"), 400);
   }
@@ -1101,6 +1136,19 @@ async function handleUpdateVisitorKioskConfig(ctx: AuthContext | null, req: Requ
     ...approvalFields("privacy", policy.privacyReviewApproved),
     ...approvalFields("security", policy.securityReviewApproved),
     ...approvalFields("operations", policy.operationsReviewApproved),
+    biometric_processing_enabled: policy.biometricProcessingEnabled === true,
+    biometric_notice_text: policy.biometricNoticeText || null,
+    biometric_authorization_text: policy.biometricAuthorizationText || null,
+    ...Object.fromEntries(["privacy", "pia", "security", "license"].flatMap((prefix) => {
+      const key = `${prefix[0].toUpperCase()}${prefix.slice(1)}Approved`;
+      const approved = policy[`biometric${key}` as keyof VisitorKioskPolicy] === true;
+      const previous = existing[`biometric_${prefix}_approved` as keyof VisitorKioskConfigRow] === true;
+      return [
+        [`biometric_${prefix}_approved`, approved],
+        [`biometric_${prefix}_approved_by`, approved ? (previous ? existing[`biometric_${prefix}_approved_by` as keyof VisitorKioskConfigRow] : ctx!.userId) : null],
+        [`biometric_${prefix}_approved_at`, approved ? (previous ? existing[`biometric_${prefix}_approved_at` as keyof VisitorKioskConfigRow] : now) : null],
+      ];
+    })),
     revision: existing.revision + 1, updated_at: now, updated_by: ctx!.userId,
   };
   const { data: saved, error } = await db.from("visitor_kiosk_configuration").update(payload)

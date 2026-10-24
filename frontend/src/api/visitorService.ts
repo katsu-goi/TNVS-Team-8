@@ -30,8 +30,15 @@ export type KioskConfig = {
     configurationComplete: boolean;
     registrationEnabled: boolean;
     missing: string[];
-    ocr: { status: 'NOT_CONFIGURED'; message: string };
-    identityVerification: { status: 'NOT_CONFIGURED'; livenessSupported: false; message: string };
+    ocr: { status: 'BROWSER_LOCAL'; message: string };
+    identityVerification: {
+      status: 'DISABLED' | 'ENABLED';
+      livenessSupported: false;
+      message: string;
+      biometricNotice?: string;
+      authorizationText?: string;
+      authorizationRequired?: boolean;
+    };
   };
   purposes: KioskPurpose[];
   hosts: KioskHost[];
@@ -48,7 +55,19 @@ export type KioskRegistration = {
   company?: string;
   idType: string;
   idNumberLast4?: string;
+  idExpirationDate?: string;
+  idIssuingAuthority?: string;
+  documentScreening?: {
+    ocrStatus: 'SUCCEEDED' | 'FAILED';
+    classification: 'SUPPORTED_ID_TYPE' | 'UNSUPPORTED_DOCUMENT' | 'PAYMENT_CARD_DETECTED' | 'INCONCLUSIVE';
+    detectedIdType: string | null;
+    warnings: string[];
+    textQuality: 'HIGH' | 'MEDIUM' | 'LOW';
+  };
   idImage: { dataUrl: string; confirmedReadable: true };
+  selfieImage?: { dataUrl: string };
+  biometricAuthorization?: boolean;
+  manualAlternativeRequested?: boolean;
   purposeCategory: string;
   otherPurpose?: string;
   hostId?: string;

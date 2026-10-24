@@ -10,8 +10,8 @@ vi.mock('../../api/visitorService', async () => {
 });
 
 vi.mock('./VisitorIdScanner', () => ({
-  VisitorIdScanner: ({ onImageChange }: { onImageChange: (image: string, confirmed: boolean) => void }) => (
-    <button type="button" onClick={() => onImageChange('data:image/jpeg;base64,AA==', true)}>Use test ID image</button>
+  VisitorIdScanner: ({ onImageChange, onScreeningChange }: { onImageChange: (image: string, confirmed: boolean) => void; onScreeningChange: (value: unknown) => void }) => (
+    <button type="button" onClick={() => { onScreeningChange({ ocrStatus: 'SUCCEEDED', classification: 'SUPPORTED_ID_TYPE', detectedIdType: 'Government ID', extracted: { fullName: '', detectedIdType: 'Government ID', idNumberLast4: '', expirationDate: '', issuingAuthority: '' }, warnings: [], textQuality: 'HIGH' }); onImageChange('data:image/jpeg;base64,AA==', true); }}>Use test ID image</button>
   ),
 }));
 
@@ -26,8 +26,8 @@ const configured: KioskConfig = {
     retentionDays: 30,
     processors: 'Configured processors', safeguards: 'Configured safeguards', alternativeVerification: 'Present the original ID to an authorized officer.',
     noticeVersion: '2026-10', acceptedIdTypes: ['Company ID', 'Government ID'], ready: true, configurationComplete: true, registrationEnabled: true, missing: [],
-    ocr: { status: 'NOT_CONFIGURED', message: 'OCR is not configured.' },
-    identityVerification: { status: 'NOT_CONFIGURED', livenessSupported: false, message: 'Provider not configured.' },
+    ocr: { status: 'BROWSER_LOCAL', message: 'OCR runs locally.' },
+    identityVerification: { status: 'DISABLED', livenessSupported: false, message: 'Provider not configured.' },
   },
   purposes: [{ value: 'MEETING_EMPLOYEE', label: 'Meeting an Employee' }, { value: 'OTHER', label: 'Other Purpose' }],
   hosts: [{ id: 'host-1', name: 'Active Host', department: 'Operations' }], departments: ['Operations'],
@@ -103,7 +103,7 @@ describe('VisitorKioskPage', () => {
 
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Government ID' } });
     fireEvent.click(screen.getByRole('button', { name: 'Use test ID image' }));
-    fireEvent.click(screen.getByRole('button', { name: /^continue$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /confirm and continue/i }));
     fireEvent.click(screen.getByRole('button', { name: /continue for manual review/i }));
 
     fireEvent.change(screen.getByLabelText('Full name'), { target: { value: 'Test Visitor' } });
@@ -132,7 +132,7 @@ describe('VisitorKioskPage', () => {
 
 describe('visitorDetailsAreValid', () => {
   const base: VisitorKioskFormState = {
-    fullName: 'Visitor Name', email: 'visitor@example.test', phoneNumber: '', company: '', idType: 'Company ID', idNumberLast4: '',
+    fullName: 'Visitor Name', email: 'visitor@example.test', phoneNumber: '', company: '', idType: 'Company ID', idNumberLast4: '', idExpirationDate: '', idIssuingAuthority: '',
     idImage: 'data:image/jpeg;base64,AA==', imageConfirmed: true, purposeCategory: 'OTHER', otherPurpose: '', hostId: '',
     receivingDepartment: 'Operations', expectedArrival: '2026-10-22T10:00',
   };

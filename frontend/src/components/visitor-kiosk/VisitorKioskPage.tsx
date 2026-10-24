@@ -8,6 +8,8 @@ import { extractApiErrorCode, extractErrorMessage, extractRequestId } from '../.
 import { visitorService, type KioskConfig, type KioskRegistration } from '../../api/visitorService';
 import { VisitorIdScanner } from './VisitorIdScanner';
 import { PrivacyNoticeStep } from './PrivacyNoticeStep';
+import { VisitorSelfieCapture } from './VisitorSelfieCapture';
+import type { DocumentScreeningResult } from './visitorDocumentScreening';
 
 type Step = 'welcome' | 'privacy' | 'id' | 'verification' | 'details' | 'review' | 'submitted';
 
@@ -18,6 +20,8 @@ export type VisitorKioskFormState = {
   company: string;
   idType: string;
   idNumberLast4: string;
+  idExpirationDate: string;
+  idIssuingAuthority: string;
   idImage: string;
   imageConfirmed: boolean;
   purposeCategory: string;
@@ -28,7 +32,7 @@ export type VisitorKioskFormState = {
 };
 
 const emptyForm: VisitorKioskFormState = {
-  fullName: '', email: '', phoneNumber: '', company: '', idType: '', idNumberLast4: '',
+  fullName: '', email: '', phoneNumber: '', company: '', idType: '', idNumberLast4: '', idExpirationDate: '', idIssuingAuthority: '',
   idImage: '', imageConfirmed: false, purposeCategory: '', otherPurpose: '', hostId: '',
   receivingDepartment: '', expectedArrival: '',
 };
@@ -95,6 +99,10 @@ export const VisitorKioskPage: React.FC = () => {
   const [error, setError] = useState('');
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
   const [form, setForm] = useState<VisitorKioskFormState>(emptyForm);
+  const [documentScreening, setDocumentScreening] = useState<DocumentScreeningResult | null>(null);
+  const [selfieImage, setSelfieImage] = useState('');
+  const [biometricAuthorization, setBiometricAuthorization] = useState(false);
+  const [manualAlternativeRequested, setManualAlternativeRequested] = useState(false);
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{
@@ -117,7 +125,7 @@ export const VisitorKioskPage: React.FC = () => {
   const detailsValid = useMemo(() => visitorDetailsAreValid(form), [form]);
 
   const reset = () => {
-    setStep('welcome'); setPrivacyAcknowledged(false); setForm(emptyForm); setResult(null); setError(''); setIdempotencyKey(crypto.randomUUID());
+    setStep('welcome'); setPrivacyAcknowledged(false); setForm(emptyForm); setDocumentScreening(null); setSelfieImage(''); setBiometricAuthorization(false); setManualAlternativeRequested(false); setResult(null); setError(''); setIdempotencyKey(crypto.randomUUID());
   };
 
   const submit = async () => {
@@ -129,6 +137,18 @@ export const VisitorKioskPage: React.FC = () => {
       privacyAcknowledged: true,
       fullName: form.fullName.trim(), email: form.email.trim(), phoneNumber: form.phoneNumber.trim() || undefined,
       company: form.company.trim() || undefined, idType: form.idType, idNumberLast4: form.idNumberLast4.trim() || undefined,
+      idExpirationDate: form.idExpirationDate.trim() || undefined,
+      idIssuingAuthority: form.idIssuingAuthority.trim() || undefined,
+      documentScreening: documentScreening ? {
+        ocrStatus: documentScreening.ocrStatus,
+        classification: documentScreening.classification,
+        detectedIdType: documentScreening.detectedIdType,
+        warnings: documentScreening.warnings,
+        textQuality: documentScreening.textQuality,
+      } : undefined,
+      selfieImage: selfieImage ? { dataUrl: selfieImage } : undefined,
+      biometricAuthorization: selfieImage ? biometricAuthorization : undefined,
+      manualAlternativeRequested,
       idImage: { dataUrl: form.idImage, confirmedReadable: true }, purposeCategory: form.purposeCategory,
       otherPurpose: form.otherPurpose.trim() || undefined, hostId: form.hostId || undefined,
       receivingDepartment: selectedHost?.department || form.receivingDepartment || undefined,
@@ -136,7 +156,7 @@ export const VisitorKioskPage: React.FC = () => {
     };
     try {
       const saved = await visitorService.submitKioskRegistration(payload);
-      setResult(saved); setForm((current) => ({ ...current, idImage: '', idNumberLast4: '' })); setStep('submitted');
+      setResult(saved); setForm((current) => ({ ...current, idImage: '', idNumberLast4: '' })); setSelfieImage(''); setBiometricAuthorization(false); setStep('submitted');
     } catch (submitError) { setError(errorMessage(submitError)); }
     finally { setSubmitting(false); }
   };
@@ -161,7 +181,7 @@ export const VisitorKioskPage: React.FC = () => {
             <div className="mt-6 grid gap-6 lg:grid-cols-[320px_1fr]">
               <div>
                 <label className={labelClass}>ID type</label>
-                <select value={form.idType} onChange={(event) => setForm((current) => ({ ...current, idType: event.target.value }))} className={inputClass}>
+                <select value={form.idType} onChange={(event) => { setDocumentScreening(null); setForm((current) => ({ ...current, idType: event.target.value, idImage: '', imageConfirmed: false, idExpirationDate: '', idIssuingAuthority: '' })); }} className={inputClass}>
                   <option value="">Select an approved ID</option>
                   {config.privacy.acceptedIdTypes.map((type) => <option key={type} value={type}>{type}</option>)}
                 </select>
@@ -170,22 +190,37 @@ export const VisitorKioskPage: React.FC = () => {
                   <input maxLength={4} value={form.idNumberLast4} onChange={(event) => setForm((current) => ({ ...current, idNumberLast4: event.target.value.replace(/[^A-Za-z0-9]/g, '') }))} className={inputClass} autoComplete="off" />
                   <span className="mt-1 block text-xs text-slate-500">Only the last four are requested to reduce retained ID data.</span>
                 </label>
-                <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-xs leading-5 text-blue-800"><strong>OCR and authenticity status:</strong> Not configured. Edge detection, alignment, focus, lighting, and glare checks do not verify that an ID is genuine.</div>
+                <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-xs leading-5 text-blue-800"><strong>OCR screening:</strong> Tesseract.js runs locally after capture. It assists transcription and document-category screening only; it does not prove authenticity or identity.</div>
               </div>
               <VisitorIdScanner
                 image={form.idImage}
                 confirmed={form.imageConfirmed}
+                selectedIdType={form.idType}
+                acceptedIdTypes={config.privacy.acceptedIdTypes}
                 onImageChange={(idImage, imageConfirmed) => setForm((current) => ({ ...current, idImage, imageConfirmed }))}
+                onScreeningChange={(screening) => {
+                  setDocumentScreening(screening);
+                  if (!screening) return;
+                  setForm((current) => ({
+                    ...current,
+                    fullName: screening.extracted.fullName || current.fullName,
+                    idType: screening.detectedIdType || current.idType,
+                    idNumberLast4: screening.extracted.idNumberLast4 || current.idNumberLast4,
+                    idExpirationDate: screening.extracted.expirationDate,
+                    idIssuingAuthority: screening.extracted.issuingAuthority,
+                  }));
+                }}
               />
             </div>
+            {documentScreening?.classification === 'SUPPORTED_ID_TYPE' && <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5"><h2 className="text-lg font-black text-slate-950">Review Your ID Information</h2><p className="mt-1 text-xs leading-5 text-slate-600">Correct OCR mistakes before continuing. Only the last four ID characters are retained; OCR does not establish document authenticity.</p><div className="mt-4 grid gap-4 sm:grid-cols-2"><label><span className={labelClass}>Full name</span><input value={form.fullName} onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value }))} maxLength={150} className={inputClass} /></label><label><span className={labelClass}>Confirmed ID type</span><select value={form.idType} onChange={(event) => setForm((current) => ({ ...current, idType: event.target.value }))} className={inputClass}>{config.privacy.acceptedIdTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label><label><span className={labelClass}>Expiration date (when shown)</span><input value={form.idExpirationDate} onChange={(event) => setForm((current) => ({ ...current, idExpirationDate: event.target.value }))} maxLength={40} className={inputClass} /></label><label><span className={labelClass}>Issuing authority (when shown)</span><input value={form.idIssuingAuthority} onChange={(event) => setForm((current) => ({ ...current, idIssuingAuthority: event.target.value }))} maxLength={120} className={inputClass} /></label></div>{documentScreening.warnings.length > 0 && <ul className="mt-3 list-disc pl-5 text-xs text-amber-900">{documentScreening.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</div>}
             <div className="mt-6 flex justify-between">
               <button onClick={() => setStep('privacy')} className="inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-slate-600"><ArrowLeft className="h-4 w-4" />Back</button>
-              <button disabled={!form.idType || !form.idImage || !form.imageConfirmed} onClick={() => setStep('verification')} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Continue <ArrowRight className="h-4 w-4" /></button>
+              <button disabled={!form.idType || !form.idImage || !form.imageConfirmed || documentScreening?.classification !== 'SUPPORTED_ID_TYPE'} onClick={() => setStep('verification')} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Confirm and Continue <ArrowRight className="h-4 w-4" /></button>
             </div>
           </section>
         )}
 
-        {step === 'verification' && <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-10"><div className="mx-auto max-w-2xl text-center"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-100 text-amber-700"><UserRound className="h-8 w-8" /></div><h1 className="mt-5 text-2xl font-black">Identity verification requires manual review</h1><p className="mt-3 text-sm leading-7 text-slate-600">{config.privacy.identityVerification.message}</p><div className="mt-6 rounded-xl border border-amber-300 bg-amber-50 p-5 text-left text-sm leading-6 text-amber-900"><p className="font-extrabold">No face image will be collected in this configuration.</p><p className="mt-1">Ordinary camera detection is not identity verification, and no successful face match, liveness result, or confidence score will be fabricated.</p><p className="mt-3"><strong>Approved alternative:</strong> {config.privacy.alternativeVerification}</p></div></div><div className="mt-8 flex justify-between"><button onClick={() => setStep('id')} className="inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-slate-600"><ArrowLeft className="h-4 w-4" />Back</button><button onClick={() => setStep('details')} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white">Continue for manual review <ArrowRight className="h-4 w-4" /></button></div></section>}
+        {step === 'verification' && <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-10"><div className="mx-auto max-w-2xl text-center"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-100 text-amber-700"><UserRound className="h-8 w-8" /></div><h1 className="mt-5 text-2xl font-black">Verify Your Identity</h1><p className="mt-3 text-sm leading-7 text-slate-600">{config.privacy.identityVerification.message}</p>{config.privacy.identityVerification.status === 'ENABLED' ? <div className="mt-6 text-left"><div className="rounded-xl border border-blue-200 bg-blue-50 p-5 text-sm leading-6 text-blue-950"><p className="font-extrabold">Biometric-processing notice</p><p className="mt-1">{config.privacy.identityVerification.biometricNotice}</p><p className="mt-3">A DeepFace comparison is supporting evidence only. It does not authenticate the ID and cannot approve your identity or visit.</p></div><label className="mt-4 flex items-start gap-3 rounded-xl border border-slate-200 p-4"><input type="checkbox" checked={biometricAuthorization} disabled={manualAlternativeRequested} onChange={(event) => { setBiometricAuthorization(event.target.checked); if (!event.target.checked) setSelfieImage(''); }} className="mt-1 h-5 w-5 accent-red-700" /><span className="text-sm font-semibold">{config.privacy.identityVerification.authorizationText}</span></label><VisitorSelfieCapture image={selfieImage} authorized={biometricAuthorization && !manualAlternativeRequested} onImageChange={setSelfieImage} /><button type="button" onClick={() => { setManualAlternativeRequested(true); setBiometricAuthorization(false); setSelfieImage(''); }} className="mt-4 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-800">Request Manual Verification</button>{manualAlternativeRequested && <p className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">Manual verification selected. No selfie will be collected. {config.privacy.alternativeVerification}</p>}</div> : <div className="mt-6 rounded-xl border border-amber-300 bg-amber-50 p-5 text-left text-sm leading-6 text-amber-900"><p className="font-extrabold">No face image will be collected in this configuration.</p><p className="mt-1">Production biometric processing remains disabled until every organizational approval and safeguard is complete.</p><p className="mt-3"><strong>Approved alternative:</strong> {config.privacy.alternativeVerification}</p></div>}</div><div className="mt-8 flex justify-between"><button onClick={() => setStep('id')} className="inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-slate-600"><ArrowLeft className="h-4 w-4" />Back</button><button disabled={config.privacy.identityVerification.status === 'ENABLED' && !manualAlternativeRequested && !(biometricAuthorization && selfieImage)} onClick={() => setStep('details')} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white disabled:bg-slate-300">{manualAlternativeRequested || config.privacy.identityVerification.status !== 'ENABLED' ? 'Continue for manual review' : 'Continue'} <ArrowRight className="h-4 w-4" /></button></div></section>}
 
         {step === 'details' && <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-8"><h1 className="text-2xl font-black">Visitor and visit details</h1><p className="mt-1 text-sm text-slate-500">Provide only the information needed to route and approve this visit.</p><div className="mt-6 grid gap-4 sm:grid-cols-2"><label><span className={labelClass}>Full name</span><input value={form.fullName} onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value }))} className={inputClass} autoComplete="name" maxLength={150} /></label><label><span className={labelClass}>Email for QR pass</span><input type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className={inputClass} autoComplete="email" /></label><label><span className={labelClass}>Phone number (optional)</span><input value={form.phoneNumber} onChange={(event) => setForm((current) => ({ ...current, phoneNumber: event.target.value }))} className={inputClass} autoComplete="tel" maxLength={30} /></label><label><span className={labelClass}>Organization (required for government visits)</span><input value={form.company} onChange={(event) => setForm((current) => ({ ...current, company: event.target.value }))} className={inputClass} maxLength={150} /></label><label className="sm:col-span-2"><span className={labelClass}>Purpose of visit</span><select value={form.purposeCategory} onChange={(event) => { const purpose = config.purposes.find((item) => item.value === event.target.value); setForm((current) => ({ ...current, purposeCategory: event.target.value, hostId: '', receivingDepartment: purpose?.department ?? '', otherPurpose: '' })); }} className={inputClass}><option value="">Select a purpose</option>{config.purposes.map((purpose) => <option key={purpose.value} value={purpose.value}>{purpose.label}</option>)}</select></label>{form.purposeCategory === 'OTHER' && <label className="sm:col-span-2"><span className={labelClass}>Explain the other purpose</span><textarea value={form.otherPurpose} onChange={(event) => setForm((current) => ({ ...current, otherPurpose: event.target.value }))} className={inputClass} rows={3} minLength={3} maxLength={500} /><span className="mt-1 block text-right text-xs text-slate-400">{form.otherPurpose.length}/500</span></label>}{form.purposeCategory === 'MEETING_EMPLOYEE' || form.purposeCategory === 'BUSINESS_MEETING' ? <label className="sm:col-span-2"><span className={labelClass}>{form.purposeCategory === 'MEETING_EMPLOYEE' ? 'Employee host' : 'Intended host (if applicable)'}</span><select value={form.hostId} onChange={(event) => setForm((current) => ({ ...current, hostId: event.target.value, receivingDepartment: config.hosts.find((host) => host.id === event.target.value)?.department ?? '' }))} className={inputClass}><option value="">Select an active employee</option>{config.hosts.map((host) => <option key={host.id} value={host.id}>{host.name} — {host.department}</option>)}</select></label> : selectedPurpose?.department ? <div className="sm:col-span-2"><span className={labelClass}>Receiving department</span><div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800">Automatically routed to {selectedPurpose.department}</div></div> : <label className="sm:col-span-2"><span className={labelClass}>Receiving department</span><select value={form.receivingDepartment} onChange={(event) => setForm((current) => ({ ...current, receivingDepartment: event.target.value }))} className={inputClass}><option value="">Select a department</option>{config.departments.map((department) => <option key={department} value={department}>{department}</option>)}</select></label>}<label className="sm:col-span-2"><span className={labelClass}>Expected arrival</span><input type="datetime-local" value={form.expectedArrival} onChange={(event) => setForm((current) => ({ ...current, expectedArrival: event.target.value }))} min={new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16)} className={inputClass} /></label></div><div className="mt-6 flex justify-between"><button onClick={() => setStep('verification')} className="inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-slate-600"><ArrowLeft className="h-4 w-4" />Back</button><button disabled={!detailsValid} onClick={() => setStep('review')} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Review request <ArrowRight className="h-4 w-4" /></button></div></section>}
 

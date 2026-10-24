@@ -9,11 +9,16 @@ import {
   type DocumentFrameAnalysis,
   type ScanGuideState,
 } from './idDocumentDetection';
+import { clearOcrResultCache, screenIdentityDocument } from './visitorOcr';
+import type { DocumentScreeningResult } from './visitorDocumentScreening';
 
 type Props = {
   image: string;
   confirmed: boolean;
+  selectedIdType: string;
+  acceptedIdTypes: string[];
   onImageChange: (image: string, confirmed: boolean) => void;
+  onScreeningChange: (result: DocumentScreeningResult | null) => void;
 };
 
 const initialAutoCapture: AutoCaptureState = { stableSince: null, progress: 0, captured: false, lastQuad: null };
@@ -108,7 +113,7 @@ const guideColors: Record<ScanGuideState, { border: string; glow: string; text: 
   green: { border: 'border-emerald-400', glow: 'shadow-[0_0_34px_rgba(52,211,153,.35)]', text: 'text-emerald-100', polygon: '#34d399' },
 };
 
-export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, onImageChange }) => {
+export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, selectedIdType, acceptedIdTypes, onImageChange, onScreeningChange }) => {
   const previewRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -130,6 +135,9 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, onImageCha
   const [analysis, setAnalysis] = useState<DocumentFrameAnalysis | null>(null);
   const [captureProgress, setCaptureProgress] = useState(0);
   const [capturing, setCapturing] = useState(false);
+  const [candidateImage, setCandidateImage] = useState('');
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const [screeningResult, setScreeningResult] = useState<DocumentScreeningResult | null>(null);
   const [videoLayout, setVideoLayout] = useState<{ left: number; top: number; width: number; height: number; guide: { left: number; top: number; width: number; height: number } } | null>(null);
 
   const updateVideoLayout = useCallback(() => {
@@ -163,6 +171,35 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, onImageCha
     setActive(false); setStarting(false); setCapturing(false); setCaptureProgress(0);
   }, []);
 
+  const processCandidate = useCallback(async (dataUrl: string) => {
+    if (!selectedIdType) {
+      captureLockRef.current = false;
+      setCapturing(false);
+      setError('Select the ID type before capturing or uploading a document.');
+      return;
+    }
+    stopCamera();
+    setCapturing(true);
+    setCandidateImage(dataUrl);
+    setOcrProgress(0);
+    setScreeningResult(null);
+    const result = await screenIdentityDocument(dataUrl, selectedIdType, acceptedIdTypes, ({ progress }) => {
+      setOcrProgress(Math.max(0, Math.min(1, progress)));
+    });
+    setCapturing(false);
+    setScreeningResult(result);
+    if (result.classification === 'SUPPORTED_ID_TYPE') {
+      onScreeningChange(result);
+      onImageChange(dataUrl, false);
+      setCandidateImage('');
+      return;
+    }
+    // Rejected candidates are discarded before they can enter the registration payload.
+    setCandidateImage('');
+    onScreeningChange(null);
+    onImageChange('', false);
+  }, [acceptedIdTypes, onImageChange, onScreeningChange, selectedIdType, stopCamera]);
+
   const saveCurrentFrame = useCallback((source: 'automatic' | 'manual', frameAnalysis = analysisRef.current) => {
     if (captureLockRef.current) return;
     const video = videoRef.current;
@@ -175,9 +212,8 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, onImageCha
       setError('The camera has not produced a complete image yet. Hold the ID steady, then retry.');
       return;
     }
-    onImageChange(dataUrl, false);
-    stopCamera();
-  }, [onImageChange, stopCamera]);
+    void processCandidate(dataUrl);
+  }, [processCandidate]);
 
   const runAnalysis = useCallback((timestamp: number) => {
     if (!activeRef.current) return;
@@ -261,14 +297,20 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, onImageCha
 
   const retake = () => {
     restartAfterClearRef.current = true;
-    onImageChange('', false); captureLockRef.current = false; autoCaptureRef.current = initialAutoCapture;
+    clearOcrResultCache(); onScreeningChange(null); onImageChange('', false); captureLockRef.current = false; autoCaptureRef.current = initialAutoCapture;
+    setCandidateImage(''); setScreeningResult(null); setOcrProgress(0);
     setAnalysis(null); analysisRef.current = null; setCaptureProgress(0); setError('');
   };
 
   const upload = async (file?: File) => {
     if (!file) return;
     setError('');
-    try { const dataUrl = await validateIdImageFile(file); stopCamera(); onImageChange(dataUrl, false); }
+    try {
+      const dataUrl = await validateIdImageFile(file);
+      captureLockRef.current = true;
+      setCapturing(true);
+      await processCandidate(dataUrl);
+    }
     catch (uploadError) { setError(uploadError instanceof Error ? uploadError.message : 'The image is invalid.'); }
     finally { if (fileRef.current) fileRef.current.value = ''; }
   };
@@ -305,7 +347,7 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, onImageCha
       <div ref={previewRef} className="relative aspect-video min-h-72 overflow-hidden rounded-2xl bg-slate-950 shadow-inner">
         <video ref={videoRef} autoPlay muted playsInline aria-label="Live ID camera preview" className={`absolute inset-0 h-full w-full object-contain transition-opacity duration-300 ${active || starting ? 'opacity-100' : 'opacity-0'}`} />
         <canvas ref={analysisCanvasRef} className="hidden" aria-hidden="true" />
-        {image && <img src={image} alt="Captured ID preview" className="absolute inset-0 h-full w-full bg-slate-950 object-contain" />}
+        {(image || candidateImage) && <img src={image || candidateImage} alt="Captured ID preview" className="absolute inset-0 h-full w-full bg-slate-950 object-contain" />}
 
         {!image && active && <>
           <div className={`pointer-events-none absolute rounded-[1.25rem] border-2 ${colors.border} ${colors.glow} transition-colors duration-200`} style={videoLayout ? { left: videoLayout.guide.left, top: videoLayout.guide.top, width: videoLayout.guide.width, height: videoLayout.guide.height, boxShadow: '0 0 0 9999px rgba(2,6,23,.55)' } : { left: '19.65%', top: '16%', width: '60.7%', height: '68%', boxShadow: '0 0 0 9999px rgba(2,6,23,.55)' }}>
@@ -319,7 +361,7 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, onImageCha
 
         {!image && !active && !starting && <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center text-slate-300"><ScanLine className="h-12 w-12" /><p className="mt-3 text-sm font-bold">Camera preview appears here</p><p className="mt-1 max-w-sm text-xs text-slate-400">The camera starts only when you choose it. A photo upload remains available.</p></div>}
         {starting && <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/65 text-white"><Loader2 className="h-9 w-9 animate-spin" /><p className="mt-3 text-sm font-bold">Starting camera…</p></div>}
-        {capturing && <div className="absolute inset-0 flex items-center justify-center bg-white/80 text-slate-950"><div className="text-center"><Camera className="mx-auto h-10 w-10 animate-pulse text-red-700" /><p className="mt-2 text-sm font-black">Capturing ID…</p></div></div>}
+        {capturing && <div className="absolute inset-0 flex items-center justify-center bg-white/90 text-slate-950"><div className="w-64 text-center"><Loader2 className="mx-auto h-10 w-10 animate-spin text-red-700" /><p className="mt-2 text-sm font-black">Checking document type with OCR…</p><div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full bg-red-700 transition-[width]" style={{ width: `${Math.round(ocrProgress * 100)}%` }} /></div><p className="mt-2 text-xs text-slate-600">The image remains in this browser while it is screened.</p></div></div>}
         {image && <div className="absolute left-4 top-4 rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white"><Check className="mr-1 inline h-3.5 w-3.5" />ID captured successfully</div>}
       </div>
 
@@ -335,7 +377,8 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, onImageCha
         {!image && <button type="button" onClick={() => fileRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold"><ImageUp className="h-4 w-4" />Upload photo</button>}
         {active && devices.length > 1 && <button type="button" onClick={() => { const current = devices.findIndex((device) => device.deviceId === selectedDeviceId); switchCamera(devices[(current + 1) % devices.length]?.deviceId ?? ''); }} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold"><SwitchCamera className="h-4 w-4" />Switch camera</button>}
       </div>
-      {confirmed && <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">Photo selected for secure submission. It remains in this kiosk session until you submit or reset.</p>}
+      {screeningResult && screeningResult.classification !== 'SUPPORTED_ID_TYPE' && <div role="alertdialog" aria-modal="true" className="mt-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"><p className="font-black">{screeningResult.classification === 'PAYMENT_CARD_DETECTED' ? 'Unsupported Document Detected' : screeningResult.classification === 'UNSUPPORTED_DOCUMENT' ? 'Unsupported document' : 'Document screening inconclusive'}</p><p className="mt-1">{screeningResult.classification === 'PAYMENT_CARD_DETECTED' ? 'This appears to be a payment card, not an accepted identification document. Please present an approved ID. The image and OCR output were discarded.' : screeningResult.warnings[0]}</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={retake} className="rounded-xl bg-red-700 px-4 py-2.5 text-sm font-bold text-white">Scan Another ID</button><span className="self-center text-xs font-semibold">Or ask staff for the approved manual verification alternative.</span></div></div>}
+      {confirmed && <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">Photo passed document-category screening and is selected for secure submission. This does not prove authenticity or identity.</p>}
       {error && <div role="alert" className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error}</span></div>}
     </div>
   );

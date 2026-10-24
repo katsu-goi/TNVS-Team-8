@@ -58,6 +58,7 @@ const PURPOSE_VALUES = new Set(VISITOR_KIOSK_PURPOSES.map((purpose) => purpose.v
 const FIXED_DEPARTMENT_PURPOSES = new Set<string>(VISITOR_KIOSK_FIXED_DEPARTMENT_PURPOSES);
 const IMAGE_BUCKET = "visitor-identity-private";
 const MAX_ID_IMAGE_BYTES = 5 * 1024 * 1024;
+const FACIAL_RESULTS = new Set(["MATCH_INDICATED", "MISMATCH_INDICATED", "INCONCLUSIVE", "NO_FACE_DETECTED", "MULTIPLE_FACES_DETECTED", "PROCESSING_FAILED"]);
 
 function envText(name: string): string {
   return Deno.env.get(name)?.trim() ?? "";
@@ -72,10 +73,58 @@ type KioskConfigRow = {
   accepted_id_types: string[] | null; purpose_department_routes: Record<string, unknown> | null;
   registration_enabled: boolean; privacy_review_approved: boolean; security_review_approved: boolean;
   operations_review_approved: boolean;
+  biometric_processing_enabled: boolean; biometric_notice_text: string | null; biometric_authorization_text: string | null;
+  biometric_privacy_approved: boolean; biometric_pia_approved: boolean; biometric_security_approved: boolean;
+  biometric_license_approved: boolean;
 };
 
 function preferDatabase(value: string | null | undefined, envName: string): string {
   return value?.trim() || envText(envName);
+}
+
+type FacialScreening = {
+  status: string; provider: string | null; model: string | null; detector: string | null;
+  distance: number | null; threshold: number | null; antiSpoofingStatus: string;
+};
+
+async function runFacialScreening(requestId: string, idImage: string, selfieImage: string): Promise<FacialScreening> {
+  const endpoint = envText("VISITOR_BIOMETRIC_SERVICE_URL").replace(/\/+$/, "");
+  const key = envText("VISITOR_BIOMETRIC_SERVICE_KEY");
+  const fallback: FacialScreening = {
+    status: "PROCESSING_FAILED", provider: "DEEPFACE", model: null, detector: null,
+    distance: null, threshold: null, antiSpoofingStatus: "INCONCLUSIVE",
+  };
+  try {
+    const response = await fetch(`${endpoint}/v1/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Visitor-Verification-Key": key },
+      body: JSON.stringify({ requestId, idImage, selfieImage }),
+      signal: AbortSignal.timeout(50_000),
+    });
+    if (!response.ok) {
+      console.error(`visitor biometric service failed category=HTTP_${response.status}`);
+      return fallback;
+    }
+    const result = await response.json() as Record<string, unknown>;
+    const status = String(result.status ?? "").toUpperCase();
+    if (!FACIAL_RESULTS.has(status)) {
+      console.error("visitor biometric service failed category=INVALID_RESULT");
+      return fallback;
+    }
+    const numeric = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : null;
+    const anti = String(result.antiSpoofingStatus ?? "NOT_PERFORMED").toUpperCase();
+    return {
+      status,
+      provider: String(result.provider ?? "DEEPFACE").slice(0, 80),
+      model: String(result.model ?? "").slice(0, 80) || null,
+      detector: String(result.detector ?? "").slice(0, 80) || null,
+      distance: numeric(result.distance), threshold: numeric(result.threshold),
+      antiSpoofingStatus: ["NOT_PERFORMED", "REAL_INDICATED", "SPOOF_INDICATED", "INCONCLUSIVE"].includes(anti) ? anti : "INCONCLUSIVE",
+    };
+  } catch (error) {
+    console.error(`visitor biometric service failed category=${error instanceof DOMException && error.name === "TimeoutError" ? "TIMEOUT" : "UNAVAILABLE"}`);
+    return fallback;
+  }
 }
 
 async function kioskPrivacyConfig(activeDepartments: string[]) {
@@ -110,11 +159,25 @@ async function kioskPrivacyConfig(activeDepartments: string[]) {
     privacyReviewApproved: row?.privacy_review_approved === true,
     securityReviewApproved: row?.security_review_approved === true,
     operationsReviewApproved: row?.operations_review_approved === true,
+    biometricProcessingEnabled: row?.biometric_processing_enabled === true,
+    biometricNoticeText: row?.biometric_notice_text?.trim() || "",
+    biometricAuthorizationText: row?.biometric_authorization_text?.trim() || "",
+    biometricPrivacyApproved: row?.biometric_privacy_approved === true,
+    biometricPiaApproved: row?.biometric_pia_approved === true,
+    biometricSecurityApproved: row?.biometric_security_approved === true,
+    biometricLicenseApproved: row?.biometric_license_approved === true,
   };
   const readiness = evaluateVisitorKioskReadiness(policy, activeDepartments);
+  const biometricServiceUrl = envText("VISITOR_BIOMETRIC_SERVICE_URL");
+  const secureBiometricTransport = biometricServiceUrl.startsWith("https://")
+    || (envText("VISITOR_BIOMETRIC_ALLOW_INSECURE_LOCALHOST").toLowerCase() === "true"
+      && /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?(?:\/|$)/.test(biometricServiceUrl));
+  const biometricRuntimeReady = envText("VISITOR_BIOMETRIC_ENABLED").toLowerCase() === "true"
+    && secureBiometricTransport
+    && envText("VISITOR_BIOMETRIC_SERVICE_KEY").length >= 32;
   return {
     policy,
-    privacy: publicVisitorKioskPrivacy(policy, readiness),
+    privacy: publicVisitorKioskPrivacy(policy, readiness, biometricRuntimeReady),
   };
 }
 
@@ -220,6 +283,22 @@ type VisitorRow = {
   privacy_acknowledged_at?: string | null;
   identity_verification_status?: string | null;
   identity_verification_provider?: string | null;
+  ocr_processing_status?: string | null;
+  document_classification?: string | null;
+  document_detected_type?: string | null;
+  document_expiration_text?: string | null;
+  document_issuing_authority?: string | null;
+  document_screening_warnings?: unknown[] | null;
+  ocr_text_quality?: string | null;
+  facial_comparison_status?: string | null;
+  facial_comparison_provider?: string | null;
+  facial_comparison_model?: string | null;
+  facial_comparison_detector?: string | null;
+  facial_comparison_distance?: number | null;
+  facial_comparison_threshold?: number | null;
+  facial_comparison_at?: string | null;
+  anti_spoofing_status?: string | null;
+  manual_identity_review_required?: boolean | null;
   approval_status?: string | null;
   approved_by?: string | null;
   approved_at?: string | null;
@@ -336,6 +415,22 @@ function toVisitorDto(v: VisitorRow, verification?: VerificationRow | null, incl
     privacyNoticeVersion: v.privacy_notice_version ?? null,
     identityVerificationStatus: v.identity_verification_status ?? null,
     identityVerificationProvider: v.identity_verification_provider ?? null,
+    ocrProcessingStatus: v.ocr_processing_status ?? "NOT_REQUESTED",
+    documentClassification: v.document_classification ?? "NOT_SCREENED",
+    documentDetectedType: v.document_detected_type ?? null,
+    documentExpirationText: v.document_expiration_text ?? null,
+    documentIssuingAuthority: v.document_issuing_authority ?? null,
+    documentScreeningWarnings: Array.isArray(v.document_screening_warnings) ? v.document_screening_warnings : [],
+    ocrTextQuality: v.ocr_text_quality ?? null,
+    facialComparisonStatus: v.facial_comparison_status ?? "PROVIDER_NOT_CONFIGURED",
+    facialComparisonProvider: v.facial_comparison_provider ?? null,
+    facialComparisonModel: v.facial_comparison_model ?? null,
+    facialComparisonDetector: v.facial_comparison_detector ?? null,
+    facialComparisonDistance: v.facial_comparison_distance ?? null,
+    facialComparisonThreshold: v.facial_comparison_threshold ?? null,
+    facialComparisonAt: v.facial_comparison_at ?? null,
+    antiSpoofingStatus: v.anti_spoofing_status ?? "NOT_PERFORMED",
+    manualIdentityReviewRequired: v.manual_identity_review_required ?? true,
     approvalStatus: v.approval_status ?? "NOT_REQUIRED",
     approvedAt: v.approved_at ?? null,
     declinedAt: v.declined_at ?? null,
@@ -531,8 +626,24 @@ async function handleKioskRegister(_ctx: AuthContext | null, req: Request, body:
   const idNumberLast4 = String(b.idNumberLast4 ?? "").replace(/[^A-Za-z0-9]/g, "").slice(-4).toUpperCase() || null;
   const idempotencyKey = String(b.idempotencyKey ?? "").trim();
   const privacyVersion = String(b.privacyNoticeVersion ?? "").trim();
-  const image = parseImageDataUrl((b.idImage as Record<string, unknown> | undefined)?.dataUrl);
+  const idImageDataUrl = String((b.idImage as Record<string, unknown> | undefined)?.dataUrl ?? "");
+  const image = parseImageDataUrl(idImageDataUrl);
   const readabilityConfirmed = (b.idImage as Record<string, unknown> | undefined)?.confirmedReadable === true;
+  const selfieDataUrl = String((b.selfieImage as Record<string, unknown> | undefined)?.dataUrl ?? "");
+  const selfie = selfieDataUrl ? parseImageDataUrl(selfieDataUrl) : null;
+  const biometricAuthorization = b.biometricAuthorization === true;
+  const manualAlternativeRequested = b.manualAlternativeRequested === true;
+  const biometricEnabled = privacy.identityVerification.status === "ENABLED";
+  const screening = (b.documentScreening ?? {}) as Record<string, unknown>;
+  const ocrStatus = String(screening.ocrStatus ?? "").trim().toUpperCase();
+  const documentClassification = String(screening.classification ?? "").trim().toUpperCase();
+  const detectedIdType = String(screening.detectedIdType ?? "").trim().slice(0, 100) || null;
+  const textQuality = String(screening.textQuality ?? "").trim().toUpperCase();
+  const screeningWarnings = Array.isArray(screening.warnings)
+    ? screening.warnings.map((value) => String(value).trim().slice(0, 300)).filter(Boolean).slice(0, 8)
+    : [];
+  const documentExpiration = String(b.idExpirationDate ?? "").trim().slice(0, 40) || null;
+  const documentIssuingAuthority = String(b.idIssuingAuthority ?? "").trim().slice(0, 120) || null;
 
   if (fullName.length < 2 || fullName.length > 150) return badRequest("Enter a valid visitor name (2–150 characters).", "VALIDATION_ERROR");
   if (!emailLooksValid(email)) return badRequest("Enter a valid email address for visit updates and the QR pass.", "VALIDATION_ERROR");
@@ -545,7 +656,21 @@ async function handleKioskRegister(_ctx: AuthContext | null, req: Request, body:
   }
   if (purposeCategory !== "OTHER" && otherPurpose) return badRequest("An Other Purpose explanation is only accepted for Other Purpose.", "VALIDATION_ERROR");
   if (!privacy.acceptedIdTypes.includes(idType)) return badRequest("Select an ID type approved by company policy.", "ID_TYPE_NOT_ACCEPTED");
+  if (ocrStatus !== "SUCCEEDED" || documentClassification !== "SUPPORTED_ID_TYPE") {
+    return badRequest("The document must pass local OCR category screening before it can be submitted. Use an approved ID or request manual assistance.", "DOCUMENT_SCREENING_REQUIRED");
+  }
+  if (!detectedIdType || !privacy.acceptedIdTypes.includes(detectedIdType) || detectedIdType !== idType) {
+    return badRequest("The detected document type must match the selected administrator-approved category.", "DOCUMENT_TYPE_NOT_ACCEPTED");
+  }
+  if (!["HIGH", "MEDIUM", "LOW"].includes(textQuality)) return badRequest("The OCR quality result is invalid.", "DOCUMENT_SCREENING_INVALID");
   if (!image || !readabilityConfirmed) return badRequest("A valid, readable JPEG, PNG, or WebP ID image up to 5 MB is required.", "ID_IMAGE_INVALID");
+  if (!biometricEnabled && selfieDataUrl) return badRequest("Biometric processing is disabled; a selfie cannot be accepted.", "BIOMETRIC_FEATURE_DISABLED");
+  if (biometricEnabled && !manualAlternativeRequested && (!selfie || !biometricAuthorization)) {
+    return badRequest("Authorize and capture the selfie, or choose the approved manual verification alternative.", "BIOMETRIC_AUTHORIZATION_REQUIRED");
+  }
+  if (biometricEnabled && manualAlternativeRequested && selfieDataUrl) {
+    return badRequest("Do not include a selfie when requesting manual verification.", "BIOMETRIC_ALTERNATIVE_INVALID");
+  }
   if (privacyVersion !== privacy.noticeVersion || b.privacyAcknowledged !== true) {
     return badRequest("Acknowledge the current privacy notice before submitting.", "PRIVACY_NOTICE_REQUIRED");
   }
@@ -594,6 +719,14 @@ async function handleKioskRegister(_ctx: AuthContext | null, req: Request, body:
     }, "This registration was already received"), 200);
   }
 
+  const facial = biometricEnabled && selfie && biometricAuthorization
+    ? await runFacialScreening(crypto.randomUUID(), idImageDataUrl, selfieDataUrl)
+    : {
+      status: biometricEnabled ? "INCONCLUSIVE" : "PROVIDER_NOT_CONFIGURED",
+      provider: null, model: null, detector: null, distance: null, threshold: null,
+      antiSpoofingStatus: "NOT_PERFORMED",
+    };
+
   const visitorId = crypto.randomUUID();
   const statusTokenIssuedAt = new Date().toISOString();
   const statusToken = await signedVisitorToken("vss_", "visitor-status", visitorId, statusTokenIssuedAt);
@@ -631,8 +764,24 @@ async function handleKioskRegister(_ctx: AuthContext | null, req: Request, body:
     reference_number: reference,
     privacy_notice_version: privacy.noticeVersion,
     privacy_acknowledged_at: new Date().toISOString(),
-    identity_verification_status: "PROVIDER_NOT_CONFIGURED",
-    identity_verification_provider: null,
+    identity_verification_status: biometricEnabled ? "NEEDS_MANUAL_REVIEW" : "PROVIDER_NOT_CONFIGURED",
+    identity_verification_provider: facial.provider,
+    ocr_processing_status: ocrStatus,
+    document_classification: documentClassification,
+    document_detected_type: detectedIdType,
+    document_expiration_text: documentExpiration,
+    document_issuing_authority: documentIssuingAuthority,
+    document_screening_warnings: screeningWarnings,
+    ocr_text_quality: textQuality,
+    facial_comparison_status: facial.status,
+    facial_comparison_provider: facial.provider,
+    facial_comparison_model: facial.model,
+    facial_comparison_detector: facial.detector,
+    facial_comparison_distance: facial.distance,
+    facial_comparison_threshold: facial.threshold,
+    facial_comparison_at: facial.provider ? new Date().toISOString() : null,
+    anti_spoofing_status: facial.antiSpoofingStatus,
+    manual_identity_review_required: true,
     approval_status: "PENDING",
     access_status: "NOT_AUTHORIZED",
     email_delivery_status: "NOT_REQUESTED",
@@ -704,7 +853,7 @@ async function handleKioskRegister(_ctx: AuthContext | null, req: Request, body:
     id: saved.id,
     referenceNumber: saved.reference_number,
     approvalStatus: saved.approval_status,
-    identityVerificationStatus: "PROVIDER_NOT_CONFIGURED",
+    identityVerificationStatus: biometricEnabled ? "NEEDS_MANUAL_REVIEW" : "PROVIDER_NOT_CONFIGURED",
     emailDeliveryStatus: acknowledgment.status,
     statusToken,
   }, "Visitor request submitted for approval"), 201);
