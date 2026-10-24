@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, Menu, X } from 'lucide-react';
+import { CircleHelp, Menu, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useLocation, useNavigate, useOutlet } from 'react-router-dom';
 import { useUserHeartbeat } from '../../hooks/useUserHeartbeat';
@@ -7,12 +7,16 @@ import { useRealtimeSyncStore } from '../../stores/realtimeSyncStore';
 import { HirnaSidebarDecoration } from '../ui/HirnaSidebarDecoration';
 import { NotificationBell } from '../ui/NotificationBell';
 import { UserProfileMenu } from '../ui/UserProfileMenu';
+import { Modal } from '../ui/SharedUI';
+import { PortalMenu } from './PortalMenu';
+import { getCurrentNavigationEntry, getPageGuide } from './pageGuidance';
 import {
   PortalLoadingOverlay, PortalLoadingProvider, usePortalLoadingController,
 } from '../ui/PortalLoadingOverlay';
 import {
   getPortalDestinations, getPortalLoadingMessage, normalizePortalPath, shouldStartPortalNavigation,
 } from './portalNavigation';
+import { NotificationFocusManager } from './NotificationFocusManager';
 
 export type PortalNavItem = {
   id: string;
@@ -68,6 +72,12 @@ const PortalShellFrame: React.FC<PortalShellProps> = ({
     .filter((item) => normalizePortalPath(location.pathname).startsWith(normalizePortalPath(item.path)))
     .sort((left, right) => right.path.length - left.path.length)[0];
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [compact, setCompact] = useState(() => window.matchMedia?.('(max-width: 1023px)').matches ?? false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  const currentPage = getCurrentNavigationEntry(navItems, portalLabel, location.pathname);
+  const pageGuide = getPageGuide(location.pathname, currentPage?.label || portalLabel);
   const [clock, setClock] = useState(new Date());
   const [expandedMenus, setExpandedMenus] = useState<Set<string>>(new Set());
   const [contentSlots, setContentSlots] = useState<ContentSlot[]>(() => ([{
@@ -82,6 +92,38 @@ const PortalShellFrame: React.FC<PortalShellProps> = ({
   const connectSync = useRealtimeSyncStore((state) => state.connectSync);
   const disconnectSync = useRealtimeSyncStore((state) => state.disconnectSync);
   useUserHeartbeat();
+
+  useEffect(() => {
+    const media = window.matchMedia?.('(max-width: 1023px)');
+    if (!media) return;
+    const update = () => { setCompact(media.matches); if (!media.matches) setMobileOpen(false); };
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileOpen || !compact) return;
+    const previousOverflow = document.body.style.overflow;
+    const menuTrigger = menuTriggerRef.current;
+    document.body.style.overflow = 'hidden';
+    const controls = () => Array.from(sidebarRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input, a[href]') || []).filter(element => !element.closest('[hidden]'));
+    const focusFrame = window.requestAnimationFrame(() => controls()[0]?.focus());
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); setMobileOpen(false); }
+      if (event.key !== 'Tab') return;
+      const items = controls();
+      const first = items[0]; const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKey);
+      if (window.matchMedia?.('(max-width: 1023px)').matches) menuTrigger?.focus();
+    };
+  }, [compact, mobileOpen]);
 
   useEffect(() => {
     const interval = window.setInterval(() => setClock(new Date()), 30000);
@@ -166,7 +208,7 @@ const PortalShellFrame: React.FC<PortalShellProps> = ({
   };
 
   const sidebar = (
-    <aside className={`hirna-sidebar fixed inset-y-0 left-0 z-40 flex w-72 flex-col overflow-hidden shadow-2xl transition-transform duration-300 lg:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+    <aside ref={sidebarRef} inert={compact && !mobileOpen} aria-hidden={compact && !mobileOpen ? true : undefined} role={compact && mobileOpen ? 'dialog' : undefined} aria-modal={compact && mobileOpen ? true : undefined} aria-label={compact && mobileOpen ? `${portalLabel} navigation menu` : undefined} className={`hirna-sidebar fixed inset-y-0 left-0 z-40 flex w-72 max-w-[calc(100vw-3rem)] flex-col overflow-hidden shadow-2xl transition-transform duration-300 lg:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
       <div className="hirna-sidebar-header flex shrink-0 items-center gap-3 px-5 py-4">
         <div className="hirna-sidebar-logo flex shrink-0 items-center justify-center overflow-hidden">
           <img src="/hirna-logo.png" alt="Hirna Logo" className="h-full w-full object-contain" draggable={false} />
@@ -180,66 +222,7 @@ const PortalShellFrame: React.FC<PortalShellProps> = ({
         </button>
       </div>
 
-      <nav className="hirna-sidebar-nav scrollbar-none min-h-0 flex-1 overflow-y-auto px-3 py-3" aria-label={`${portalLabel} navigation`}>
-        {navItems.map((item, index) => {
-          const Icon = item.icon;
-          const childActive = item.children?.some(child => isItemActive(child)) ?? false;
-          const active = childActive || (!item.disclosureOnly && isItemActive(item));
-          const expanded = expandedMenus.has(item.id);
-          const previousGroup = index > 0 ? navItems[index - 1].group : undefined;
-          return (
-            <React.Fragment key={item.id}>
-              {item.group && item.group !== previousGroup && (
-                <p className="mb-1 mt-4 px-3 text-[9px] font-bold uppercase tracking-[0.14em] text-white/45">{item.group}</p>
-              )}
-              <button
-                type="button"
-                aria-expanded={item.children ? expanded : undefined}
-                aria-controls={item.children ? `nav-${item.id}` : undefined}
-                aria-current={!item.disclosureOnly && active && !childActive ? 'page' : undefined}
-                onClick={(event) => {
-                  if (item.children) {
-                    toggleMenu(item.id);
-                    const toggleOnly = event.target instanceof Element
-                      && Boolean(event.target.closest('[data-menu-toggle]'));
-                    if (!item.disclosureOnly && !toggleOnly && !childActive) goTo(item.path, item.label);
-                  } else goTo(item.path, item.label);
-                }}
-                className={`hirna-nav-item mb-1 flex w-full items-center justify-between px-3 py-2.5 text-left text-sm font-medium ${active ? 'hirna-nav-item-active font-semibold' : ''}`}
-              >
-                <span className="flex min-w-0 items-center gap-2.5">
-                  <Icon className="hirna-nav-icon h-[18px] w-[18px] shrink-0" />
-                  <span className="truncate">{item.label}</span>
-                </span>
-                <span className="flex shrink-0 items-center gap-1.5">
-                  {item.badge && <span className="rounded-full border border-current/20 px-1.5 py-0.5 font-mono text-[9px] opacity-70">{item.badge}</span>}
-                  {item.children ? (
-                    <span data-menu-toggle="true" aria-label={`${expanded ? 'Collapse' : 'Expand'} ${item.label}`} className="-m-2 p-2">
-                      <ChevronDown className={`hirna-nav-chevron h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
-                    </span>
-                  ) : active ? <ChevronRight className="hirna-nav-chevron h-3.5 w-3.5" /> : null}
-                </span>
-              </button>
-              {item.children && (
-                <div id={`nav-${item.id}`} hidden={!expanded}>
-                  <div className="mb-1 ml-4 space-y-1 border-l border-white/15 pl-2">
-                    {item.children.map((child) => {
-                      const ChildIcon = child.icon;
-                      const activeChild = isItemActive(child);
-                      return (
-                        <button key={child.id} type="button" aria-current={activeChild ? 'page' : undefined} onClick={() => goTo(child.path, child.label)} className={`hirna-nav-item flex w-full items-center gap-2 px-3 py-2 text-left text-xs ${activeChild ? 'hirna-nav-item-active font-semibold' : ''}`}>
-                          <ChildIcon className="hirna-nav-icon h-3.5 w-3.5 shrink-0" />
-                          <span className="truncate">{child.label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </React.Fragment>
-          );
-        })}
-      </nav>
+      <PortalMenu items={navItems} portalLabel={portalLabel} expanded={expandedMenus} isActive={isItemActive} toggle={toggleMenu} goTo={goTo} />
 
       <HirnaSidebarDecoration />
 
@@ -266,26 +249,35 @@ const PortalShellFrame: React.FC<PortalShellProps> = ({
 
   return (
     <div className="hirna-app min-h-screen" aria-busy={loadingActive ? 'true' : 'false'}>
+      <a href="#portal-content" className="portal-skip-link" onClick={() => document.getElementById('portal-content')?.focus()}>Skip to page content</a>
       {sidebar}
       {mobileOpen && <button type="button" className="fixed inset-0 z-30 bg-slate-950/45 backdrop-blur-sm lg:hidden" onClick={() => setMobileOpen(false)} aria-label="Close navigation overlay" />}
 
-      <main className="hirna-main min-h-screen lg:pl-72">
+      <main inert={compact && mobileOpen} className="hirna-main min-h-screen lg:pl-72">
+        <NotificationFocusManager />
         <header className="hirna-topbar sticky top-0 z-20 flex min-h-[76px] items-center gap-3 border-b px-4 py-3 sm:px-6 lg:px-8">
-          <button type="button" onClick={() => setMobileOpen(true)} className="rounded-control border border-[var(--hirna-border)] bg-[var(--hirna-surface)] p-2 text-slate-600 shadow-sm lg:hidden" aria-label="Open navigation">
+          <button ref={menuTriggerRef} type="button" aria-expanded={mobileOpen} onClick={() => setMobileOpen(true)} className="rounded-control border border-[var(--hirna-border)] bg-[var(--hirna-surface)] p-2 text-slate-600 shadow-sm lg:hidden" aria-label="Open navigation">
             <Menu className="h-5 w-5" />
           </button>
-          <div className="min-w-0 flex-1" />
+          <div className="min-w-0 flex-1">
+            <p className="break-words text-sm font-semibold text-slate-700">{currentPage?.label || portalLabel}</p>
+            <p className="hidden text-xs text-slate-500 sm:block">{currentPage?.context || portalLabel}</p>
+          </div>
           <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-3">
+            <button type="button" onClick={() => setHelpOpen(true)} className="flex min-h-11 items-center gap-2 rounded-control px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100" aria-label="Help with this page">
+              <CircleHelp aria-hidden="true" className="h-5 w-5" /><span className="hidden sm:inline">Help</span>
+            </button>
             <NotificationBell />
             <UserProfileMenu profilePath={profilePath} settingsPath={settingsPath} roleLabelOverride={roleLabel} />
           </div>
         </header>
-        <div className="hirna-content p-4 sm:p-6 lg:p-8">
+        <div id="portal-content" tabIndex={-1} className="hirna-content p-4 sm:p-6 lg:p-8">
           {children ?? contentSlots.map((slot) => {
             const displayed = slot.key === displayedRouteKey;
             return (
               <div
                 key={slot.key}
+                data-portal-route-key={slot.key}
                 className={displayed ? 'relative' : 'pointer-events-none invisible absolute inset-0'}
                 aria-hidden={displayed ? undefined : 'true'}
               >
@@ -297,6 +289,12 @@ const PortalShellFrame: React.FC<PortalShellProps> = ({
           })}
         </div>
       </main>
+      <Modal open={helpOpen} title={`Help: ${currentPage?.label || portalLabel}`} description={pageGuide.purpose} onClose={() => setHelpOpen(false)}>
+        <h3 className="text-sm font-semibold text-slate-900">How to use this page</h3>
+        <ol className="mt-3 list-decimal space-y-3 pl-5 text-sm leading-relaxed text-slate-700">{pageGuide.steps.map(step => <li key={step}>{step}</li>)}</ol>
+        {pageGuide.note && <p className="mt-4 rounded-control border border-[var(--hirna-border)] bg-[var(--hirna-surface-hover)] p-3 text-sm text-slate-700">{pageGuide.note}</p>}
+        <p className="mt-4 text-sm text-slate-500">Use Find a page in the menu to locate a task. Available actions depend on your access and the record’s current status.</p>
+      </Modal>
     </div>
   );
 };

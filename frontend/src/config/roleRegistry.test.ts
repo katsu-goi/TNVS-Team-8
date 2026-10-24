@@ -12,6 +12,7 @@ describe('Super Admin module coverage', () => {
     }
     expect(destinations.some(item => item.path === '/reservation-portal')).toBe(true);
     expect(new Set(destinations.map(item => item.id)).size).toBe(destinations.length);
+    expect(destinations.some(item => item.path === '/admin/integrations')).toBe(false);
   });
 });
 
@@ -33,5 +34,25 @@ describe('role registry routing', () => {
     expect(getNotificationDestination(['EMPLOYEE'], 123)).toBe('/employee');
     expect(getNotificationDestination(['EMPLOYEE'], {})).toBe('/employee');
     expect(getNotificationDestination(['EMPLOYEE'], [])).toBe('/employee');
+  });
+
+  it('routes facility permit reviews to compliance documents and focuses valid document ids', () => {
+    const recordId = '1b8a9977-9874-4ea6-a79b-1b71c2a7b5ef';
+    expect(getNotificationDestination(['COMPLIANCE_OFFICER'], 'Document', recordId))
+      .toBe(`/compliance/documents?focus=${recordId}`);
+    expect(getNotificationDestination(['COMPLIANCE_OFFICER'], 'FacilityComplianceDocument', 'not-a-record-id'))
+      .toBe('/compliance/documents');
+  });
+
+  it('does not promise record focus on destinations without focusable records', () => {
+    const recordId = '1b8a9977-9874-4ea6-a79b-1b71c2a7b5ef';
+    expect(getNotificationDestination(['SYSTEM_ADMIN'], 'system', recordId))
+      .toBe('/admin/system-health');
+  });
+
+  it('normalizes camel-case notification entity names before routing', () => {
+    const recordId = '1b8a9977-9874-4ea6-a79b-1b71c2a7b5ef';
+    expect(getNotificationDestination(['INFOSEC_OFFICER'], 'SecurityAlert', recordId))
+      .toBe(`/information-security/cyber-incidents?focus=${recordId}`);
   });
 });

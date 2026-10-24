@@ -4,6 +4,7 @@ import { createHandler, AuthContext, authorizationSubject, isDirectSuperAdmin } 
 import { jsonResponse } from "../_shared/cors.ts";
 import { ok, fail } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
+import { deliverEmail, EmailDelivery } from "../_shared/email-delivery.ts";
 
 const db = adminDb();
 const floorPlanBucket = "facility-floorplans";
@@ -88,43 +89,6 @@ function escapeHtml(value: string): string {
     "'": "&#39;",
     '"': "&quot;",
   }[character] ?? character));
-}
-
-type EmailDelivery = "SENT" | "SIMULATED" | "FAILED";
-
-async function deliverInvitationEmail(input: {
-  recipient: string;
-  subject: string;
-  text: string;
-  html: string;
-}): Promise<{ status: EmailDelivery; error?: string }> {
-  const apiKey = Deno.env.get("RESEND_API_KEY")?.trim();
-  const from = Deno.env.get("RESEND_FROM_EMAIL")?.trim();
-  if (!apiKey || !from) return { status: "SIMULATED" };
-
-  try {
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from,
-        to: [input.recipient],
-        subject: input.subject,
-        text: input.text,
-        html: input.html,
-      }),
-    });
-    if (!response.ok) {
-      const responseText = await response.text();
-      return { status: "FAILED", error: `Resend returned HTTP ${response.status}: ${responseText.slice(0, 240)}` };
-    }
-    return { status: "SENT" };
-  } catch (error) {
-    return { status: "FAILED", error: error instanceof Error ? error.message : "Resend request failed" };
-  }
 }
 
 async function findInviteeByToken(token: string) {
@@ -603,7 +567,7 @@ async function handleCreateReservation(ctx: AuthContext | null, req: Request, bo
     }).select("id").single();
     if (outboxError) throw new Error(`reservation email outbox insert failed: ${outboxError.message}`);
 
-    const delivery = await deliverInvitationEmail({ recipient: email, subject, text: bodyText, html: emailHtml });
+    const delivery = await deliverEmail({ recipient: email, subject, text: bodyText, html: emailHtml });
     deliveryStatuses.push(delivery.status);
     const { error: deliveryUpdateError } = await db.from("reservation_email_outbox").update({
       delivery_status: delivery.status,

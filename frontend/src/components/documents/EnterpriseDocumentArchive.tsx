@@ -177,7 +177,7 @@ export const EnterpriseDocumentArchive: React.FC<{ initialView?: ArchiveView }> 
       if (controller.signal.aborted) return;
       setViewerDocument(detail);
       setViewerLoading(false);
-      if (mode === 'preview' && detail.access.view && (detail.viewerKind === 'PDF' || detail.viewerKind === 'IMAGE')) {
+      if (mode === 'preview' && detail.fileAvailable && detail.access.view && (detail.viewerKind === 'PDF' || detail.viewerKind === 'IMAGE')) {
         setPreviewLoading(true);
         const preview = await documentArchiveService.getViewerFile(detail.id, detail.viewerKind, controller.signal);
         if (controller.signal.aborted) return;
@@ -431,9 +431,9 @@ const DocumentActions: React.FC<{
   onDownload: (document: ArchiveDocument) => void; onRequest: (document: ArchiveDocument) => void;
   onLifecycle: (document: ArchiveDocument) => void;
 }> = ({ document, onPreview, onView, onDownload, onRequest, onLifecycle }) => <div className="flex flex-nowrap gap-1.5">
-  <IconAction label="Preview Document" tone="brand" onClick={() => onPreview(document)}><Eye className="h-4 w-4" aria-hidden="true" /></IconAction>
+  {document.fileAvailable && document.access.view && <IconAction label="Preview Document" tone="brand" onClick={() => onPreview(document)}><Eye className="h-4 w-4" aria-hidden="true" /></IconAction>}
   <IconAction label="View Details" onClick={() => onView(document)}><FileText className="h-4 w-4" aria-hidden="true" /></IconAction>
-  {document.access.download && <IconAction label="Download" onClick={() => onDownload(document)}><Download className="h-4 w-4" aria-hidden="true" /></IconAction>}
+  {document.fileAvailable && document.access.download && <IconAction label="Download" onClick={() => onDownload(document)}><Download className="h-4 w-4" aria-hidden="true" /></IconAction>}
   {document.access.requestAccess && <IconAction label="Request Access" tone="brand" onClick={() => onRequest(document)}><LockKeyhole className="h-4 w-4" aria-hidden="true" /></IconAction>}
   {(document.access.archive || document.access.restore) && <IconAction label={document.access.restore ? 'Restore' : 'Archive'} tone={document.access.restore ? 'default' : 'danger'} onClick={() => onLifecycle(document)}><Archive className="h-4 w-4" aria-hidden="true" /></IconAction>}
 </div>;
@@ -446,10 +446,10 @@ const DocumentResults: React.FC<{
   <ResponsiveTableContainer className="hidden md:block">
     <table className="w-full min-w-[1080px] text-left text-sm">
       <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Document</th><th className="px-4 py-3">Type</th><th className="px-4 py-3">Classification</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Owner</th><th className="px-4 py-3">Effective</th><th className="px-4 py-3">Retention</th><th className="px-4 py-3">Updated</th><th className="px-4 py-3">Actions</th></tr></thead>
-      <tbody className="divide-y divide-slate-100">{documents.map((document) => <tr key={document.id} className="align-top hover:bg-slate-50/70"><td className="px-4 py-4"><button className="text-left font-semibold text-slate-950 hover:text-brand-700" onClick={() => onView(document)}>{document.title}</button><p className="mt-1 max-w-56 truncate text-xs text-slate-500">{document.fileName || document.documentNumber || 'Metadata record'}</p></td><td className="px-4 py-4 text-xs text-slate-600">{label(document.documentType)}</td><td className="px-4 py-4"><StatusBadge tone={classificationTone(document.classification)}>{label(document.classification)}</StatusBadge></td><td className="px-4 py-4"><StatusBadge tone={document.archiveStatus === 'ARCHIVED' ? 'warning' : 'success'}>{label(document.archiveStatus)}</StatusBadge></td><td className="px-4 py-4 text-xs text-slate-600">{document.ownerEmail || 'Not available'}</td><td className="px-4 py-4 text-xs text-slate-600">{formatDate(document.effectiveDate)}</td><td className="px-4 py-4 text-xs text-slate-600">{label(document.retentionStatus)}</td><td className="px-4 py-4 text-xs text-slate-600">{formatDate(document.updatedAt, true)}</td><td className="px-4 py-4"><DocumentActions document={document} onPreview={onPreview} onView={onView} onDownload={onDownload} onRequest={onRequest} onLifecycle={onLifecycle} /></td></tr>)}</tbody>
+      <tbody className="divide-y divide-slate-100">{documents.map((document) => <tr key={document.id} data-notification-entity-id={document.id} className="align-top hover:bg-slate-50/70"><td className="px-4 py-4"><button className="text-left font-semibold text-slate-950 hover:text-brand-700" onClick={() => onView(document)}>{document.title}</button><p className="mt-1 max-w-56 truncate text-xs text-slate-500">{document.fileAvailable ? (document.fileName || document.documentNumber || 'Document record') : 'Metadata only — no file attached'}</p></td><td className="px-4 py-4 text-xs text-slate-600">{label(document.documentType)}</td><td className="px-4 py-4"><StatusBadge tone={classificationTone(document.classification)}>{label(document.classification)}</StatusBadge></td><td className="px-4 py-4"><StatusBadge tone={document.archiveStatus === 'ARCHIVED' ? 'warning' : 'success'}>{label(document.archiveStatus)}</StatusBadge></td><td className="px-4 py-4 text-xs text-slate-600">{document.ownerEmail || 'Not available'}</td><td className="px-4 py-4 text-xs text-slate-600">{formatDate(document.effectiveDate)}</td><td className="px-4 py-4 text-xs text-slate-600">{label(document.retentionStatus)}</td><td className="px-4 py-4 text-xs text-slate-600">{formatDate(document.updatedAt, true)}</td><td className="px-4 py-4"><DocumentActions document={document} onPreview={onPreview} onView={onView} onDownload={onDownload} onRequest={onRequest} onLifecycle={onLifecycle} /></td></tr>)}</tbody>
     </table>
   </ResponsiveTableContainer>
-  <div className="grid gap-4 md:hidden">{documents.map((document) => <Card key={document.id} className="p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-bold text-slate-950">{document.title}</h3><p className="mt-1 truncate text-xs text-slate-500">{document.fileName || 'Metadata record'}</p></div><StatusBadge tone={classificationTone(document.classification)}>{label(document.classification)}</StatusBadge></div><dl className="mt-4 grid grid-cols-2 gap-3 text-xs"><div><dt className="text-slate-400">Status</dt><dd className="font-semibold text-slate-700">{label(document.archiveStatus)}</dd></div><div><dt className="text-slate-400">Type</dt><dd className="font-semibold text-slate-700">{label(document.documentType)}</dd></div><div><dt className="text-slate-400">Retention</dt><dd className="font-semibold text-slate-700">{label(document.retentionStatus)}</dd></div><div><dt className="text-slate-400">Updated</dt><dd className="font-semibold text-slate-700">{formatDate(document.updatedAt)}</dd></div></dl><div className="mt-4 border-t border-slate-100 pt-4"><DocumentActions document={document} onPreview={onPreview} onView={onView} onDownload={onDownload} onRequest={onRequest} onLifecycle={onLifecycle} /></div></Card>)}</div>
+  <div className="grid gap-4 md:hidden">{documents.map((document) => <Card key={document.id} data-notification-entity-id={document.id} className="p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-bold text-slate-950">{document.title}</h3><p className="mt-1 truncate text-xs text-slate-500">{document.fileAvailable ? (document.fileName || 'Document record') : 'Metadata only — no file attached'}</p></div><StatusBadge tone={classificationTone(document.classification)}>{label(document.classification)}</StatusBadge></div><dl className="mt-4 grid grid-cols-2 gap-3 text-xs"><div><dt className="text-slate-400">Status</dt><dd className="font-semibold text-slate-700">{label(document.archiveStatus)}</dd></div><div><dt className="text-slate-400">Type</dt><dd className="font-semibold text-slate-700">{label(document.documentType)}</dd></div><div><dt className="text-slate-400">Retention</dt><dd className="font-semibold text-slate-700">{label(document.retentionStatus)}</dd></div><div><dt className="text-slate-400">Updated</dt><dd className="font-semibold text-slate-700">{formatDate(document.updatedAt)}</dd></div></dl><div className="mt-4 border-t border-slate-100 pt-4"><DocumentActions document={document} onPreview={onPreview} onView={onView} onDownload={onDownload} onRequest={onRequest} onLifecycle={onLifecycle} /></div></Card>)}</div>
 </>;
 
 const DetailList: React.FC<{ items: Array<[string, React.ReactNode]> }> = ({ items }) => (
@@ -465,8 +465,8 @@ const DocumentPreview: React.FC<{
 }> = ({ open, document, previewUrl, loading, previewLoading, error, onClose, onRetry, onDownload, onRequest }) => (
   <Modal open={open} title="Preview Document" description="Quickly inspect the authorized file without leaving this department folder." onClose={onClose} size="xl" footer={<>
     <Button onClick={onClose}>Close</Button>
-    {document?.access.download && <Button variant="primary" onClick={() => onDownload(document)}><Download className="h-4 w-4" />Download</Button>}
-    {document?.access.print && previewUrl && <Button onClick={() => window.open(previewUrl, '_blank', 'noopener,noreferrer')}><Printer className="h-4 w-4" />Open to print</Button>}
+    {document?.fileAvailable && document.access.download && <Button variant="primary" onClick={() => onDownload(document)}><Download className="h-4 w-4" />Download</Button>}
+    {document?.fileAvailable && document.access.print && previewUrl && <Button onClick={() => window.open(previewUrl, '_blank', 'noopener,noreferrer')}><Printer className="h-4 w-4" />Open to print</Button>}
     {document?.access.requestAccess && <Button variant="primary" onClick={() => onRequest(document)}><LockKeyhole className="h-4 w-4" />Request access</Button>}
   </>}>
     {loading || !document ? <LoadingState label="Authorizing document preview..." /> : <div className="grid max-h-[70vh] gap-5 overflow-y-auto lg:grid-cols-[minmax(0,1.7fr)_minmax(260px,0.8fr)]">
@@ -508,7 +508,7 @@ const DocumentDetails: React.FC<{
 }> = ({ open, document, loading, error, onClose, onRetry, onDownload, onRequest, onLifecycle }) => (
   <Modal open={open} title="Document Details" description="Complete metadata and record information for the selected document." onClose={onClose} size="xl" footer={<>
     <Button onClick={onClose}>Close</Button>
-    {document?.access.download && <Button onClick={() => onDownload(document)}><Download className="h-4 w-4" />Download</Button>}
+    {document?.fileAvailable && document.access.download && <Button onClick={() => onDownload(document)}><Download className="h-4 w-4" />Download</Button>}
     {document?.access.requestAccess && <Button variant="primary" onClick={() => onRequest(document)}><LockKeyhole className="h-4 w-4" />Request access</Button>}
     {document && (document.access.archive || document.access.restore) && <Button onClick={() => onLifecycle(document)}><Archive className="h-4 w-4" />{document.access.restore ? 'Restore' : 'Archive'}</Button>}
   </>}>
@@ -517,6 +517,7 @@ const DocumentDetails: React.FC<{
         <p className="text-[11px] font-bold uppercase tracking-wide text-brand-700">Document record</p>
         <h2 className="mt-1 text-xl font-bold text-slate-950">{document.title}</h2>
         <p className="mt-1 break-all text-xs text-slate-500">Record ID: {document.id}</p>
+        {!document.fileAvailable && <p className="mt-2 text-sm font-semibold text-amber-800">Metadata only — no file attached</p>}
         <div className="mt-3 flex flex-wrap gap-2"><StatusBadge tone={classificationTone(document.classification)}>{label(document.classification)}</StatusBadge><StatusBadge tone={document.archiveStatus === 'ARCHIVED' ? 'warning' : 'success'}>{label(document.archiveStatus)}</StatusBadge>{document.retentionStatus === 'LEGAL_HOLD' && <StatusBadge tone="danger">Legal hold</StatusBadge>}</div>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
@@ -529,8 +530,8 @@ const DocumentDetails: React.FC<{
         ]} /></DetailsSection>
         <DetailsSection title="Classification and access"><DetailList items={[
           ['Classification', label(document.classification)], ['AI classification', label(document.aiClassificationStatus)],
-          ['OCR status', label(document.ocrStatus)], ['Content access', document.access.view ? 'Authorized' : 'Metadata only'],
-          ['Download access', document.access.download ? 'Authorized' : 'Restricted'], ['Print access', document.access.print ? 'Authorized' : 'Restricted'],
+          ['OCR status', label(document.ocrStatus)], ['Content access', !document.fileAvailable ? 'No file attached' : document.access.view ? 'Authorized' : 'Metadata only'],
+          ['Download access', !document.fileAvailable ? 'No file attached' : document.access.download ? 'Authorized' : 'Restricted'], ['Print access', !document.fileAvailable ? 'No file attached' : document.access.print ? 'Authorized' : 'Restricted'],
           ['Tags', document.tags.length ? document.tags.map((tag) => tag.name).join(', ') : null],
         ]} /></DetailsSection>
         <DetailsSection title="Retention information"><DetailList items={[

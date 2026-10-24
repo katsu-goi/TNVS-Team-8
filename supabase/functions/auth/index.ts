@@ -10,6 +10,8 @@ import {
 import { verifyPassword, hashPassword } from "../_shared/password.ts";
 import { signAccessToken, signRefreshToken } from "../_shared/jwt.ts";
 import { adminDb } from "../_shared/db.ts";
+import { deliverEmail } from "../_shared/email-delivery.ts";
+import { buildPasswordResetEmail, buildPasswordResetUrl } from "./password-reset-email.ts";
 import {
   finalizeLoginSuccess,
   getLoginRestriction,
@@ -280,10 +282,19 @@ async function handleForgotPassword(_ctx: AuthContext | null, req: Request, body
     }).eq("id", user.row.id);
     await writeAudit(user, "PASSWORD_RESET_REQUESTED", "AUTH", "User", user.row.id,
       "Password reset requested", ctx.ip);
+    const resetUrl = buildPasswordResetUrl(
+      Deno.env.get("PORTAL_PUBLIC_URL") ?? "https://photonicomega.com",
+      token,
+    );
+    const message = buildPasswordResetEmail(resetUrl);
+    const delivery = await deliverEmail({ recipient: email, ...message });
+    if (delivery.status !== "SENT") {
+      console.error(`password reset email delivery ${delivery.status.toLowerCase()}: ${delivery.error ?? "email provider is not configured"}`);
+    }
   }
 
   return jsonResponse(
-    ok("If your email is registered, you will receive password reset instructions."),
+    ok("If an active account exists and email delivery is available, a reset link will arrive shortly. Contact HR if it does not arrive."),
     200,
   );
 }

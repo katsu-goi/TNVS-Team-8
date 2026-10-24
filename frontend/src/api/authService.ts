@@ -81,6 +81,18 @@ export async function requestHrAssistance(req: HrAssistanceRequest): Promise<voi
   await apiClient.post('/auth/hr/assistance', req);
 }
 
+export async function requestPasswordReset(email: string): Promise<void> {
+  await apiClient.post('/auth/forgot-password', { email: email.trim().toLowerCase() });
+}
+
+export async function resetPassword(input: {
+  token: string;
+  newPassword: string;
+  confirmPassword: string;
+}): Promise<void> {
+  await apiClient.post('/auth/reset-password', input);
+}
+
 /** Extracts the server lockout payload from an axios login error, if present. */
 export function extractLoginLockout(error: unknown): LoginLockoutInfo | null {
   if (!error || typeof error !== 'object') return null;

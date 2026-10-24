@@ -110,17 +110,6 @@ export interface SystemConfiguration {
   updatedBy?: string;
 }
 
-export interface IntegrationStatus {
-  id: string;
-  systemName: string;
-  connectionStatus: string;
-  lastSyncAt?: string;
-  apiHealth?: string;
-  responseTimeMs?: number;
-  failedSyncs: number;
-  lastSuccessfulConnection?: string;
-}
-
 export interface BackupRecord {
   id: string;
   backupType: string;

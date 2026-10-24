@@ -2,10 +2,10 @@ import React, { useEffect, useState } from 'react';
 import {
   Activity, Users, Shield,
   AlertTriangle, AlertCircle,
-  FileText, Bell, Settings, Layers,
-  RefreshCw, Wifi, WifiOff,
+  FileText, Bell, Settings,
+  RefreshCw,
   Search, ChevronLeft, ChevronRight,} from 'lucide-react';
-import { loadConfigs, updateConfig, loadIntegrations } from '../../api/adminService';
+import { loadConfigs, updateConfig } from '../../api/adminService';
 import { notificationService } from '../../api/notificationService';
 import { securityService } from '../../api/securityService';
 import { SecurityThreatSection } from '../security/SecurityThreatSection';
@@ -57,55 +57,6 @@ function useQuery<T>(fetcher: () => Promise<T>) {
 const PageHeader: React.FC<{ icon: React.ElementType; title: string; subtitle: string }> = ({ icon: Icon, title, subtitle }) => (
   <div className="mb-6"><DashboardHero title={title} subtitle={subtitle} actions={<span className="rounded-xl border border-white/15 bg-white/10 p-2.5 text-white"><Icon className="h-5 w-5" /></span>} /></div>
 );
-
-export const IntegrationsPage: React.FC = () => {
-  const { data, loading, error, retry } = useQuery(loadIntegrations);
-  if (loading) return <LoadingSkeleton />;
-  if (error) return <ErrorState message={error} onRetry={retry} />;
-  if (!data || data.length === 0) return (
-    <div><PageHeader icon={Layers} title="Integration Management" subtitle="External system connection status" />
-    <EmptyState icon={Layers} title="No Integrations" desc="Integration status tracking is available in the database." /></div>
-  );
-
-  return (
-    <div>
-      <PageHeader icon={Layers} title="Integration Management" subtitle="Database-connected subsystems overview" />
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {data.map((int) => (
-          <div key={int.id} className={`card-stat p-5 border-l-4 ${
-            int.connectionStatus === 'CONNECTED' ? 'border-l-emerald-500' :
-            int.connectionStatus === 'ERROR' ? 'border-l-rose-500' : 'border-l-amber-500'
-          }`}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center space-x-3">
-                <div className={`p-2 rounded-lg ${
-                  int.connectionStatus === 'CONNECTED' ? 'bg-emerald-50' : 'bg-rose-50'
-                }`}>
-                  {int.connectionStatus === 'CONNECTED' ? <Wifi className="w-5 h-5 text-emerald-600" /> : <WifiOff className="w-5 h-5 text-rose-500" />}
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-slate-900">{int.systemName}</p>
-                  <span className={`text-xs font-semibold ${
-                    int.apiHealth === 'HEALTHY' ? 'text-emerald-600' : 'text-amber-600'
-                  }`}>{int.apiHealth || 'UNKNOWN'}</span>
-                </div>
-              </div>
-              <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
-                int.connectionStatus === 'CONNECTED' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
-              }`}>{int.connectionStatus}</span>
-            </div>
-            <div className="grid grid-cols-2 gap-3 text-xs text-slate-500">
-              <div><span className="text-slate-400">Response:</span> {int.responseTimeMs ? `${int.responseTimeMs}ms` : 'N/A'}</div>
-              <div><span className="text-slate-400">Failed Syncs:</span> {int.failedSyncs}</div>
-              <div><span className="text-slate-400">Last Sync:</span> {int.lastSyncAt ? new Date(int.lastSyncAt).toLocaleString() : 'N/A'}</div>
-              <div><span className="text-slate-400">Last Connected:</span> {int.lastSuccessfulConnection ? new Date(int.lastSuccessfulConnection).toLocaleString() : 'N/A'}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
 
 export { AiServicesPage } from './AiServicesPage';
 

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from './client';
-import { extractLoginLockout, logout } from './authService';
+import * as authService from './authService';
+
+const { extractLoginLockout, logout } = authService;
 
 describe('extractLoginLockout', () => {
   beforeEach(() => {
@@ -74,5 +76,31 @@ describe('extractLoginLockout', () => {
     });
     expect(localStorage.getItem('oversightSessionId')).toBeNull();
     expect(localStorage.getItem('oversightTargetUser')).toBeNull();
+  });
+});
+
+describe('password recovery API', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('normalizes the email and sends a forgot-password request', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({ data: { data: 'Request accepted' } });
+    const service = authService as typeof authService & { requestPasswordReset(email: string): Promise<void> };
+
+    await service.requestPasswordReset('  Employee@PhotonicOmega.com  ');
+
+    expect(post).toHaveBeenCalledWith('/auth/forgot-password', { email: 'employee@photonicomega.com' });
+  });
+
+  it('submits the reset token and matching passwords to the reset endpoint', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({ data: { data: 'Password reset' } });
+    const service = authService as typeof authService & {
+      resetPassword(input: { token: string; newPassword: string; confirmPassword: string }): Promise<void>;
+    };
+
+    await service.resetPassword({ token: 'reset-token', newPassword: 'Secure1!', confirmPassword: 'Secure1!' });
+
+    expect(post).toHaveBeenCalledWith('/auth/reset-password', {
+      token: 'reset-token', newPassword: 'Secure1!', confirmPassword: 'Secure1!',
+    });
   });
 });

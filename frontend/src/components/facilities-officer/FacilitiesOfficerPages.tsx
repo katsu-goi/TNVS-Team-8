@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  AlertCircle, RefreshCw, FileText, Bell, User, Eye,
-  Settings, ShieldCheck, ShieldAlert, Plus, Loader2,
+  AlertCircle, RefreshCw, FileText, Bell, Eye,
+  ShieldCheck, ShieldAlert, Plus, Loader2,
   ScanLine, XCircle, Camera, UserCheck, CheckCircle2, MapPin, Clock3,
   Volume2, VolumeX,
 } from 'lucide-react';
@@ -177,7 +177,7 @@ const VisitorVerificationSection: React.FC = () => {
             </thead>
             <tbody>
               {rows.map((v: any) => (
-                <tr key={v.id} className="border-b border-slate-50">
+                <tr key={v.id} data-notification-entity-id={v.id} className="border-b border-slate-50">
                   <td className="p-2">
                     <p className="font-medium text-slate-900">{v.fullName}</p>
                     <p className="text-[10px] text-slate-400">{v.company || '—'} · {v.status}</p>
@@ -552,7 +552,7 @@ export const FoVisitorManagementPage: React.FC = () => {
               </thead>
               <tbody>
                 {visitors.map((v: any) => (
-                  <tr key={v.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                  <tr key={v.id} data-notification-entity-id={v.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
                     <td className="p-3 font-medium text-slate-900">{v.fullName || v.name}</td>
                     <td className="p-3 text-slate-600">{v.company || '-'}</td>
                     <td className="p-3 text-slate-600">{v.facilityName || v.facility || '-'}</td>
@@ -662,7 +662,7 @@ export const FoDocumentsPage: React.FC = () => {
               </thead>
               <tbody>
                 {documents.map((d: any) => (
-                  <tr key={d.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                  <tr key={d.id} data-notification-entity-id={d.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
                     <td className="p-3 font-medium text-slate-900">{d.title || d.name}</td>
                     <td className="p-3 text-slate-600">{d.fileType || d.type || '-'}</td>
                     <td className="p-3 text-slate-600">{d.ownerEmail || d.uploadedBy || '-'}</td>
@@ -730,34 +730,6 @@ export const FoNotificationsPage: React.FC = () => {
           ))}
         </div>
       )}
-    </div>
-  );
-};
-
-export const FoProfilePage: React.FC = () => {
-  return (
-    <div className="space-y-6">
-      <div className="glass-panel p-5">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Profile</h2>
-          <p className="text-xs text-slate-500">Facilities Officer account</p>
-        </div>
-      </div>
-      <EmptyState icon={User} title="Profile Settings" desc="Profile management will be available via TEAM 1 - Human Resource Management integration." />
-    </div>
-  );
-};
-
-export const FoSettingsPage: React.FC = () => {
-  return (
-    <div className="space-y-6">
-      <div className="glass-panel p-5">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Settings</h2>
-          <p className="text-xs text-slate-500">Facilities Officer account and module preferences</p>
-        </div>
-      </div>
-      <EmptyState icon={Settings} title="Settings" desc="Account and module settings will be available via TEAM 1 - Human Resource Management integration." />
     </div>
   );
 };

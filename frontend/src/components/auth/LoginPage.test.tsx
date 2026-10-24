@@ -119,6 +119,13 @@ describe('LoginPage', () => {
     await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/employee', { replace: true }));
   });
 
+  it('offers password recovery without hiding the existing HR assistance route', () => {
+    render(<LoginPage />);
+
+    expect(screen.getByRole('button', { name: 'Forgot password?' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Contact HR Department' })).toBeInTheDocument();
+  });
+
   it('never honors a return target that would send a successful login back to a public login page', async () => {
     mocks.locationSearch = '?returnTo=%2Flogin';
     mocks.login.mockResolvedValueOnce({

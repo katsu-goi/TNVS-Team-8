@@ -811,16 +811,6 @@ async function handleSubmitReview(ctx: AuthContext | null, req: Request, _body: 
     "Contract submitted for review", (title) => `Submitted contract for review: ${title}`);
 }
 
-async function handleApproveContract(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
-  const c = await loadContract(p.id);
-  if (!c) return resourceNotFound("Contract", p.id);
-  if (c.status !== "UNDER_REVIEW") {
-    return businessRule("Only contracts under review can be approved.");
-  }
-  return transitionContract(ctx, req, p, "APPROVED", "APPROVE_CONTRACT",
-    "Contract approved", (title) => `Approved contract: ${title}`);
-}
-
 async function handleActivateContract(ctx: AuthContext | null, req: Request, _body: unknown, p: RouteParams) {
   const c = await loadContract(p.id);
   if (!c) return resourceNotFound("Contract", p.id);

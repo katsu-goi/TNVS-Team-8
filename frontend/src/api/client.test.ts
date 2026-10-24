@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { apiClient, extractErrorMessage, extractRequestId, getApiUrl, safeFetchJson } from './client';
+import {
+  apiClient, extractErrorMessage, extractRequestId, getApiUrl, safeFetchJson, shouldRenewSessionForRequest,
+} from './client';
 
 describe('safeFetchJson', () => {
   it('throws a normalized error instead of converting failures to null', async () => {
@@ -59,5 +61,18 @@ describe('extractErrorMessage', () => {
 
   it('reads a safe support correlation ID from response headers', () => {
     expect(extractRequestId({ response: { headers: { 'x-request-id': 'request-1234' } } })).toBe('request-1234');
+  });
+});
+
+describe('session renewal eligibility', () => {
+  it('keeps public authentication failures on their current page', () => {
+    expect(shouldRenewSessionForRequest('/auth/login')).toBe(false);
+    expect(shouldRenewSessionForRequest('/auth/refresh')).toBe(false);
+    expect(shouldRenewSessionForRequest('/auth/forgot-password')).toBe(false);
+    expect(shouldRenewSessionForRequest('/auth/reset-password')).toBe(false);
+  });
+
+  it('renews sessions for protected requests', () => {
+    expect(shouldRenewSessionForRequest('/documents')).toBe(true);
   });
 });

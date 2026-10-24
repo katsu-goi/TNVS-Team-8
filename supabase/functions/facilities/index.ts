@@ -4,6 +4,7 @@ import { jsonResponse } from "../_shared/cors.ts";
 import { ok, fail } from "../_shared/envelope.ts";
 import { adminDb } from "../_shared/db.ts";
 import { managementRoutes } from "./management.ts";
+import { buildFacilityPermitNotification } from "./facility-permit-notification.ts";
 
 const db = adminDb();
 
@@ -702,26 +703,12 @@ async function handleRouteFacilityDocument(ctx: AuthContext | null, _req: Reques
   if (savedResult.error) throw new Error(`facility document routing failed: ${savedResult.error.message}`);
 
   if (isRegulatoryPermit) {
-    const { data: complianceOfficer, error: officerError } = await db
-      .from("users")
-      .select("id")
-      .eq("email", "co@photonicomega.com")
-      .eq("is_deleted", false)
-      .maybeSingle();
-    if (officerError) throw new Error(`compliance officer lookup failed: ${officerError.message}`);
-    if (complianceOfficer) {
-      const { error: notificationError } = await db.from("employee_notifications").insert({
-        recipient_id: complianceOfficer.id,
-        title: `Permit routed for review: ${documentCategory}`,
-        message: `${facility.name ?? "TNVS hub"} has a new regulatory document awaiting Compliance Officer review.`,
-        type: "FACILITY_PERMIT_REVIEW",
-        related_entity_type: "FacilityComplianceDocument",
-        related_entity_id: savedResult.data.id,
-        is_read: false,
-        created_by: ctx?.email ?? "SYSTEM",
-      });
-      if (notificationError) throw new Error(`permit notification failed: ${notificationError.message}`);
-    }
+    const { error: notificationError } = await db.rpc("phase5_notify_roles", buildFacilityPermitNotification({
+      facilityName: facility.name ?? "TNVS hub",
+      documentCategory,
+      documentId,
+    }));
+    if (notificationError) throw new Error(`permit notification failed: ${notificationError.message}`);
   }
   return jsonResponse(ok({ ...savedResult.data, routed: isRegulatoryPermit, hubName: facility.name }), 201);
 }
@@ -787,113 +774,6 @@ async function handleCalendar(_ctx: AuthContext | null, req: Request) {
   }
 
   return jsonResponse(ok(events), 200);
-}
-
-async function handleAnalytics(_ctx: AuthContext | null, _req: Request) {
-  const now = new Date();
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth();
-  const startIso = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
-  const endIso = new Date(Date.UTC(y, m + 1, 0)).toISOString().slice(0, 10);
-
-  const reservations = await loadReservationsWithJoins();
-  const monthReservations = reservations.filter((r) =>
-    r.start_time && r.start_time >= dayStartIso(startIso) && r.start_time <= dayEndIso(endIso));
-
-  const dailyUtilization: Record<string, number> = {};
-  const peakHours: Record<string, number> = {};
-  const departmentDistribution: Record<string, number> = {};
-  const roomFrequency: Record<string, number> = {};
-  for (const r of monthReservations) {
-    const d = localDatePart(r.start_time ?? "");
-    dailyUtilization[d] = (dailyUtilization[d] ?? 0) + 1;
-    const hour = String(new Date(r.start_time!).getUTCHours());
-    peakHours[hour] = (peakHours[hour] ?? 0) + 1;
-    const dept = userOf(r)?.department;
-    if (dept) departmentDistribution[dept] = (departmentDistribution[dept] ?? 0) + 1;
-    if (r.room_id) roomFrequency[r.room_id] = (roomFrequency[r.room_id] ?? 0) + 1;
-  }
-
-  const topRooms = Object.entries(roomFrequency)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 10)
-    .map(([rid, count]) => {
-      const r = reservations.find((x) => x.id === rid);
-      const fac = r ? roomFacility(r) : null;
-      return {
-        roomName: r ? roomName(r) : "Unknown",
-        roomNumber: r ? (roomNumber(r) ?? "") : "",
-        facilityName: fac?.name ?? "",
-        count,
-      };
-    });
-
-  const equipment = await loadAllEquipment();
-  const totalAssets = equipment.length;
-  const maintAssets = equipment.filter((e) => e.status === "UNDER_MAINTENANCE").length;
-  const assetUtil = totalAssets > 0 ? ((totalAssets - maintAssets) / totalAssets) * 100 : 0;
-  const assetCats: Record<string, number> = {};
-  for (const e of equipment) {
-    if (e.category) assetCats[e.category] = (assetCats[e.category] ?? 0) + 1;
-  }
-  const assetTrends = Object.entries(assetCats).map(([cat, cnt]) => ({ category: cat, count: cnt }));
-
-  return jsonResponse(ok({
-    dailyRoomUtilization: dailyUtilization,
-    monthlyReservationTrends: { total: monthReservations.length },
-    peakReservationHours: peakHours,
-    departmentDistribution,
-    mostFrequentlyUsedRooms: topRooms,
-    assetUtilizationTrends: { rate: Math.round(assetUtil * 10) / 10, categories: assetTrends },
-  }), 200);
-}
-
-async function handleReports(_ctx: AuthContext | null, req: Request) {
-  const url = new URL(req.url);
-  const startDate = url.searchParams.get("startDate");
-  const endDate = url.searchParams.get("endDate");
-  const start = startDate ?? new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10);
-  const end = endDate ?? new Date().toISOString().slice(0, 10);
-
-  const reservations = await loadReservationsWithJoins();
-  const inRange = reservations.filter((r) =>
-    r.start_time && r.start_time >= dayStartIso(start) && r.start_time <= dayEndIso(end));
-
-  const rooms = await loadAllRooms();
-  const totalRooms = rooms.length;
-  const available = rooms.filter((r) => r.active === true).length;
-  const occupancyRate = totalRooms > 0 ? ((totalRooms - available) / totalRooms) * 100 : 0;
-
-  const equipment = await loadAllEquipment();
-  const totalAssets = equipment.length;
-  const activeAssets = equipment.filter((e) => e.status === "AVAILABLE").length;
-  const assetUtilRate = totalAssets > 0 ? (activeAssets / totalAssets) * 100 : 0;
-
-  const countStatus = (s: string) => inRange.filter((r) => r.status === s).length;
-  return jsonResponse(ok({
-    reservationReports: {
-      totalReservations: inRange.length,
-      approved: countStatus("APPROVED"),
-      pending: countStatus("PENDING"),
-      rejected: countStatus("REJECTED"),
-      cancelled: countStatus("CANCELLED"),
-    },
-    facilityUtilization: {
-      totalRooms,
-      availableRooms: available,
-      occupancyRate: Math.round(occupancyRate * 10) / 10,
-    },
-    assetReports: {
-      totalAssets,
-      activeAssets,
-      assetUtilizationRate: Math.round(assetUtilRate * 10) / 10,
-    },
-    occupancyReports: {
-      totalRooms,
-      occupiedRooms: totalRooms - available,
-      occupancyRate: Math.round(occupancyRate * 10) / 10,
-    },
-  }), 200);
 }
 
 // ---------------------------------------------------------------------------

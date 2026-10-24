@@ -13,6 +13,7 @@ import { AppLayout } from './components/layout/AppLayout';
 import { LoginPage } from './components/auth/LoginPage';
 import { SessionIdleManager } from './components/auth/SessionIdleManager';
 import { HRAssistancePage } from './components/auth/HRAssistancePage';
+import { ForgotPasswordPage, ResetPasswordPage } from './components/auth/PasswordRecoveryPages';
 import { FacilitiesManagerLayout } from './components/facilities/FacilitiesManagerLayout';
 import { FacilitiesOfficerLayout } from './components/facilities-officer/FacilitiesOfficerLayout';
 import { LegalOfficerLayout } from './components/legal/LegalOfficerLayout';
@@ -24,7 +25,6 @@ const lazyNamed = (loader: () => Promise<any>, exportName: string) =>
   lazy(() => loader().then((module) => ({ default: module[exportName] }))) as React.LazyExoticComponent<React.ComponentType<any>>;
 
 const SysAdminDashboard = lazyNamed(() => import('./components/sysadmin/SysAdminDashboard'), 'SysAdminDashboard');
-const IntegrationsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'IntegrationsPage');
 const AiServicesPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'AiServicesPage');
 const SecurityCenterPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'SecurityCenterPage');
 const AuditLogsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'AuditLogsPage');
@@ -269,6 +269,8 @@ export const AppRoutes: React.FC = () => (
   <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/hr-assistance" element={<HRAssistancePage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/reservation-portal/login" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><Team8LoginPage /></Suspense>} />
         <Route path="/reservation-portal/pass" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><ReservationPassPage /></Suspense>} />
         <Route path="/guest-pass/:token" element={<Suspense fallback={<SessionBootstrapPlaceholder />}><ReservationPassPage /></Suspense>} />
@@ -290,7 +292,6 @@ export const AppRoutes: React.FC = () => (
           <Route path="system-admin/analytics" element={<SystemAdminRoute><SystemAnalyticsPage /></SystemAdminRoute>} />
 
           {/* System Administrator infrastructure modules */}
-          <Route path="admin/integrations" element={<SystemAdminRoute><IntegrationsPage /></SystemAdminRoute>} />
           <Route path="admin/ai-services" element={<SystemAdminRoute><AiServicesPage /></SystemAdminRoute>} />
           <Route path="admin/backup" element={<SystemAdminRoute><BackupPage /></SystemAdminRoute>} />
           <Route path="admin/settings" element={<SystemAdminRoute><SettingsPage /></SystemAdminRoute>} />

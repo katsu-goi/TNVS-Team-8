@@ -94,8 +94,8 @@ interface HealthAnalytics {
   docsProcessed: number;
   contractsReviewed: number;
   visitorsVerified: number;
-  avgLatencyMs: number;
-  successRate: number;
+  avgLatencyMs: number | null;
+  successRate: number | null;
   totalTokensUsed: number;
   queueLength: number;
   apiConnectionStatus: string;
@@ -647,14 +647,14 @@ export const AiServicesPage: React.FC = () => {
 
           <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm">
             <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Avg Response Time</p>
-            <p className="text-2xl font-bold text-emerald-600 mt-1">{analytics ? `${analytics.avgLatencyMs} ms` : '—'}</p>
-            <p className="text-[10px] text-slate-400 mt-1">Measured gateway latency</p>
+            <p className="text-2xl font-bold text-emerald-600 mt-1">{typeof analytics?.avgLatencyMs === 'number' && Number.isFinite(analytics.avgLatencyMs) ? `${analytics.avgLatencyMs} ms` : '—'}</p>
+            <p className="text-[10px] text-slate-400 mt-1">{analytics && analytics.avgLatencyMs == null ? 'No measurements yet' : 'Measured gateway latency'}</p>
           </div>
 
           <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm">
             <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Success Rate</p>
-            <p className="text-2xl font-bold text-emerald-600 mt-1">{analytics ? `${analytics.successRate}%` : '—'}</p>
-            <p className="text-[10px] text-slate-400 font-semibold mt-1">Based on recorded requests</p>
+            <p className="text-2xl font-bold text-emerald-600 mt-1">{typeof analytics?.successRate === 'number' && Number.isFinite(analytics.successRate) ? `${analytics.successRate}%` : '—'}</p>
+            <p className="text-[10px] text-slate-400 font-semibold mt-1">{analytics && analytics.successRate == null ? 'No measurements yet' : 'Based on recorded requests'}</p>
           </div>
         </div>
 
