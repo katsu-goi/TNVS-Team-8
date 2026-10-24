@@ -1,6 +1,6 @@
 import { apiClient } from './client';
 import type {
-  SystemConfiguration, IntegrationStatus,
+  SystemConfiguration,
   BackupRecord,
 } from '../types';
 
@@ -19,15 +19,6 @@ export async function updateConfig(key: string, value: string, desc?: string): P
     return data?.data;
   } catch {
     return { id: key, configKey: key, configValue: value, description: desc || '', updatedAt: new Date().toISOString() };
-  }
-}
-
-export async function loadIntegrations(): Promise<IntegrationStatus[]> {
-  try {
-    const { data } = await apiClient.get('/admin/integrations');
-    return data?.data ?? [];
-  } catch {
-    return [];
   }
 }
 

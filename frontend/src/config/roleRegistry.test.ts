@@ -12,6 +12,7 @@ describe('Super Admin module coverage', () => {
     }
     expect(destinations.some(item => item.path === '/reservation-portal')).toBe(true);
     expect(new Set(destinations.map(item => item.id)).size).toBe(destinations.length);
+    expect(destinations.some(item => item.path === '/admin/integrations')).toBe(false);
   });
 });
 

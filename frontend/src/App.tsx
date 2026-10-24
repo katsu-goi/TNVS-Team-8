@@ -25,7 +25,6 @@ const lazyNamed = (loader: () => Promise<any>, exportName: string) =>
   lazy(() => loader().then((module) => ({ default: module[exportName] }))) as React.LazyExoticComponent<React.ComponentType<any>>;
 
 const SysAdminDashboard = lazyNamed(() => import('./components/sysadmin/SysAdminDashboard'), 'SysAdminDashboard');
-const IntegrationsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'IntegrationsPage');
 const AiServicesPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'AiServicesPage');
 const SecurityCenterPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'SecurityCenterPage');
 const AuditLogsPage = lazyNamed(() => import('./components/sysadmin/AdminPages'), 'AuditLogsPage');
@@ -286,7 +285,6 @@ export const AppRoutes: React.FC = () => (
           <Route path="system-admin/analytics" element={<SystemAdminRoute><SystemAnalyticsPage /></SystemAdminRoute>} />
 
           {/* System Administrator infrastructure modules */}
-          <Route path="admin/integrations" element={<SystemAdminRoute><IntegrationsPage /></SystemAdminRoute>} />
           <Route path="admin/ai-services" element={<SystemAdminRoute><AiServicesPage /></SystemAdminRoute>} />
           <Route path="admin/backup" element={<SystemAdminRoute><BackupPage /></SystemAdminRoute>} />
           <Route path="admin/settings" element={<SystemAdminRoute><SettingsPage /></SystemAdminRoute>} />

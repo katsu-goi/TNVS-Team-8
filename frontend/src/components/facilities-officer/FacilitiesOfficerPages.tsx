@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  AlertCircle, RefreshCw, FileText, Bell, User, Eye,
-  Settings, ShieldCheck, ShieldAlert, Plus, Loader2,
+  AlertCircle, RefreshCw, FileText, Bell, Eye,
+  ShieldCheck, ShieldAlert, Plus, Loader2,
   ScanLine, XCircle, Camera, UserCheck, CheckCircle2, MapPin, Clock3,
 } from 'lucide-react';
 import { safeFetchJson, extractErrorMessage } from '../../api/client';
@@ -707,34 +707,6 @@ export const FoNotificationsPage: React.FC = () => {
           ))}
         </div>
       )}
-    </div>
-  );
-};
-
-export const FoProfilePage: React.FC = () => {
-  return (
-    <div className="space-y-6">
-      <div className="glass-panel p-5">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Profile</h2>
-          <p className="text-xs text-slate-500">Facilities Officer account</p>
-        </div>
-      </div>
-      <EmptyState icon={User} title="Profile Settings" desc="Profile management will be available via TEAM 1 - Human Resource Management integration." />
-    </div>
-  );
-};
-
-export const FoSettingsPage: React.FC = () => {
-  return (
-    <div className="space-y-6">
-      <div className="glass-panel p-5">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Settings</h2>
-          <p className="text-xs text-slate-500">Facilities Officer account and module preferences</p>
-        </div>
-      </div>
-      <EmptyState icon={Settings} title="Settings" desc="Account and module settings will be available via TEAM 1 - Human Resource Management integration." />
     </div>
   );
 };

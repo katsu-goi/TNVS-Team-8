@@ -86,11 +86,11 @@ export function getPageGuide(path: string, label: string): PageGuide {
     'Read the scope and confirmation before starting an available backup or recovery action.',
     'Check the result message; recovery may affect stored system data.',
   ], 'backup recovery disaster restore dr');
-  if (/settings|integrations/.test(path)) return guide('Review or update system connections and settings.', [
+  if (/settings/.test(path)) return guide('Review or update system settings.', [
     'Read the setting description and review its current value.',
     'Change only the setting you intend to update, then use the page’s save or test action if available.',
     'Check the result message to confirm whether the change was saved.',
-  ], 'system config configuration settings integration connection');
+  ], 'system config configuration settings');
   if (/notifications/.test(path)) return guide('Read updates about requests, decisions and reminders.', [
     'Open an unread update and read its message.',
     'Follow the available link to the relevant record or page.',

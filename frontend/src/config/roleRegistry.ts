@@ -1,6 +1,6 @@
 import {
   Activity, BarChart3, Bell, BellRing, Building2, Calendar, CalendarClock, CheckSquare,
-  ClipboardList, Cpu, Download, Eye, FileSignature, FileText, Gavel, KeyRound, Layers,
+  ClipboardList, Cpu, Download, Eye, FileSignature, FileText, Gavel, KeyRound,
   LayoutDashboard, LockKeyhole, Monitor, ScrollText, Settings, ShieldCheck, Users,
 } from 'lucide-react';
 import type { PortalNavItem } from '../components/layout/PortalShell';
@@ -47,7 +47,6 @@ const explicitRoles: RolePresentation[] = [
     navigation: [
       { id: 'dashboard', label: 'Dashboard', path: '/system-admin', icon: LayoutDashboard, exact },
       { id: 'analytics', label: 'Analytics', path: '/admin/analytics', icon: BarChart3, exact },
-      { id: 'integrations', label: 'Integrations', path: '/admin/integrations', icon: Layers, exact },
       { id: 'ai-services', label: 'AI Services', path: '/admin/ai-services', icon: Cpu, exact },
       { id: 'backup', label: 'Backup & Recovery', path: '/admin/backup', icon: Download, exact },
       { id: 'settings', label: 'System Settings', path: '/admin/settings', icon: Settings, exact },

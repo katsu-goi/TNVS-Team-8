@@ -1001,51 +1001,6 @@ async function handleUpsertConfig(_ctx: AuthContext | null, _req: Request, body:
 }
 
 // ---------------------------------------------------------------------------
-// Integrations
-// ---------------------------------------------------------------------------
-
-type IntegrationRow = {
-  id: string;
-  system_name: string;
-  connection_status: string;
-  last_sync_at: string | null;
-  api_health: string | null;
-  response_time_ms: number | null;
-  failed_syncs: number;
-  last_successful_connection: string | null;
-};
-
-function integrationDto(i: IntegrationRow): Record<string, unknown> {
-  return {
-    id: i.id,
-    systemName: i.system_name,
-    connectionStatus: i.connection_status,
-    lastSyncAt: i.last_sync_at,
-    apiHealth: i.api_health,
-    responseTimeMs: i.response_time_ms,
-    failedSyncs: i.failed_syncs,
-    lastSuccessfulConnection: i.last_successful_connection,
-  };
-}
-
-async function handleListIntegrations(_ctx: AuthContext | null, _req: Request, _body: unknown, _p: RouteParams) {
-  const { data, error } = await db.from("integration_status").select("*").order("system_name", { ascending: true });
-  if (error) throw new Error(`integrations load failed: ${error.message}`);
-  return jsonResponse(ok((data as unknown as IntegrationRow[]).map(integrationDto)), 200);
-}
-
-async function handleGetIntegration(_ctx: AuthContext | null, _req: Request, _body: unknown, p: RouteParams) {
-  const { data, error } = await db
-    .from("integration_status")
-    .select("*")
-    .eq("system_name", p.systemName)
-    .maybeSingle();
-  if (error) throw new Error(`integration lookup failed: ${error.message}`);
-  if (!data) return notFound(`Integration not found with system name: ${p.systemName}`);
-  return jsonResponse(ok(integrationDto(data as unknown as IntegrationRow)), 200);
-}
-
-// ---------------------------------------------------------------------------
 // HR assistance admin
 // ---------------------------------------------------------------------------
 
@@ -1846,131 +1801,6 @@ async function handleBackupHealth() {
   }), 200);
 }
 
-// ---------------------------------------------------------------------------
-// KPI
-// ---------------------------------------------------------------------------
-
-async function handleKpi(_ctx: AuthContext | null, _req: Request, _body: unknown, _p: RouteParams) {
-  const kpi = {
-    facilities: {
-      totalFacilities: 0,
-      totalRooms: 0,
-      activeRooms: 0,
-      bookingsToday: 0,
-      pendingApprovals: 0,
-      checkedIn: 0,
-    },
-    visitors: {
-      totalVisitors: 0,
-      onSite: 0,
-      checkedIn: 0,
-      registered: 0,
-      checkedOut: 0,
-    },
-    documents: {
-      totalDocuments: 0,
-      archived: 0,
-      approved: 0,
-      pendingReview: 0,
-      draft: 0,
-    },
-    records: { totalPolicies: 0, activePolicies: 0 },
-    legal: { totalCases: 0, open: 0, inProgress: 0, pendingHearing: 0, closed: 0 },
-    contracts: {
-      totalContracts: 0,
-      active: 0,
-      underReview: 0,
-      draft: 0,
-      expired: 0,
-      pendingApproval: 0,
-      totalContractValue: 0,
-    },
-    global: {
-      activeUsers: 0,
-      activeSessions: 0,
-      failedLoginAttempts: 0,
-      blockedIps: 0,
-      activeAlerts: 0,
-      unreadNotifications: 0,
-    },
-  };
-
-  const count = async (table: string, eq?: [string, unknown]) => {
-    let q = db.from(table).select("id", { count: "exact", head: true });
-    if (eq) q = q.eq(eq[0], eq[1]);
-    const { count: n, error } = await q;
-    if (error) throw new Error(`${table} count failed: ${error.message}`);
-    return n ?? 0;
-  };
-  const countLike = async (table: string, col: string, op: string, val: unknown) => {
-    const { count: n, error } = await db
-      .from(table)
-      .select("id", { count: "exact", head: true })
-      .or(`${col}.${op}.${val}`);
-    if (error) throw new Error(`${table} count failed: ${error.message}`);
-    return n ?? 0;
-  };
-  const countRaw = async (table: string, filter: (q: any) => any) => {
-    const { count: n, error } = await filter(db.from(table).select("id", { count: "exact", head: true }));
-    if (error) throw new Error(`${table} count failed: ${error.message}`);
-    return n ?? 0;
-  };
-
-  const dayStart = new Date();
-  dayStart.setUTCHours(0, 0, 0, 0);
-  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
-
-  kpi.facilities.totalFacilities = await countRaw("facilities", (q: any) => q.eq("is_deleted", false));
-  kpi.facilities.totalRooms = await countRaw("rooms", (q: any) => q.eq("is_deleted", false));
-  kpi.facilities.activeRooms = await countRaw("rooms", (q: any) => q.eq("active", true));
-  kpi.facilities.bookingsToday = await countRaw("reservations", (q: any) =>
-    q.gte("start_time", dayStart.toISOString()).lt("start_time", dayEnd.toISOString()));
-  kpi.facilities.pendingApprovals = await countLike("reservations", "status", "eq", "PENDING");
-  kpi.facilities.checkedIn = await countLike("reservations", "status", "eq", "CHECKED_IN");
-
-  kpi.visitors.totalVisitors = await count("visitors");
-  kpi.visitors.onSite = await countLike("visitors", "status", "eq", "CHECKED_IN");
-  kpi.visitors.checkedIn = kpi.visitors.onSite;
-  kpi.visitors.registered = await countLike("visitors", "status", "eq", "REGISTERED");
-  kpi.visitors.checkedOut = await countLike("visitors", "status", "eq", "CHECKED_OUT");
-
-  kpi.documents.totalDocuments = await count("documents");
-  kpi.documents.archived = await countLike("documents", "status", "eq", "ARCHIVED");
-  kpi.documents.approved = await countLike("documents", "status", "eq", "APPROVED");
-  kpi.documents.pendingReview = await countLike("documents", "status", "eq", "PENDING_REVIEW");
-  kpi.documents.draft = await countLike("documents", "status", "eq", "DRAFT");
-
-  kpi.records.totalPolicies = await count("retention_policies");
-  kpi.records.activePolicies = await countRaw("retention_policies", (q: any) => q.eq("active", true));
-
-  kpi.legal.totalCases = await count("legal_cases");
-  kpi.legal.open = await countLike("legal_cases", "status", "eq", "OPEN");
-  kpi.legal.inProgress = await countLike("legal_cases", "status", "eq", "IN_PROGRESS");
-  kpi.legal.pendingHearing = await countLike("legal_cases", "status", "eq", "PENDING_HEARING");
-  kpi.legal.closed = await countLike("legal_cases", "status", "eq", "CLOSED");
-
-  kpi.contracts.totalContracts = await count("contracts");
-  kpi.contracts.active = await countLike("contracts", "status", "eq", "ACTIVE");
-  kpi.contracts.underReview = await countLike("contracts", "status", "eq", "UNDER_REVIEW");
-  kpi.contracts.draft = await countLike("contracts", "status", "eq", "DRAFT");
-  kpi.contracts.expired = await countLike("contracts", "status", "eq", "EXPIRED");
-  kpi.contracts.pendingApproval = await countLike("contracts", "status", "eq", "APPROVED");
-  kpi.contracts.totalContractValue = 0;
-
-  kpi.global.activeUsers = await countRaw("users", (q: any) => q.eq("is_deleted", false));
-  kpi.global.activeSessions = await countLike("active_sessions", "status", "eq", "ACTIVE");
-  kpi.global.failedLoginAttempts = await countRaw("login_history", (q: any) =>
-    q.eq("status", "FAILED").in("username", ["admin", "user"]));
-  kpi.global.blockedIps = await countLike("blocked_ips", "status", "eq", "ACTIVE");
-  kpi.global.activeAlerts = await countLike("security_alerts", "status", "eq", "UNRESOLVED");
-  kpi.global.unreadNotifications = await countRaw("employee_notifications", (q: any) =>
-    q.eq("recipient_id", _ctx!.userId).eq("is_read", false).eq("is_deleted", false));
-
-  return jsonResponse(ok(kpi), 200);
-}
-
-// ---------------------------------------------------------------------------
-
 async function rbacRole(id: string) {
   const { data, error } = await db
     .from("roles")
@@ -2320,8 +2150,6 @@ const routes = [
   { method: "GET", path: "/admin/config", guard: SYSTEM_ADMIN_ONLY, handler: handleListConfigs },
   { method: "GET", path: "/admin/config/:key", guard: SYSTEM_ADMIN_ONLY, handler: handleGetConfig },
   { method: "PUT", path: "/admin/config/:key", guard: SYSTEM_ADMIN_ONLY, handler: handleUpsertConfig },
-  { method: "GET", path: "/admin/integrations", guard: SYSTEM_ADMIN_ONLY, handler: handleListIntegrations },
-  { method: "GET", path: "/admin/integrations/:systemName", guard: SYSTEM_ADMIN_ONLY, handler: handleGetIntegration },
   { method: "GET", path: "/admin/hr-assistance", guard: SUPER_ADMIN_ONLY, handler: handleListHrRequests },
   { method: "GET", path: "/admin/hr-assistance/:id", guard: SUPER_ADMIN_ONLY, handler: handleGetHrRequest },
   { method: "PATCH", path: "/admin/hr-assistance/:id/status", guard: SUPER_ADMIN_ONLY, handler: handleUpdateHrStatus },
