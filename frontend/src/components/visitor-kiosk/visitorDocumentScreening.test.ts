@@ -73,4 +73,54 @@ describe('visitor document screening', () => {
     expect(result.reason).toBe('UNRECOGNIZED_DOCUMENT');
     expect(result.warnings.join(' ')).toMatch(/did not contain enough document-specific indicators/i);
   });
+
+  it.each([
+    [
+      'Philippine Passport',
+      'REPUBLIC OF THE PHILIPPINES\nDEPARTMENT OF FOREIGN AFFAIRS\nPASSPORT\nSURNAME\nDELA CRUZ\nGIVEN NAMES\nJUAN MIGUEL\nPASSPORT NO P1234567\nDATE OF EXPIRY\n23 OCT 2030',
+      { fullName: 'JUAN MIGUEL DELA CRUZ', idNumberLast4: '4567', expirationDate: '2030-10-23', issuingAuthority: 'Department of Foreign Affairs' },
+    ],
+    [
+      "Philippine Driver's License",
+      "LAND TRANSPORTATION OFFICE\nDRIVER'S LICENSE\nLAST NAME: SANTOS\nFIRST NAME: ANA MARIE\nLICENSE NO: N01-23-456789\nEXPIRATION DATE: 2030-10-24\nBLOOD TYPE O",
+      { fullName: 'ANA MARIE SANTOS', idNumberLast4: '6789', expirationDate: '2030-10-24', issuingAuthority: 'Land Transportation Office' },
+    ],
+    [
+      'PRC Professional Identification Card',
+      'PROFESSIONAL REGULATION COMMISSION\nPROFESSIONAL IDENTIFICATION CARD\nSURNAME REYES GIVEN NAMES MARIA LUZ\nREGISTRATION NO 7654321\nVALID UNTIL 24 OCTOBER 2030\nPROFESSION ENGINEER',
+      { fullName: 'MARIA LUZ REYES', idNumberLast4: '4321', expirationDate: '2030-10-24', issuingAuthority: 'Professional Regulation Commission' },
+    ],
+    [
+      'Company-Issued Employee ID',
+      'HIRNA MOBILITY SOLUTIONS INC\nEMPLOYEE ID HIR-009876\nFULL NAME: CARLO MENDOZA\nDEPARTMENT OPERATIONS\nVALID UNTIL OCTOBER 24, 2030',
+      { fullName: 'CARLO MENDOZA', idNumberLast4: '9876', expirationDate: '2030-10-24', issuingAuthority: 'HIRNA MOBILITY SOLUTIONS INC' },
+    ],
+    [
+      'Postal ID',
+      'PHLPOST\nPOSTAL IDENTITY CARD\nADDRESS MANILA\nAPELYIDO\nDELA CRUZ\nPANGALAN\nJUAN MIGUEL\nPOSTAL REFERENCE NO PRN-12345678\nVALID UNTIL\n24 OCTOBER 2030',
+      { fullName: 'JUAN MIGUEL DELA CRUZ', idNumberLast4: '5678', expirationDate: '2030-10-24', issuingAuthority: 'PHLPost' },
+    ],
+  ])('extracts reviewable fields from a realistic %s OCR layout', (type, text, expected) => {
+    const result = classifyIdentityDocument(text, type, accepted, 84);
+    expect(result.classification).toBe('SUPPORTED_ID_TYPE');
+    expect(result.extracted).toMatchObject(expected);
+    expect(result.extracted.detectedIdType).toBe(type);
+    expect(result.extractedFields).toEqual(expect.arrayContaining(Object.keys(result.extracted).filter((field) => result.extracted[field as keyof typeof result.extracted])));
+  });
+
+  it('preserves an ambiguous numeric expiration for visitor confirmation instead of guessing', () => {
+    const result = classifyIdentityDocument(
+      "LAND TRANSPORTATION OFFICE\nDRIVER'S LICENSE\nLICENSE NO N01-23-456789\nEXPIRATION DATE 04/05/2030\nBLOOD TYPE O",
+      "Philippine Driver's License", accepted, 80,
+    );
+    expect(result.extracted.expirationDate).toBe('04/05/2030');
+  });
+
+  it('does not invent an issuing authority from an unmatched alternative', () => {
+    const result = classifyIdentityDocument(
+      'POSTAL IDENTITY CARD\nPHLPOST\nADDRESS MANILA\nPOSTAL REFERENCE NO 12345678',
+      'Postal ID', accepted, 80,
+    );
+    expect(result.extracted.issuingAuthority).toBe('PHLPost');
+  });
 });

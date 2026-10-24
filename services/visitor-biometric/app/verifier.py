@@ -4,12 +4,18 @@ import base64
 import binascii
 import os
 import tempfile
+from io import BytesIO
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from PIL import Image, ImageStat, UnidentifiedImageError
+
 ALLOWED_MIME = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_IMAGE_PIXELS = 25_000_000
+SUPPORTED_MODELS = {"VGG-Face", "Facenet", "Facenet512", "ArcFace", "SFace"}
+SUPPORTED_DETECTORS = {"opencv", "retinaface", "mtcnn", "fastmtcnn", "yunet", "centerface", "ssd"}
 
 
 class VerificationInputError(ValueError):
@@ -17,6 +23,7 @@ class VerificationInputError(ValueError):
 
 
 class DeepFaceAdapter(Protocol):
+    def build_model(self, model_name: str) -> Any: ...
     def extract_faces(self, **kwargs: Any) -> list[dict[str, Any]]: ...
     def verify(self, **kwargs: Any) -> dict[str, Any]: ...
 
@@ -50,7 +57,40 @@ def decode_data_url(value: str) -> tuple[bytes, str]:
     }
     if not signatures[mime]:
         raise VerificationInputError("Image bytes do not match the declared media type.")
+    try:
+        with Image.open(BytesIO(decoded)) as image:
+            image.load()
+            width, height = image.size
+            if width < 80 or height < 80:
+                raise VerificationInputError("Image dimensions are too small for facial screening.")
+            if width * height > MAX_IMAGE_PIXELS:
+                raise VerificationInputError("Image dimensions exceed the processing limit.")
+            grayscale = image.convert("L")
+            mean = ImageStat.Stat(grayscale).mean[0]
+            extrema = grayscale.getextrema()
+            if mean < 5 or mean > 250 or extrema[1] - extrema[0] < 8:
+                raise VerificationInputError("Image quality or lighting is unsuitable for facial screening.")
+    except VerificationInputError:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise VerificationInputError("Image data could not be decoded safely.") from exc
     return decoded, ALLOWED_MIME[mime]
+
+
+def data_url_from_test_file(path_value: str) -> str:
+    path = Path(path_value).expanduser().resolve()
+    if not path.is_file():
+        raise VerificationInputError("Configured readiness test image is unavailable.")
+    suffix = path.suffix.lower()
+    mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}.get(suffix)
+    if not mime:
+        raise VerificationInputError("Configured readiness test image has an unsupported media type.")
+    content = path.read_bytes()
+    if not content or len(content) > MAX_IMAGE_BYTES:
+        raise VerificationInputError("Configured readiness test image exceeds the size limit.")
+    value = f"data:{mime};base64,{base64.b64encode(content).decode('ascii')}"
+    decode_data_url(value)
+    return value
 
 
 def _face_count(adapter: DeepFaceAdapter, path: Path, settings: VerificationSettings) -> tuple[int, str]:
@@ -147,9 +187,19 @@ def load_deepface() -> DeepFaceAdapter:
     return DeepFace
 
 
+def initialize_deepface(adapter: DeepFaceAdapter, settings: VerificationSettings) -> None:
+    adapter.build_model(model_name=settings.model_name)
+
+
 def settings_from_environment() -> VerificationSettings:
+    model_name = os.getenv("DEEPFACE_MODEL", "Facenet512").strip() or "Facenet512"
+    detector_backend = os.getenv("DEEPFACE_DETECTOR", "retinaface").strip().lower() or "retinaface"
+    if model_name not in SUPPORTED_MODELS:
+        raise RuntimeError("Unsupported DeepFace model configuration.")
+    if detector_backend not in SUPPORTED_DETECTORS:
+        raise RuntimeError("Unsupported DeepFace detector configuration.")
     return VerificationSettings(
-        model_name=os.getenv("DEEPFACE_MODEL", "Facenet512").strip() or "Facenet512",
-        detector_backend=os.getenv("DEEPFACE_DETECTOR", "retinaface").strip() or "retinaface",
+        model_name=model_name,
+        detector_backend=detector_backend,
         anti_spoofing=os.getenv("DEEPFACE_ANTI_SPOOFING", "false").lower() == "true",
     )

@@ -1,7 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { VisitorKioskPage, VisitorPassPage, VisitorStatusPage, visitorDetailsAreValid, type VisitorKioskFormState } from './VisitorKioskPage';
+import {
+  VisitorKioskPage, VisitorPassPage, VisitorStatusPage, applyOcrExtraction, visitorDetailsAreValid,
+  type IdFieldSources, type VisitorKioskFormState,
+} from './VisitorKioskPage';
 import { visitorService, type KioskConfig } from '../../api/visitorService';
 
 vi.mock('../../api/visitorService', async () => {
@@ -11,7 +14,11 @@ vi.mock('../../api/visitorService', async () => {
 
 vi.mock('./VisitorIdScanner', () => ({
   VisitorIdScanner: ({ onImageChange, onScreeningChange }: { onImageChange: (image: string, confirmed: boolean) => void; onScreeningChange: (value: unknown) => void }) => (
-    <button type="button" onClick={() => { onScreeningChange({ ocrStatus: 'SUCCEEDED', classification: 'SUPPORTED_ID_TYPE', detectedIdType: 'Government ID', extracted: { fullName: '', detectedIdType: 'Government ID', idNumberLast4: '', expirationDate: '', issuingAuthority: '' }, warnings: [], textQuality: 'HIGH' }); onImageChange('data:image/jpeg;base64,AA==', true); }}>Use test ID image</button>
+    <>
+      <button type="button" onClick={() => { onScreeningChange({ ocrStatus: 'SUCCEEDED', classification: 'SUPPORTED_ID_TYPE', detectedIdType: 'Government ID', extracted: { fullName: 'OCR Visitor', detectedIdType: 'Government ID', idNumberLast4: '1234', expirationDate: '2030-10-24', issuingAuthority: 'Test Authority' }, warnings: [], textQuality: 'HIGH' }); onImageChange('data:image/jpeg;base64,AA==', true); }}>Use test ID image</button>
+      <button type="button" onClick={() => onScreeningChange({ ocrStatus: 'SUCCEEDED', classification: 'SUPPORTED_ID_TYPE', detectedIdType: 'Government ID', extracted: { fullName: 'Retry Visitor', detectedIdType: 'Government ID', idNumberLast4: '9999', expirationDate: '2031-01-01', issuingAuthority: 'Retry Authority' }, warnings: [], textQuality: 'HIGH' })}>Retry test OCR</button>
+      <button type="button" onClick={() => { onScreeningChange({ ocrStatus: 'SUCCEEDED', classification: 'SUPPORTED_ID_TYPE', detectedIdType: 'Government ID', extracted: { fullName: '', detectedIdType: 'Government ID', idNumberLast4: '', expirationDate: '', issuingAuthority: '' }, warnings: [], textQuality: 'MEDIUM' }); onImageChange('data:image/jpeg;base64,AA==', false); }}>Screen without confirming</button>
+    </>
   ),
 }));
 
@@ -122,6 +129,51 @@ describe('VisitorKioskPage', () => {
     expect(await screen.findByRole('heading', { name: 'Request received' })).toBeInTheDocument();
   });
 
+  it('populates the review form from OCR and labels the source of each value', async () => {
+    render(<MemoryRouter><VisitorKioskPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: /start visitor registration/i }));
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: /^continue$/i }));
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Government ID' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Use test ID image' }));
+
+    expect(screen.getByLabelText('ID review full name')).toHaveValue('OCR Visitor');
+    expect(screen.getByLabelText('ID review last four characters')).toHaveValue('1234');
+    expect(screen.getByLabelText('ID expiration date')).toHaveValue('2030-10-24');
+    expect(screen.getByLabelText('ID issuing authority')).toHaveValue('Test Authority');
+    expect(screen.getByText('Government ID', { selector: 'div' })).toBeInTheDocument();
+    expect(screen.getAllByText('OCR extracted').length).toBeGreaterThanOrEqual(4);
+    expect(screen.getByRole('button', { name: /confirm and continue/i })).toBeEnabled();
+  });
+
+  it('preserves a manual correction when a later OCR result arrives', async () => {
+    render(<MemoryRouter><VisitorKioskPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: /start visitor registration/i }));
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: /^continue$/i }));
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Government ID' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Use test ID image' }));
+    fireEvent.change(screen.getByLabelText('ID review full name'), { target: { value: 'Corrected Visitor' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry test OCR' }));
+
+    expect(screen.getByLabelText('ID review full name')).toHaveValue('Corrected Visitor');
+    expect(screen.getByLabelText('ID review last four characters')).toHaveValue('9999');
+    expect(screen.getByText('Manually entered')).toBeInTheDocument();
+  });
+
+  it('explains why the visitor cannot continue after incomplete OCR review', async () => {
+    render(<MemoryRouter><VisitorKioskPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: /start visitor registration/i }));
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: /^continue$/i }));
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Government ID' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Screen without confirming' }));
+
+    expect(screen.getByText(/select "use photo"/i)).toBeInTheDocument();
+    expect(screen.getByText(/enter the visitor's full name/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /confirm and continue/i })).toBeDisabled();
+  });
+
   it('blocks collection when mandatory privacy configuration is incomplete', async () => {
     vi.mocked(visitorService.getKioskConfig).mockResolvedValue({ ...configured, privacy: { ...configured.privacy, ready: false, missing: ['dpoContact'] } });
     render(<MemoryRouter><VisitorKioskPage /></MemoryRouter>);
@@ -145,6 +197,42 @@ describe('visitorDetailsAreValid', () => {
   it('requires a real backend host selection for employee meetings', () => {
     expect(visitorDetailsAreValid({ ...base, purposeCategory: 'MEETING_EMPLOYEE', otherPurpose: '' })).toBe(false);
     expect(visitorDetailsAreValid({ ...base, purposeCategory: 'MEETING_EMPLOYEE', otherPurpose: '', hostId: 'host-1' })).toBe(true);
+  });
+});
+
+describe('applyOcrExtraction', () => {
+  const form: VisitorKioskFormState = {
+    fullName: '', email: '', phoneNumber: '', company: '', idType: 'Postal ID', idNumberLast4: '',
+    idExpirationDate: '', idIssuingAuthority: '', idImage: '', imageConfirmed: false, purposeCategory: '',
+    otherPurpose: '', hostId: '', receivingDepartment: '', expectedArrival: '',
+  };
+  const emptySources: IdFieldSources = {
+    fullName: 'EMPTY', idNumberLast4: 'EMPTY', idExpirationDate: 'EMPTY', idIssuingAuthority: 'EMPTY',
+  };
+  const screening = {
+    ocrStatus: 'SUCCEEDED' as const, classification: 'SUPPORTED_ID_TYPE' as const, detectedIdType: 'Postal ID',
+    extracted: { fullName: 'OCR NAME', detectedIdType: 'Postal ID', idNumberLast4: '5678', expirationDate: '2030-10-24', issuingAuthority: 'PHLPost' },
+    warnings: [], textQuality: 'HIGH' as const,
+  };
+
+  it('applies only extracted fields from a supported matching document', () => {
+    const result = applyOcrExtraction(form, emptySources, screening);
+    expect(result.form).toMatchObject({ fullName: 'OCR NAME', idNumberLast4: '5678', idExpirationDate: '2030-10-24', idIssuingAuthority: 'PHLPost' });
+    expect(result.sources).toEqual({ fullName: 'OCR', idNumberLast4: 'OCR', idExpirationDate: 'OCR', idIssuingAuthority: 'OCR' });
+  });
+
+  it('does not overwrite manual corrections or accept a mismatched classification', () => {
+    const manual = applyOcrExtraction(
+      { ...form, fullName: 'MANUAL NAME' },
+      { ...emptySources, fullName: 'MANUAL' },
+      screening,
+    );
+    expect(manual.form.fullName).toBe('MANUAL NAME');
+    expect(manual.form.idNumberLast4).toBe('5678');
+
+    const mismatch = applyOcrExtraction(form, emptySources, { ...screening, detectedIdType: 'Philippine Passport' });
+    expect(mismatch.form).toBe(form);
+    expect(mismatch.sources).toBe(emptySources);
   });
 });
 

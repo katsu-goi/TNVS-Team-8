@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2,
@@ -92,6 +92,12 @@ const NoticeRow: React.FC<{ title: string; children: React.ReactNode }> = ({ tit
   <div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs font-extrabold uppercase tracking-wide text-slate-700">{title}</p><div className="mt-1.5 text-sm leading-6 text-slate-600">{children}</div></div>
 );
 
+const FieldSourceBadge: React.FC<{ source: IdFieldSources[IdReviewField]; optional?: boolean }> = ({ source, optional }) => (
+  <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${source === 'OCR' ? 'bg-blue-100 text-blue-800' : source === 'MANUAL' ? 'bg-slate-200 text-slate-700' : 'bg-amber-100 text-amber-800'}`}>
+    {source === 'OCR' ? 'OCR extracted' : source === 'MANUAL' ? 'Manually entered' : optional ? 'Optional - not read' : 'Manual entry required'}
+  </span>
+);
+
 export const VisitorKioskPage: React.FC = () => {
   const [step, setStep] = useState<Step>('welcome');
   const [config, setConfig] = useState<KioskConfig | null>(null);
@@ -99,7 +105,10 @@ export const VisitorKioskPage: React.FC = () => {
   const [error, setError] = useState('');
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
   const [form, setForm] = useState<VisitorKioskFormState>(emptyForm);
+  const formRef = useRef<VisitorKioskFormState>(emptyForm);
   const [documentScreening, setDocumentScreening] = useState<DocumentScreeningResult | null>(null);
+  const [idFieldSources, setIdFieldSources] = useState<IdFieldSources>(() => createEmptyIdFieldSources());
+  const idFieldSourcesRef = useRef<IdFieldSources>(createEmptyIdFieldSources());
   const [selfieImage, setSelfieImage] = useState('');
   const [biometricAuthorization, setBiometricAuthorization] = useState(false);
   const [manualAlternativeRequested, setManualAlternativeRequested] = useState(false);
@@ -123,9 +132,95 @@ export const VisitorKioskPage: React.FC = () => {
   const selectedHost = config?.hosts.find((host) => host.id === form.hostId);
   const selectedPurpose = config?.purposes.find((purpose) => purpose.value === form.purposeCategory);
   const detailsValid = useMemo(() => visitorDetailsAreValid(form), [form]);
+  useEffect(() => { formRef.current = form; }, [form]);
+
+  const updateIdFieldSources = (next: IdFieldSources) => {
+    idFieldSourcesRef.current = next;
+    setIdFieldSources(next);
+  };
+
+  useEffect(() => {
+    const screeningName = documentScreening?.classification === 'SUPPORTED_ID_TYPE'
+      ? documentScreening.extracted.fullName.trim()
+      : '';
+    if (idFieldSourcesRef.current.fullName === 'OCR' && form.fullName.trim() !== screeningName) {
+      updateIdFieldSources({
+        ...idFieldSourcesRef.current,
+        fullName: form.fullName.trim() ? 'MANUAL' : 'EMPTY',
+      });
+    }
+  }, [documentScreening, form.fullName]);
+
+  const updateManualIdField = (field: IdReviewField, value: string) => {
+    const nextForm = { ...formRef.current, [field]: value };
+    formRef.current = nextForm;
+    setForm(nextForm);
+    updateIdFieldSources({
+      ...idFieldSourcesRef.current,
+      [field]: value.trim() ? 'MANUAL' : 'EMPTY',
+    });
+  };
+
+  const clearOcrDerivedFields = () => {
+    const currentSources = idFieldSourcesRef.current;
+    const nextForm = { ...formRef.current };
+    extractedFieldMap.forEach(({ formField }) => {
+      if (currentSources[formField] === 'OCR') nextForm[formField] = '';
+    });
+    formRef.current = nextForm;
+    setForm(nextForm);
+    updateIdFieldSources(Object.fromEntries(
+      Object.entries(currentSources).map(([field, source]) => [field, source === 'OCR' ? 'EMPTY' : source]),
+    ) as IdFieldSources);
+  };
+
+  const applyScreening = (screening: DocumentScreeningResult | null) => {
+    setDocumentScreening(screening);
+    if (!screening) return;
+    const applied = applyOcrExtraction(formRef.current, idFieldSourcesRef.current, screening);
+    formRef.current = applied.form;
+    updateIdFieldSources(applied.sources);
+    setForm(applied.form);
+  };
+
+  const selectIdType = (idType: string) => {
+    const sources = idFieldSourcesRef.current;
+    const nextSources: IdFieldSources = {
+      fullName: sources.fullName === 'MANUAL' ? 'MANUAL' : 'EMPTY',
+      idNumberLast4: 'EMPTY', idExpirationDate: 'EMPTY', idIssuingAuthority: 'EMPTY',
+    };
+    const nextForm: VisitorKioskFormState = {
+      ...formRef.current,
+      idType,
+      fullName: sources.fullName === 'MANUAL' ? formRef.current.fullName : '',
+      idNumberLast4: '', idExpirationDate: '', idIssuingAuthority: '', idImage: '', imageConfirmed: false,
+    };
+    formRef.current = nextForm;
+    updateIdFieldSources(nextSources);
+    setDocumentScreening(null);
+    setForm(nextForm);
+  };
+
+  const updateIdImage = (idImage: string, imageConfirmed: boolean) => {
+    if (!idImage) clearOcrDerivedFields();
+    const nextForm = { ...formRef.current, idImage, imageConfirmed };
+    formRef.current = nextForm;
+    setForm(nextForm);
+  };
+
+  const idStepIssues = useMemo(() => {
+    const issues: string[] = [];
+    if (!form.idType) issues.push('Select an approved ID type.');
+    if (form.idType && documentScreening?.classification !== 'SUPPORTED_ID_TYPE') issues.push('The document type has not been confirmed by OCR screening.');
+    if (documentScreening?.classification === 'SUPPORTED_ID_TYPE' && !form.idImage) issues.push('Capture or upload the supported ID image.');
+    if (form.idImage && !form.imageConfirmed) issues.push('Select "Use photo" after reviewing the captured image.');
+    if (documentScreening?.classification === 'SUPPORTED_ID_TYPE' && form.fullName.trim().length < 2) issues.push("Enter the visitor's full name because OCR could not read it reliably.");
+    return issues;
+  }, [documentScreening?.classification, form.fullName, form.idImage, form.idType, form.imageConfirmed]);
+  const idStepReady = idStepIssues.length === 0;
 
   const reset = () => {
-    setStep('welcome'); setPrivacyAcknowledged(false); setForm(emptyForm); setDocumentScreening(null); setSelfieImage(''); setBiometricAuthorization(false); setManualAlternativeRequested(false); setResult(null); setError(''); setIdempotencyKey(crypto.randomUUID());
+    formRef.current = emptyForm; setStep('welcome'); setPrivacyAcknowledged(false); setForm(emptyForm); setDocumentScreening(null); updateIdFieldSources(createEmptyIdFieldSources()); setSelfieImage(''); setBiometricAuthorization(false); setManualAlternativeRequested(false); setResult(null); setError(''); setIdempotencyKey(crypto.randomUUID());
   };
 
   const submit = async () => {
@@ -181,42 +276,50 @@ export const VisitorKioskPage: React.FC = () => {
             <div className="mt-6 grid gap-6 lg:grid-cols-[320px_1fr]">
               <div>
                 <label className={labelClass}>ID type</label>
-                <select value={form.idType} onChange={(event) => { setDocumentScreening(null); setForm((current) => ({ ...current, idType: event.target.value, idImage: '', imageConfirmed: false, idExpirationDate: '', idIssuingAuthority: '' })); }} className={inputClass}>
+                <select value={form.idType} onChange={(event) => selectIdType(event.target.value)} className={inputClass}>
                   <option value="">Select an approved ID</option>
                   {config.privacy.acceptedIdTypes.map((type) => <option key={type} value={type}>{type}</option>)}
                 </select>
                 <label className="mt-4 block">
                   <span className={labelClass}>Last 4 ID characters (optional)</span>
-                  <input maxLength={4} value={form.idNumberLast4} onChange={(event) => setForm((current) => ({ ...current, idNumberLast4: event.target.value.replace(/[^A-Za-z0-9]/g, '') }))} className={inputClass} autoComplete="off" />
+                  <input maxLength={4} value={form.idNumberLast4} onChange={(event) => updateManualIdField('idNumberLast4', event.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase())} className={inputClass} autoComplete="off" />
+                  <FieldSourceBadge source={idFieldSources.idNumberLast4} optional />
                   <span className="mt-1 block text-xs text-slate-500">Only the last four are requested to reduce retained ID data.</span>
                 </label>
                 <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-xs leading-5 text-blue-800"><strong>OCR screening:</strong> Tesseract.js runs locally after capture. It assists transcription and document-category screening only; it does not prove authenticity or identity.</div>
               </div>
               <VisitorIdScanner
+                key={form.idType || 'no-id-type'}
                 image={form.idImage}
                 confirmed={form.imageConfirmed}
                 selectedIdType={form.idType}
                 acceptedIdTypes={config.privacy.acceptedIdTypes}
-                onImageChange={(idImage, imageConfirmed) => setForm((current) => ({ ...current, idImage, imageConfirmed }))}
-                onScreeningChange={(screening) => {
-                  setDocumentScreening(screening);
-                  if (!screening) return;
-                  setForm((current) => ({
-                    ...current,
-                    fullName: screening.extracted.fullName || current.fullName,
-                    idType: screening.detectedIdType || current.idType,
-                    idNumberLast4: screening.extracted.idNumberLast4 || current.idNumberLast4,
-                    idExpirationDate: screening.extracted.expirationDate,
-                    idIssuingAuthority: screening.extracted.issuingAuthority,
-                  }));
-                }}
+                onImageChange={updateIdImage}
+                onScreeningChange={applyScreening}
               />
             </div>
-            {documentScreening?.classification === 'SUPPORTED_ID_TYPE' && <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5"><h2 className="text-lg font-black text-slate-950">Review Your ID Information</h2><p className="mt-1 text-xs leading-5 text-slate-600">Correct OCR mistakes before continuing. Only the last four ID characters are retained; OCR does not establish document authenticity.</p><div className="mt-4 grid gap-4 sm:grid-cols-2"><label><span className={labelClass}>Full name</span><input value={form.fullName} onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value }))} maxLength={150} className={inputClass} /></label><label><span className={labelClass}>Confirmed ID type</span><select value={form.idType} onChange={(event) => setForm((current) => ({ ...current, idType: event.target.value }))} className={inputClass}>{config.privacy.acceptedIdTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label><label><span className={labelClass}>Expiration date (when shown)</span><input value={form.idExpirationDate} onChange={(event) => setForm((current) => ({ ...current, idExpirationDate: event.target.value }))} maxLength={40} className={inputClass} /></label><label><span className={labelClass}>Issuing authority (when shown)</span><input value={form.idIssuingAuthority} onChange={(event) => setForm((current) => ({ ...current, idIssuingAuthority: event.target.value }))} maxLength={120} className={inputClass} /></label></div>{documentScreening.warnings.length > 0 && <ul className="mt-3 list-disc pl-5 text-xs text-amber-900">{documentScreening.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</div>}
+            {documentScreening?.classification === 'SUPPORTED_ID_TYPE' && <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5">
+              <h2 className="text-lg font-black text-slate-950">Review Your ID Information</h2>
+              <p className="mt-1 text-xs leading-5 text-slate-600">Correct OCR mistakes before continuing. Empty optional fields may be left blank. OCR assists transcription and category screening; it does not establish authenticity.</p>
+              <div className="mt-3 rounded-xl border border-blue-200 bg-white/80 p-3 text-xs font-semibold text-blue-900">
+                {documentScreening.extracted.fullName || documentScreening.extracted.expirationDate || documentScreening.extracted.issuingAuthority || documentScreening.extracted.idNumberLast4
+                  ? 'Information extracted. Please review every value before continuing.'
+                  : 'Some details could not be read. Enter the required full name manually; other fields are optional when they are not shown or readable.'}
+              </div>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <label><span className={labelClass}>Full name</span><input aria-label="ID review full name" value={form.fullName} onChange={(event) => updateManualIdField('fullName', event.target.value)} maxLength={150} className={inputClass} /><FieldSourceBadge source={idFieldSources.fullName} /></label>
+                <div><span className={labelClass}>OCR-confirmed ID type</span><div className="rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-3 text-sm font-bold text-blue-950">{documentScreening.detectedIdType}</div><span className="mt-1 inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-blue-800">OCR classified</span></div>
+                <label><span className={labelClass}>Last 4 ID characters (optional)</span><input aria-label="ID review last four characters" value={form.idNumberLast4} onChange={(event) => updateManualIdField('idNumberLast4', event.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase())} maxLength={4} className={inputClass} autoComplete="off" /><FieldSourceBadge source={idFieldSources.idNumberLast4} optional /></label>
+                <label><span className={labelClass}>Expiration date (when shown)</span><input aria-label="ID expiration date" value={form.idExpirationDate} onChange={(event) => updateManualIdField('idExpirationDate', event.target.value)} maxLength={40} className={inputClass} placeholder="Leave blank if not shown" /><FieldSourceBadge source={idFieldSources.idExpirationDate} optional /></label>
+                <label><span className={labelClass}>Issuing authority (when shown)</span><input aria-label="ID issuing authority" value={form.idIssuingAuthority} onChange={(event) => updateManualIdField('idIssuingAuthority', event.target.value)} maxLength={120} className={inputClass} placeholder="Leave blank if not readable" /><FieldSourceBadge source={idFieldSources.idIssuingAuthority} optional /></label>
+              </div>
+              {documentScreening.warnings.length > 0 && <ul className="mt-3 list-disc pl-5 text-xs text-amber-900">{documentScreening.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}
+            </div>}
             <div className="mt-6 flex justify-between">
               <button onClick={() => setStep('privacy')} className="inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-slate-600"><ArrowLeft className="h-4 w-4" />Back</button>
-              <button disabled={!form.idType || !form.idImage || !form.imageConfirmed || documentScreening?.classification !== 'SUPPORTED_ID_TYPE'} onClick={() => setStep('verification')} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Confirm and Continue <ArrowRight className="h-4 w-4" /></button>
+              <button disabled={!idStepReady} onClick={() => setStep('verification')} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white disabled:opacity-40">Confirm and Continue <ArrowRight className="h-4 w-4" /></button>
             </div>
+            {!idStepReady && <div role="status" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><p className="font-bold">Complete the following before continuing:</p><ul className="mt-1 list-disc pl-5">{idStepIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}
           </section>
         )}
 
@@ -255,6 +358,48 @@ export const VisitorPassPage: React.FC = () => {
   const scheduled = state.data?.status === 'NOT_YET_VALID';
   return <KioskShell><div className="mx-auto flex min-h-[75vh] max-w-xl items-center p-5"><section className="w-full rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-xl">{state.loading ? <><Loader2 className="mx-auto h-10 w-10 animate-spin text-red-700" /><p className="mt-4 text-sm font-bold">Validating pass…</p></> : state.error ? <><AlertCircle className="mx-auto h-12 w-12 text-rose-600" /><h1 className="mt-4 text-2xl font-black">Pass unavailable</h1><p className="mt-2 text-sm text-slate-600">{state.error}</p><button type="button" onClick={() => void loadPass()} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white"><RefreshCw className="h-4 w-4" />Try again</button></> : state.data && <><ShieldCheck className={`mx-auto h-12 w-12 ${scheduled ? 'text-amber-600' : 'text-emerald-600'}`} /><h1 className="mt-4 text-2xl font-black">{scheduled ? 'Visitor pass approved' : 'Active visitor pass'}</h1><p className="mt-2 text-sm text-slate-600">{scheduled ? <>Entry is not active yet. This pass becomes valid on <strong>{formatSchedule(state.data.validFrom)}</strong>.</> : 'Present the QR code from your email to authorized security staff.'}</p><div className={`mt-6 rounded-xl border p-4 text-sm font-bold ${scheduled ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>{scheduled ? 'APPROVED — NOT YET VALID' : 'ACTIVE'}</div><div className="mt-5 space-y-2 rounded-xl bg-slate-50 p-5 text-left text-sm"><p><strong>Reference:</strong> {state.data.referenceNumber}</p><p><strong>Visitor:</strong> {state.data.visitorName}</p><p><strong>Destination:</strong> {state.data.destination}</p><p><strong>Expected arrival:</strong> {formatSchedule(state.data.expectedArrival)}</p><p><strong>Valid from:</strong> {formatSchedule(state.data.validFrom)}</p><p><strong>Valid until:</strong> {formatSchedule(state.data.expiresAt)}</p></div>{scheduled && <button type="button" onClick={() => void loadPass()} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-bold text-white"><RefreshCw className="h-4 w-4" />Check activation</button>}</>}</section></div></KioskShell>;
 };
+
+export type IdReviewField = 'fullName' | 'idNumberLast4' | 'idExpirationDate' | 'idIssuingAuthority';
+export type IdFieldSources = Record<IdReviewField, 'EMPTY' | 'OCR' | 'MANUAL'>;
+
+const createEmptyIdFieldSources = (): IdFieldSources => ({
+  fullName: 'EMPTY', idNumberLast4: 'EMPTY', idExpirationDate: 'EMPTY', idIssuingAuthority: 'EMPTY',
+});
+
+const extractedFieldMap: Array<{
+  formField: IdReviewField;
+  extractedField: 'fullName' | 'idNumberLast4' | 'expirationDate' | 'issuingAuthority';
+  maxLength: number;
+}> = [
+  { formField: 'fullName', extractedField: 'fullName', maxLength: 150 },
+  { formField: 'idNumberLast4', extractedField: 'idNumberLast4', maxLength: 4 },
+  { formField: 'idExpirationDate', extractedField: 'expirationDate', maxLength: 40 },
+  { formField: 'idIssuingAuthority', extractedField: 'issuingAuthority', maxLength: 120 },
+];
+
+export function applyOcrExtraction(
+  form: VisitorKioskFormState,
+  sources: IdFieldSources,
+  screening: DocumentScreeningResult,
+): { form: VisitorKioskFormState; sources: IdFieldSources } {
+  if (screening.ocrStatus !== 'SUCCEEDED' || screening.classification !== 'SUPPORTED_ID_TYPE'
+    || !screening.detectedIdType || screening.detectedIdType.trim().toLowerCase() !== form.idType.trim().toLowerCase()) {
+    return { form, sources };
+  }
+  const nextForm = { ...form };
+  const nextSources = { ...sources };
+  extractedFieldMap.forEach(({ formField, extractedField, maxLength }) => {
+    if (sources[formField] === 'MANUAL') return;
+    const raw = screening.extracted?.[extractedField];
+    if (typeof raw !== 'string') return;
+    let value = raw.replace(/\s+/g, ' ').trim().slice(0, maxLength);
+    if (formField === 'idNumberLast4') value = value.replace(/[^A-Za-z0-9]/g, '').slice(-4).toUpperCase();
+    if (!value) return;
+    nextForm[formField] = value;
+    nextSources[formField] = 'OCR';
+  });
+  return { form: nextForm, sources: nextSources };
+}
 
 export const VisitorStatusPage: React.FC = () => {
   const { token = '' } = useParams();

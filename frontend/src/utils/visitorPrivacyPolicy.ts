@@ -24,6 +24,17 @@ const unresolvedPolicyPatterns = [
 
 export type UnresolvedPrivacyPolicyContent = { field: string; label: string; token: string };
 
+export function findUnresolvedBiometricPolicyContent(values: object): UnresolvedPrivacyPolicyContent[] {
+  const record = values as Record<string, unknown>;
+  return [
+    ['biometricNoticeText', 'Approved biometric-processing notice'],
+    ['biometricAuthorizationText', 'Separate visitor authorization statement'],
+  ].flatMap(([field, label]) => unresolvedPolicyPatterns.flatMap((pattern) => {
+    const matches = String(record[field] ?? '').match(new RegExp(pattern.source, pattern.flags)) ?? [];
+    return matches.map((token) => ({ field, label, token }));
+  }));
+}
+
 export function findUnresolvedPrivacyPolicyContent(values: object): UnresolvedPrivacyPolicyContent[] {
   const record = values as Record<string, unknown>;
   const fields = Object.keys(visitorPolicyFieldLabels).flatMap((field) => {

@@ -28,6 +28,8 @@ export type ExtractedIdInformation = {
   issuingAuthority: string;
 };
 
+export type ExtractedIdField = keyof ExtractedIdInformation;
+
 export type DocumentScreeningResult = {
   ocrStatus: Exclude<OcrStatus, 'NOT_STARTED' | 'PROCESSING'>;
   classification: DocumentClassification;
@@ -38,6 +40,8 @@ export type DocumentScreeningResult = {
   textQuality: 'HIGH' | 'MEDIUM' | 'LOW';
   /** Explains recovery without changing the security classification. */
   reason?: DocumentScreeningReason;
+  /** Fields backed by recognizable OCR evidence; never inferred from selection alone. */
+  extractedFields?: ExtractedIdField[];
 };
 
 const normalize = (value: string) => value
@@ -138,29 +142,138 @@ function acceptedCanonicalType(canonical: string, accepted: readonly string[]): 
   }) ?? null;
 }
 
-function extractExpiration(text: string): string {
-  const labelled = text.match(/(?:EXPIR(?:Y|ATION)|VALID UNTIL|VALID THRU)\s*(?:DATE)?\s*[:.-]?\s*((?:\d{1,2}[ /.-]){2}\d{2,4}|\d{4}[ /.-]\d{1,2}[ /.-]\d{1,2})/i);
-  return labelled?.[1]?.trim() ?? '';
-}
+const MONTHS: Record<string, number> = {
+  JAN: 1, JANUARY: 1, FEB: 2, FEBRUARY: 2, MAR: 3, MARCH: 3, APR: 4, APRIL: 4,
+  MAY: 5, JUN: 6, JUNE: 6, JUL: 7, JULY: 7, AUG: 8, AUGUST: 8, SEP: 9,
+  SEPT: 9, SEPTEMBER: 9, OCT: 10, OCTOBER: 10, NOV: 11, NOVEMBER: 11,
+  DEC: 12, DECEMBER: 12,
+};
 
-function extractLastFour(text: string): string {
-  const labelled = text.match(/(?:PASSPORT|LICENSE|REGISTRATION|EMPLOYEE|POSTAL|ID)\s*(?:NO|NUMBER|#)?\s*[:.-]?\s*([A-Z0-9-]{5,24})/i);
-  return labelled?.[1]?.replace(/[^A-Z0-9]/gi, '').slice(-4).toUpperCase() ?? '';
-}
+const cleanLines = (rawText: string) => rawText.split(/\r?\n/)
+  .map((line) => line.replace(/[|]+/g, ' ').replace(/\s+/g, ' ').trim())
+  .filter(Boolean);
 
-function extractName(rawText: string): string {
-  const lines = rawText.split(/\r?\n/).map((line) => line.replace(/\s+/g, ' ').trim()).filter(Boolean);
-  const labelled = lines.find((line) => /^(?:FULL )?NAME\s*[:.-]/i.test(line));
-  if (labelled) return labelled.replace(/^(?:FULL )?NAME\s*[:.-]\s*/i, '').slice(0, 150);
-  const surname = lines.find((line) => /^SURNAME\s*[:.-]?\s+\S/i.test(line))?.replace(/^SURNAME\s*[:.-]?\s*/i, '');
-  const given = lines.find((line) => /^GIVEN NAMES?\s*[:.-]?\s+\S/i.test(line))?.replace(/^GIVEN NAMES?\s*[:.-]?\s*/i, '');
-  if (surname && given) return `${given} ${surname}`.slice(0, 150);
+function labelledValue(lines: string[], label: RegExp, valid: (value: string) => boolean): string {
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index].match(label);
+    if (!match || match.index === undefined) continue;
+    const sameLine = lines[index].slice(match.index + match[0].length).replace(/^[\s:.,/-]+/, '').trim();
+    if (valid(sameLine)) return sameLine;
+    const nextLine = lines[index + 1]?.trim() ?? '';
+    if (valid(nextLine)) return nextLine;
+  }
   return '';
 }
 
-function detectedAuthority(text: string, rule?: IdRule): string {
-  const known = rule?.authorities.find((pattern) => pattern.test(text));
-  return known?.source.replace(/\\b/g, '').split('|')[0].replace(/\\/g, '') ?? '';
+function normalizeDate(value: string): string {
+  const cleaned = value.replace(/[,]/g, ' ').replace(/\s+/g, ' ').trim();
+  const iso = cleaned.match(/\b(20\d{2}|19\d{2})[ /.-](\d{1,2})[ /.-](\d{1,2})\b/);
+  if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
+
+  const dayFirst = cleaned.match(/\b(\d{1,2})[\s./-]+([A-Z]{3,9})[\s,./-]+(20\d{2}|19\d{2})\b/i);
+  const monthFirst = cleaned.match(/\b([A-Z]{3,9})[\s./-]+(\d{1,2})[\s,./-]+(20\d{2}|19\d{2})\b/i);
+  const monthName = (dayFirst?.[2] ?? monthFirst?.[1] ?? '').toUpperCase();
+  const month = MONTHS[monthName];
+  if (month) {
+    const day = Number(dayFirst?.[1] ?? monthFirst?.[2]);
+    const year = dayFirst?.[3] ?? monthFirst?.[3];
+    if (day >= 1 && day <= 31) return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+
+  const numeric = cleaned.match(/\b(\d{1,2})[ /.-](\d{1,2})[ /.-](20\d{2}|19\d{2})\b/);
+  if (!numeric) return '';
+  const first = Number(numeric[1]); const second = Number(numeric[2]);
+  if (first > 12 && second <= 12 && first <= 31) {
+    return `${numeric[3]}-${numeric[2].padStart(2, '0')}-${numeric[1].padStart(2, '0')}`;
+  }
+  if (second > 12 && first <= 12 && second <= 31) {
+    return `${numeric[3]}-${numeric[1].padStart(2, '0')}-${numeric[2].padStart(2, '0')}`;
+  }
+  // Preserve an ambiguous numeric date for visitor confirmation rather than guessing day/month order.
+  return numeric[0];
+}
+
+function extractExpiration(rawText: string): string {
+  const lines = cleanLines(rawText);
+  const date = labelledValue(
+    lines,
+    /\b(?:EXPIR(?:Y|ATION)(?: DATE)?|DATE OF EXPIR(?:Y|ATION)|VALID(?:ITY)?(?: UNTIL| THRU| THROUGH| UP TO)?)\b/i,
+    (value) => /(?:\d{1,2}[ /.-]\d{1,2}[ /.-]\d{2,4}|\d{4}[ /.-]\d{1,2}[ /.-]\d{1,2}|\d{1,2}[\s./-]+[A-Z]{3,9}[\s,./-]+\d{4}|[A-Z]{3,9}[\s./-]+\d{1,2}[\s,./-]+\d{4})/i.test(value),
+  );
+  return normalizeDate(date);
+}
+
+function extractLastFour(text: string): string {
+  const labels = [
+    /\bPASSPORT\s*(?:NO|NUMBER|#)\s*[:.-]?\s*([A-Z0-9-]{5,24})/i,
+    /\b(?:DRIVER.?S\s+)?LICENSE\s*(?:NO|NUMBER|#)\s*[:.-]?\s*([A-Z0-9-]{5,24})/i,
+    /\bREGISTRATION\s*(?:NO|NUMBER|#)\s*[:.-]?\s*([A-Z0-9-]{5,24})/i,
+    /\bPOSTAL REFERENCE\s*(?:NO|NUMBER|#)?\s*[:.-]?\s*([A-Z0-9-]{5,24})/i,
+    /\bPOSTAL ID\s*(?:NO|NUMBER|#)\s*[:.-]?\s*([A-Z0-9-]{5,24})/i,
+    /\bPRN\s*(?:NO|NUMBER|#)?\s*[:.-]?\s*([A-Z0-9-]{5,24})/i,
+    /\b(?:EMPLOYEE|STAFF|PERSONNEL)\s*(?:ID|NO|NUMBER|#)\s*[:.-]?\s*([A-Z0-9-]{5,24})/i,
+    /\bID\s*(?:NO|NUMBER|#)\s*[:.-]?\s*([A-Z0-9-]{5,24})/i,
+  ];
+  const candidate = labels.map((pattern) => text.match(pattern)?.[1] ?? '')
+    .find((value) => /\d/.test(value)) ?? '';
+  return candidate.replace(/[^A-Z0-9]/gi, '').slice(-4).toUpperCase();
+}
+
+function extractName(rawText: string): string {
+  const lines = cleanLines(rawText);
+  const validName = (value: string) => {
+    const normalizedValue = value.replace(/[^\p{L}' .-]/gu, ' ').replace(/\s+/g, ' ').trim();
+    return normalizedValue.length >= 2 && normalizedValue.length <= 100
+      && !/\d/.test(value)
+      && !/^(?:SURNAME|LAST NAME|GIVEN NAMES?|FIRST NAME|MIDDLE NAME|APELYIDO|PANGALAN)$/i.test(normalizedValue)
+      && !/(?:POSTAL|PASSPORT|LICENSE|IDENTIFICATION|REPUBLIC|PHILIPPINES|VALID|BIRTH|ADDRESS)/i.test(normalizedValue);
+  };
+  const cleanName = (value: string) => value.replace(/[^\p{L}' .-]/gu, ' ').replace(/\s+/g, ' ').trim();
+  const nameLabels = /\b(?:FULL NAME|NAME OF HOLDER|EMPLOYEE NAME|CARDHOLDER NAME|SURNAME|LAST NAME|APELYIDO|GIVEN NAMES?|FIRST NAME|PANGALAN|MIDDLE NAME|MIDDLE INITIAL|GITNANG (?:PANGALAN|APELYIDO))\b/i;
+  const nameValue = (label: RegExp) => {
+    for (let index = 0; index < lines.length; index += 1) {
+      const match = lines[index].match(label);
+      if (!match || match.index === undefined) continue;
+      const remainder = lines[index].slice(match.index + match[0].length).replace(/^[\s:.,/-]+/, '');
+      const sameLine = remainder.split(nameLabels)[0].trim();
+      if (validName(sameLine)) return sameLine;
+      const nextLine = lines[index + 1]?.split(nameLabels)[0].trim() ?? '';
+      if (validName(nextLine)) return nextLine;
+    }
+    return '';
+  };
+  const fullName = nameValue(/^(?:FULL NAME|NAME OF HOLDER|EMPLOYEE NAME|CARDHOLDER NAME|NAME)\b/i);
+  if (fullName) return cleanName(fullName).slice(0, 150);
+
+  const surname = nameValue(/\b(?:SURNAME|LAST NAME|APELYIDO)\b/i);
+  const given = nameValue(/\b(?:GIVEN NAMES?|FIRST NAME|PANGALAN)\b/i);
+  const middle = nameValue(/\b(?:MIDDLE NAME|MIDDLE INITIAL|GITNANG (?:PANGALAN|APELYIDO))\b/i);
+  if (surname && given) return cleanName(`${given}${middle ? ` ${middle}` : ''} ${surname}`).slice(0, 150);
+  return '';
+}
+
+function detectedAuthority(rawText: string, rule?: IdRule): string {
+  const text = normalize(rawText);
+  if (/PHILIPPINE POSTAL CORPORATION/.test(text)) return 'Philippine Postal Corporation';
+  if (/\bPHLPOST\b/.test(text)) return 'PHLPost';
+  if (/LAND TRANSPORTATION OFFICE|\bLTO\b/.test(text)) return 'Land Transportation Office';
+  if (/PROFESSIONAL REGULATION COMMISSION|\bPRC\b/.test(text)) return 'Professional Regulation Commission';
+  if (/DEPARTMENT OF FOREIGN AFFAIRS|\bDFA\b/.test(text)) return 'Department of Foreign Affairs';
+
+  const lines = cleanLines(rawText);
+  const labelled = labelledValue(lines, /\b(?:ISSUED BY|ISSUING AUTHORITY|EMPLOYER|COMPANY)\b/i, (value) => (
+    value.length >= 2 && value.length <= 120 && !/\d{5,}/.test(value)
+  ));
+  if (labelled) return labelled.slice(0, 120);
+  if (rule?.canonical === 'Company-Issued Employee ID') {
+    const organization = lines.find((line) => line.length <= 120 && /\b(?:INC|INCORPORATED|CORPORATION|COMPANY|LTD)\b/i.test(line));
+    if (organization) return organization.slice(0, 120);
+  }
+  return '';
+}
+
+function extractedFields(extracted: ExtractedIdInformation): ExtractedIdField[] {
+  return (Object.keys(extracted) as ExtractedIdField[]).filter((field) => Boolean(extracted[field]));
 }
 
 export function classifyIdentityDocument(
@@ -186,6 +299,7 @@ export function classifyIdentityDocument(
       warnings: ['Payment-card signals were detected. The image and OCR text must be discarded.'],
       textQuality: confidence >= 60 ? 'HIGH' : confidence >= 35 ? 'MEDIUM' : 'LOW',
       reason: 'PAYMENT_CARD',
+      extractedFields: [],
     };
   }
 
@@ -206,6 +320,13 @@ export function classifyIdentityDocument(
   const readableLength = text.replace(/[^A-Z0-9]/g, '').length;
   const sufficientEvidence = Boolean(best && best.score >= 2 && best.indicatorHits >= 1
     && confidence >= minimumConfidence && readableLength >= 18);
+  const parsedExtracted: ExtractedIdInformation = {
+    fullName: extractName(rawText),
+    detectedIdType: acceptedType ?? '',
+    idNumberLast4: extractLastFour(text),
+    expirationDate: extractExpiration(rawText),
+    issuingAuthority: detectedAuthority(rawText, best?.rule),
+  };
 
   if (sufficientEvidence && !acceptedType) {
     return {
@@ -214,18 +335,20 @@ export function classifyIdentityDocument(
       warnings: ['The detected document category is not in the administrator-approved ID list.'],
       textQuality: confidence >= 60 ? 'HIGH' : confidence >= 35 ? 'MEDIUM' : 'LOW',
       reason: 'UNSUPPORTED_DOCUMENT',
+      extractedFields: [],
     };
   }
   if (!sufficientEvidence) {
     const unreadable = confidence < minimumConfidence || readableLength < 18;
     return {
       ocrStatus: 'SUCCEEDED', classification: 'INCONCLUSIVE', detectedIdType: best?.score ? best.rule.canonical : null,
-      extracted: emptyExtracted,
+      extracted: parsedExtracted,
       warnings: [unreadable
         ? 'OCR completed, but too little readable text was recovered from the image.'
         : 'OCR completed, but the text did not contain enough document-specific indicators to identify the selected ID type.'],
       textQuality: confidence >= 60 ? 'HIGH' : confidence >= 35 ? 'MEDIUM' : 'LOW',
       reason: unreadable ? 'UNREADABLE_TEXT' : 'UNRECOGNIZED_DOCUMENT',
+      extractedFields: extractedFields(parsedExtracted),
     };
   }
   if (!selectedMatches) warnings.push(`The selected ID type does not match the detected ${acceptedType}.`);
@@ -235,16 +358,11 @@ export function classifyIdentityDocument(
     ocrStatus: 'SUCCEEDED',
     classification: selectedMatches ? 'SUPPORTED_ID_TYPE' : 'INCONCLUSIVE',
     detectedIdType: acceptedType,
-    extracted: {
-      fullName: extractName(rawText),
-      detectedIdType: acceptedType ?? '',
-      idNumberLast4: extractLastFour(text),
-      expirationDate: extractExpiration(text),
-      issuingAuthority: detectedAuthority(text, best.rule),
-    },
+    extracted: parsedExtracted,
     warnings,
     textQuality: confidence >= 60 ? 'HIGH' : confidence >= 35 ? 'MEDIUM' : 'LOW',
     reason: selectedMatches ? 'CLASSIFIED' : 'DOCUMENT_TYPE_MISMATCH',
+    extractedFields: extractedFields(parsedExtracted),
   };
 }
 
@@ -255,6 +373,6 @@ export function failedDocumentScreening(
   return {
     ocrStatus: 'FAILED', classification: 'INCONCLUSIVE', detectedIdType: null,
     extracted: { fullName: '', detectedIdType: '', idNumberLast4: '', expirationDate: '', issuingAuthority: '' },
-    warnings: [message], textQuality: 'LOW', reason,
+    warnings: [message], textQuality: 'LOW', reason, extractedFields: [],
   };
 }

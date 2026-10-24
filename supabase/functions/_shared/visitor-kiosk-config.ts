@@ -89,6 +89,13 @@ const UNRESOLVED_POLICY_PATTERNS = [
 
 export type VisitorPolicyPlaceholder = { field: string; token: string };
 
+export function findUnresolvedTextPlaceholders(field: string, value: string): VisitorPolicyPlaceholder[] {
+  return UNRESOLVED_POLICY_PATTERNS.flatMap((pattern) => {
+    const matches = value.match(new RegExp(pattern.source, pattern.flags)) ?? [];
+    return matches.map((token) => ({ field, token }));
+  });
+}
+
 /** Finds template markers without treating normal Markdown links as placeholders. */
 export function findUnresolvedVisitorPolicyPlaceholders(
   policy: VisitorKioskPolicy,
@@ -96,10 +103,7 @@ export function findUnresolvedVisitorPolicyPlaceholders(
   const values: Array<[string, string]> = REQUIRED_TEXT_FIELDS.map(([key, label]) => [label, String(policy[key] ?? "")]);
   policy.acceptedIdTypes.forEach((value, index) => values.push([`acceptedIdTypes[${index}]`, value]));
 
-  return values.flatMap(([field, value]) => UNRESOLVED_POLICY_PATTERNS.flatMap((pattern) => {
-    const matches = value.match(new RegExp(pattern.source, pattern.flags)) ?? [];
-    return matches.map((token) => ({ field, token }));
-  }));
+  return values.flatMap(([field, value]) => findUnresolvedTextPlaceholders(field, value));
 }
 
 export function evaluateVisitorKioskReadiness(
@@ -163,6 +167,8 @@ export function publicVisitorKioskPrivacy(
   const biometricApproved = policy.biometricPrivacyApproved && policy.biometricPiaApproved
     && policy.biometricSecurityApproved && policy.biometricLicenseApproved
     && Boolean(policy.biometricNoticeText?.trim()) && Boolean(policy.biometricAuthorizationText?.trim())
+    && findUnresolvedTextPlaceholders("biometricNoticeText", policy.biometricNoticeText ?? "").length === 0
+    && findUnresolvedTextPlaceholders("biometricAuthorizationText", policy.biometricAuthorizationText ?? "").length === 0
     && Boolean(policy.alternativeVerification.trim());
   const biometricEnabled = publishPolicy && policy.biometricProcessingEnabled && biometricApproved && biometricRuntimeReady;
   return {

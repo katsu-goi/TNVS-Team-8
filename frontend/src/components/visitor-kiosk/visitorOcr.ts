@@ -1,6 +1,7 @@
 import {
   classifyIdentityDocument,
   failedDocumentScreening,
+  type ExtractedIdField,
   type DocumentScreeningReason,
   type DocumentScreeningResult,
 } from './visitorDocumentScreening';
@@ -28,7 +29,7 @@ export type PreparedIdentityImage = {
 };
 
 export type OcrRuntime = {
-  prepareImage(image: string): Promise<PreparedIdentityImage>;
+  prepareImage(image: string, selectedIdType?: string): Promise<PreparedIdentityImage>;
   getWorker(onProgress?: (progress: OcrProgress) => void): Promise<WorkerLike>;
 };
 
@@ -167,7 +168,20 @@ function inspectAndEnhance(canvas: HTMLCanvasElement): {
   return { enhanced, brightness: brightnessSum / Math.max(1, pixelCount), sharpness };
 }
 
-export async function prepareIdentityImage(source: string): Promise<PreparedIdentityImage> {
+function textRegion(source: HTMLCanvasElement): HTMLCanvasElement | null {
+  if (source.width / source.height < 1.2) return null;
+  const left = Math.round(source.width * 0.23);
+  const top = Math.round(source.height * 0.04);
+  const output = document.createElement('canvas');
+  output.width = source.width - left;
+  output.height = Math.round(source.height * 0.92);
+  const context = output.getContext('2d');
+  if (!context) return null;
+  context.drawImage(source, left, top, output.width, output.height, 0, 0, output.width, output.height);
+  return output;
+}
+
+export async function prepareIdentityImage(source: string, selectedIdType = ''): Promise<PreparedIdentityImage> {
   const image = await loadIdentityImage(source);
   const sourceWidth = image.naturalWidth;
   const sourceHeight = image.naturalHeight;
@@ -210,14 +224,36 @@ export async function prepareIdentityImage(source: string): Promise<PreparedIden
   else if (brightness > 228) recoveryIssue = { reason: 'OVEREXPOSED', message: 'Reduce direct light or glare and try again.' };
   else if (sharpness < 38) recoveryIssue = { reason: 'IMAGE_BLURRY', message: 'The image is blurry. Hold your ID steady and retake it.' };
 
-  return { variants: recoveryIssue ? [enhanced, normalized] : [normalized, enhanced], recoveryIssue };
+  const variants = recoveryIssue ? [enhanced, normalized] : [normalized, enhanced];
+  if (/DRIVER|PRC|EMPLOYEE|COMPANY|POSTAL/i.test(selectedIdType)) {
+    const region = textRegion(enhanced);
+    if (region) variants.push(region);
+  }
+  return { variants, recoveryIssue };
 }
 
 function preferredResult(results: DocumentScreeningResult[]): DocumentScreeningResult {
   const payment = results.find((result) => result.classification === 'PAYMENT_CARD_DETECTED');
   if (payment) return payment;
   const supported = results.find((result) => result.classification === 'SUPPORTED_ID_TYPE');
-  if (supported) return supported;
+  if (supported) {
+    const related = results.filter((result) => result.classification !== 'UNSUPPORTED_DOCUMENT'
+      && (!result.detectedIdType || result.detectedIdType === supported.detectedIdType));
+    const mergedExtracted = { ...supported.extracted };
+    related.forEach((result) => {
+      (Object.keys(mergedExtracted) as ExtractedIdField[]).forEach((field) => {
+        if (!mergedExtracted[field] && result.extracted[field]) mergedExtracted[field] = result.extracted[field];
+      });
+    });
+    const fields = (Object.keys(mergedExtracted) as ExtractedIdField[]).filter((field) => Boolean(mergedExtracted[field]));
+    return {
+      ...supported,
+      extracted: mergedExtracted,
+      extractedFields: fields,
+      warnings: [...new Set(related.filter((result) => result.classification === 'SUPPORTED_ID_TYPE')
+        .flatMap((result) => result.warnings))],
+    };
+  }
   const unsupported = results.find((result) => result.classification === 'UNSUPPORTED_DOCUMENT');
   if (unsupported) return unsupported;
   return [...results].sort((left, right) => {
@@ -239,12 +275,12 @@ export async function screenIdentityDocument(
   const activeRuntime: OcrRuntime = runtime ?? { prepareImage: prepareIdentityImage, getWorker: worker };
   const attempts: DocumentScreeningResult[] = [];
   try {
-    const prepared = await activeRuntime.prepareImage(image);
+    const prepared = await activeRuntime.prepareImage(image, selectedIdType);
     if (prepared.blockingIssue) {
       return failedDocumentScreening(prepared.blockingIssue.message, prepared.blockingIssue.reason);
     }
     const engine = await activeRuntime.getWorker(onProgress);
-    for (const variant of prepared.variants.slice(0, 2)) {
+    for (const variant of prepared.variants.slice(0, 3)) {
       let data: OcrData;
       try {
         ({ data } = await withTimeout(engine.recognize(variant, { rotateAuto: true }), OCR_TIMEOUT_MS, 'OCR processing timed out.'));
@@ -254,7 +290,10 @@ export async function screenIdentityDocument(
       }
       const result = classifyIdentityDocument(data.text, selectedIdType, acceptedIdTypes, data.confidence);
       attempts.push(result);
-      if (result.classification !== 'INCONCLUSIVE') break;
+      if (result.classification === 'PAYMENT_CARD_DETECTED' || result.classification === 'UNSUPPORTED_DOCUMENT') break;
+      if (result.classification === 'SUPPORTED_ID_TYPE'
+        && result.extracted.fullName
+        && (result.extracted.expirationDate || result.extracted.idNumberLast4 || result.extracted.issuingAuthority)) break;
     }
     if (attempts.length === 0) throw new Error('OCR produced no result.');
     let result = preferredResult(attempts);

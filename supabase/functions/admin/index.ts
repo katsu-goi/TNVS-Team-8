@@ -9,12 +9,17 @@ import { hashPassword } from "../_shared/password.ts";
 import { ACCOUNT_UPDATE_ALLOWED_ROLES, prepareAccountUpdate } from "./account-update-policy.ts";
 import {
   evaluateVisitorKioskReadiness,
+  findUnresolvedTextPlaceholders,
   parsePurposeDepartmentRoutes,
   splitVisitorKioskList,
   VISITOR_KIOSK_FIXED_DEPARTMENT_PURPOSES,
   VISITOR_KIOSK_OCR_SUPPORTED_ID_TYPES,
   type VisitorKioskPolicy,
 } from "../_shared/visitor-kiosk-config.ts";
+import {
+  checkVisitorBiometricTechnicalReadiness,
+  type VisitorBiometricTechnicalReadiness,
+} from "../_shared/visitor-biometric.ts";
 import {
   assignedRoleIds,
   findConflict,
@@ -941,6 +946,10 @@ type VisitorKioskConfigRow = {
   biometric_pia_approved: boolean; biometric_pia_approved_by: string | null; biometric_pia_approved_at: string | null;
   biometric_security_approved: boolean; biometric_security_approved_by: string | null; biometric_security_approved_at: string | null;
   biometric_license_approved: boolean; biometric_license_approved_by: string | null; biometric_license_approved_at: string | null;
+  biometric_privacy_evidence: string | null; biometric_pia_evidence: string | null;
+  biometric_security_evidence: string | null; biometric_license_evidence: string | null;
+  biometric_retention_approved: boolean; biometric_retention_approved_by: string | null;
+  biometric_retention_approved_at: string | null; biometric_retention_evidence: string | null;
 };
 
 function visitorConfigEnv(name: string): string {
@@ -1004,15 +1013,34 @@ async function loadVisitorKioskConfigRow(): Promise<VisitorKioskConfigRow> {
 }
 
 function visitorKioskAdminDto(row: VisitorKioskConfigRow, policy: VisitorKioskPolicy, departments: string[]) {
+  const biometricApproval = (prefix: "privacy" | "pia" | "security" | "license" | "retention") => ({
+    approved: row[`biometric_${prefix}_approved` as keyof VisitorKioskConfigRow] === true,
+    approvedBy: row[`biometric_${prefix}_approved_by` as keyof VisitorKioskConfigRow] as string | null,
+    approvedAt: row[`biometric_${prefix}_approved_at` as keyof VisitorKioskConfigRow] as string | null,
+    evidence: String(row[`biometric_${prefix}_evidence` as keyof VisitorKioskConfigRow] ?? ""),
+  });
   return {
     config: {
       ...policy,
+      biometricPrivacyEvidence: row.biometric_privacy_evidence?.trim() || "",
+      biometricPiaEvidence: row.biometric_pia_evidence?.trim() || "",
+      biometricSecurityEvidence: row.biometric_security_evidence?.trim() || "",
+      biometricLicenseEvidence: row.biometric_license_evidence?.trim() || "",
+      biometricRetentionApproved: row.biometric_retention_approved === true,
+      biometricRetentionEvidence: row.biometric_retention_evidence?.trim() || "",
       revision: row.revision,
       updatedAt: row.updated_at,
       approvals: {
         privacy: { approved: row.privacy_review_approved, approvedAt: row.privacy_review_approved_at },
         security: { approved: row.security_review_approved, approvedAt: row.security_review_approved_at },
         operations: { approved: row.operations_review_approved, approvedAt: row.operations_review_approved_at },
+      },
+      biometricApprovals: {
+        privacy: biometricApproval("privacy"),
+        pia: biometricApproval("pia"),
+        security: biometricApproval("security"),
+        license: biometricApproval("license"),
+        retention: biometricApproval("retention"),
       },
     },
     readiness: evaluateVisitorKioskReadiness(policy, departments),
@@ -1024,13 +1052,8 @@ function visitorKioskAdminDto(row: VisitorKioskConfigRow, policy: VisitorKioskPo
       passPolicyConfigured: Boolean(visitorConfigEnv("VISITOR_PASS_TTL_HOURS") && visitorConfigEnv("VISITOR_PASS_EARLY_MINUTES")),
       ocrStatus: "BROWSER_LOCAL_TESSERACT",
       identityVerificationStatus: policy.biometricProcessingEnabled
-        && policy.biometricPrivacyApproved && policy.biometricPiaApproved
-        && policy.biometricSecurityApproved && policy.biometricLicenseApproved
-        && visitorConfigEnv("VISITOR_BIOMETRIC_ENABLED").toLowerCase() === "true"
-        && visitorConfigEnv("VISITOR_BIOMETRIC_SERVICE_URL").startsWith("https://")
-        && visitorConfigEnv("VISITOR_BIOMETRIC_SERVICE_KEY").length >= 32
-        ? "ENABLED_DEEPFACE_MANUAL_REVIEW_REQUIRED"
-        : "DISABLED_PENDING_BIOMETRIC_APPROVALS",
+        ? "ADMIN_INTENT_SAVED_LIVE_CHECK_REQUIRED"
+        : "DISABLED",
     },
   };
 }
@@ -1038,6 +1061,63 @@ function visitorKioskAdminDto(row: VisitorKioskConfigRow, policy: VisitorKioskPo
 async function handleGetVisitorKioskConfig() {
   const [row, departments] = await Promise.all([loadVisitorKioskConfigRow(), activeVisitorDepartments()]);
   return jsonResponse(ok(visitorKioskAdminDto(row, visitorPolicyFromRow(row), departments), "Visitor kiosk configuration loaded"), 200);
+}
+
+function biometricPolicyMissing(row: VisitorKioskConfigRow, policy: VisitorKioskPolicy): string[] {
+  const missing: string[] = [];
+  const notice = policy.biometricNoticeText?.trim() ?? "";
+  const authorization = policy.biometricAuthorizationText?.trim() ?? "";
+  if (notice.length < 50) missing.push("BIOMETRIC_NOTICE_INCOMPLETE");
+  if (authorization.length < 20) missing.push("BIOMETRIC_AUTHORIZATION_INCOMPLETE");
+  if (findUnresolvedTextPlaceholders("biometricNoticeText", notice).length > 0) missing.push("BIOMETRIC_NOTICE_HAS_PLACEHOLDERS");
+  if (findUnresolvedTextPlaceholders("biometricAuthorizationText", authorization).length > 0) missing.push("BIOMETRIC_AUTHORIZATION_HAS_PLACEHOLDERS");
+  if (!policy.biometricPrivacyApproved || !row.biometric_privacy_evidence?.trim()) missing.push("BIOMETRIC_DPO_LEGAL_REVIEW_PENDING");
+  if (!policy.biometricPiaApproved || !row.biometric_pia_evidence?.trim()) missing.push("BIOMETRIC_PIA_REVIEW_PENDING");
+  if (!policy.biometricSecurityApproved || !row.biometric_security_evidence?.trim()) missing.push("BIOMETRIC_SECURITY_REVIEW_PENDING");
+  if (!policy.biometricLicenseApproved || !row.biometric_license_evidence?.trim()) missing.push("BIOMETRIC_LICENSE_REVIEW_PENDING");
+  if (!row.biometric_retention_approved || !row.biometric_retention_evidence?.trim()) missing.push("BIOMETRIC_RETENTION_REVIEW_PENDING");
+  if (!policy.alternativeVerification.trim()) missing.push("BIOMETRIC_MANUAL_ALTERNATIVE_MISSING");
+  return [...new Set(missing)];
+}
+
+function biometricReadinessDto(
+  row: VisitorKioskConfigRow,
+  policy: VisitorKioskPolicy,
+  technical: VisitorBiometricTechnicalReadiness,
+) {
+  const policyMissing = biometricPolicyMissing(row, policy);
+  const missing = [...new Set([...policyMissing, ...technical.missing])];
+  const activationAllowed = missing.length === 0;
+  return {
+    checkedAt: technical.checkedAt,
+    activationAllowed,
+    enabled: activationAllowed && policy.biometricProcessingEnabled === true,
+    missing: policy.biometricProcessingEnabled ? missing : [...missing, "BIOMETRIC_ADMIN_ENABLEMENT_DISABLED"],
+    technical,
+    policy: {
+      noticeApproved: Boolean(policy.biometricPrivacyApproved && (policy.biometricNoticeText?.trim().length ?? 0) >= 50
+        && !policyMissing.includes("BIOMETRIC_NOTICE_HAS_PLACEHOLDERS")),
+      authorizationApproved: Boolean(policy.biometricPrivacyApproved && (policy.biometricAuthorizationText?.trim().length ?? 0) >= 20
+        && !policyMissing.includes("BIOMETRIC_AUTHORIZATION_HAS_PLACEHOLDERS")),
+      legalReviewCompleted: policy.biometricPrivacyApproved === true && Boolean(row.biometric_privacy_evidence?.trim()),
+      piaReviewCompleted: policy.biometricPiaApproved === true && Boolean(row.biometric_pia_evidence?.trim()),
+      securityReviewCompleted: policy.biometricSecurityApproved === true && Boolean(row.biometric_security_evidence?.trim()),
+      licenseReviewCompleted: policy.biometricLicenseApproved === true && Boolean(row.biometric_license_evidence?.trim()),
+      retentionReviewCompleted: row.biometric_retention_approved === true && Boolean(row.biometric_retention_evidence?.trim()),
+      manualAlternativeConfigured: Boolean(policy.alternativeVerification.trim()),
+    },
+  };
+}
+
+async function handleCheckVisitorBiometricReadiness(ctx: AuthContext | null, req: Request) {
+  const row = await loadVisitorKioskConfigRow();
+  const policy = visitorPolicyFromRow(row);
+  const technical = await checkVisitorBiometricTechnicalReadiness(true);
+  const readiness = biometricReadinessDto(row, policy, technical);
+  await writeAudit(ctx!.user, "VISITOR_BIOMETRIC_READINESS_CHECKED", "VISITOR", "VisitorKioskConfiguration", "1",
+    `Biometric readiness checked. Result: ${readiness.activationAllowed ? "READY" : "NOT_READY"}. Missing requirement count: ${readiness.missing.length}.`,
+    resolveClientIp(req).ip, readiness.activationAllowed ? "INFO" : "HIGH");
+  return jsonResponse(ok(readiness, "Biometric readiness checked"), 200);
 }
 
 function requiredVisitorKioskText(body: Record<string, unknown>, key: string, minimum: number, maximum: number): string {
@@ -1058,6 +1138,29 @@ async function handleUpdateVisitorKioskConfig(ctx: AuthContext | null, req: Requ
   if (!Number.isInteger(expectedRevision) || expectedRevision !== Number(existing.revision)) {
     return jsonResponse(fail("The kiosk configuration changed since it was loaded. Refresh before saving.", "CONFIGURATION_REVISION_CONFLICT"), 409);
   }
+
+  const biometricKeys = [
+    "biometricProcessingEnabled", "biometricNoticeText", "biometricAuthorizationText",
+    "biometricPrivacyApproved", "biometricPrivacyEvidence", "biometricPiaApproved", "biometricPiaEvidence",
+    "biometricSecurityApproved", "biometricSecurityEvidence", "biometricLicenseApproved", "biometricLicenseEvidence",
+    "biometricRetentionApproved", "biometricRetentionEvidence",
+  ];
+  if (biometricKeys.some((key) => key in b) && !ctx!.user.assignedRoles.includes("SUPER_ADMIN")) {
+    return jsonResponse(fail("A directly assigned SUPER_ADMIN role is required to change biometric configuration.", "BIOMETRIC_ADMIN_REQUIRED"), 403);
+  }
+
+  const biometricString = (key: string, existingValue: string | null, maximum: number) => (
+    key in b ? String(b[key] ?? "").trim().slice(0, maximum) : existingValue?.trim() || ""
+  );
+  const biometricBoolean = (key: string, existingValue: boolean) => key in b ? b[key] === true : existingValue;
+  const biometricEvidence = {
+    privacy: biometricString("biometricPrivacyEvidence", existing.biometric_privacy_evidence, 2000),
+    pia: biometricString("biometricPiaEvidence", existing.biometric_pia_evidence, 2000),
+    security: biometricString("biometricSecurityEvidence", existing.biometric_security_evidence, 2000),
+    license: biometricString("biometricLicenseEvidence", existing.biometric_license_evidence, 2000),
+    retention: biometricString("biometricRetentionEvidence", existing.biometric_retention_evidence, 2000),
+  };
+  const biometricRetentionApproved = biometricBoolean("biometricRetentionApproved", existing.biometric_retention_approved);
 
   let policy: VisitorKioskPolicy;
   try {
@@ -1093,17 +1196,22 @@ async function handleUpdateVisitorKioskConfig(ctx: AuthContext | null, req: Requ
       privacyReviewApproved: b.privacyReviewApproved === true,
       securityReviewApproved: b.securityReviewApproved === true,
       operationsReviewApproved: b.operationsReviewApproved === true,
-      biometricProcessingEnabled: b.biometricProcessingEnabled === true,
-      biometricNoticeText: String(b.biometricNoticeText ?? "").trim().slice(0, 8000),
-      biometricAuthorizationText: String(b.biometricAuthorizationText ?? "").trim().slice(0, 2000),
-      biometricPrivacyApproved: b.biometricPrivacyApproved === true,
-      biometricPiaApproved: b.biometricPiaApproved === true,
-      biometricSecurityApproved: b.biometricSecurityApproved === true,
-      biometricLicenseApproved: b.biometricLicenseApproved === true,
+      biometricProcessingEnabled: biometricBoolean("biometricProcessingEnabled", existing.biometric_processing_enabled),
+      biometricNoticeText: biometricString("biometricNoticeText", existing.biometric_notice_text, 8000),
+      biometricAuthorizationText: biometricString("biometricAuthorizationText", existing.biometric_authorization_text, 2000),
+      biometricPrivacyApproved: biometricBoolean("biometricPrivacyApproved", existing.biometric_privacy_approved),
+      biometricPiaApproved: biometricBoolean("biometricPiaApproved", existing.biometric_pia_approved),
+      biometricSecurityApproved: biometricBoolean("biometricSecurityApproved", existing.biometric_security_approved),
+      biometricLicenseApproved: biometricBoolean("biometricLicenseApproved", existing.biometric_license_approved),
     };
-    if (policy.biometricProcessingEnabled && (!policy.biometricNoticeText || !policy.biometricAuthorizationText
-      || !policy.biometricPrivacyApproved || !policy.biometricPiaApproved || !policy.biometricSecurityApproved || !policy.biometricLicenseApproved)) {
-      throw new Error("Biometric processing cannot be enabled until the approved notice, authorization text, PIA, privacy, security, and model-license reviews are recorded.");
+    for (const [name, approved] of [
+      ["privacy", policy.biometricPrivacyApproved], ["pia", policy.biometricPiaApproved],
+      ["security", policy.biometricSecurityApproved], ["license", policy.biometricLicenseApproved],
+      ["retention", biometricRetentionApproved],
+    ] as const) {
+      if (approved && biometricEvidence[name].length < 10) {
+        throw new Error(`biometric${name[0].toUpperCase()}${name.slice(1)}Evidence must contain at least 10 characters when approved.`);
+      }
     }
   } catch (error) {
     return jsonResponse(fail((error as Error).message, "VALIDATION_ERROR"), 400);
@@ -1112,6 +1220,26 @@ async function handleUpdateVisitorKioskConfig(ctx: AuthContext | null, req: Requ
   const readiness = evaluateVisitorKioskReadiness(policy, departments);
   if (policy.registrationEnabled && !readiness.configurationComplete) {
     return jsonResponse(fail("Registration cannot be enabled until every required policy field, department route, and approval is complete.", "KIOSK_CONFIGURATION_INCOMPLETE", readiness.missing), 422);
+  }
+
+  const prospectiveBiometricRow: VisitorKioskConfigRow = {
+    ...existing,
+    biometric_privacy_evidence: biometricEvidence.privacy || null,
+    biometric_pia_evidence: biometricEvidence.pia || null,
+    biometric_security_evidence: biometricEvidence.security || null,
+    biometric_license_evidence: biometricEvidence.license || null,
+    biometric_retention_approved: biometricRetentionApproved,
+    biometric_retention_evidence: biometricEvidence.retention || null,
+  };
+  if (policy.biometricProcessingEnabled) {
+    const policyMissing = biometricPolicyMissing(prospectiveBiometricRow, policy);
+    if (policyMissing.length > 0) {
+      return jsonResponse(fail("Biometric processing cannot be enabled until every organizational approval and evidence requirement is complete.", "BIOMETRIC_POLICY_INCOMPLETE", policyMissing), 422);
+    }
+    const technical = await checkVisitorBiometricTechnicalReadiness(true);
+    if (!technical.ready) {
+      return jsonResponse(fail("Biometric processing cannot be enabled until the private service, model inference test, and both runtime feature flags pass.", "BIOMETRIC_TECHNICAL_NOT_READY", technical.missing), 422);
+    }
   }
 
   const now = nowIso();
@@ -1123,6 +1251,24 @@ async function handleUpdateVisitorKioskConfig(ctx: AuthContext | null, req: Requ
       [`${prefix}_review_approved_at`]: approved ? (previousApproved ? existing[`${prefix}_review_approved_at` as keyof VisitorKioskConfigRow] : now) : null,
     };
   };
+  const biometricApprovalFields = (
+    prefix: "privacy" | "pia" | "security" | "license" | "retention",
+    approved: boolean,
+    evidence: string,
+    forceRenew = false,
+  ) => {
+    const previousApproved = existing[`biometric_${prefix}_approved` as keyof VisitorKioskConfigRow] === true;
+    const previousEvidence = String(existing[`biometric_${prefix}_evidence` as keyof VisitorKioskConfigRow] ?? "").trim();
+    const renew = forceRenew || !previousApproved || previousEvidence !== evidence;
+    return {
+      [`biometric_${prefix}_approved`]: approved,
+      [`biometric_${prefix}_approved_by`]: approved ? (renew ? ctx!.userId : existing[`biometric_${prefix}_approved_by` as keyof VisitorKioskConfigRow]) : null,
+      [`biometric_${prefix}_approved_at`]: approved ? (renew ? now : existing[`biometric_${prefix}_approved_at` as keyof VisitorKioskConfigRow]) : null,
+      [`biometric_${prefix}_evidence`]: evidence || null,
+    };
+  };
+  const biometricNoticeChanged = (existing.biometric_notice_text?.trim() || "") !== (policy.biometricNoticeText?.trim() || "")
+    || (existing.biometric_authorization_text?.trim() || "") !== (policy.biometricAuthorizationText?.trim() || "");
   const payload = {
     organization_name: policy.organizationName || null, controller_name: policy.controllerName || null,
     controller_contact: policy.controllerContact || null, dpo_contact: policy.dpoContact || null,
@@ -1139,16 +1285,11 @@ async function handleUpdateVisitorKioskConfig(ctx: AuthContext | null, req: Requ
     biometric_processing_enabled: policy.biometricProcessingEnabled === true,
     biometric_notice_text: policy.biometricNoticeText || null,
     biometric_authorization_text: policy.biometricAuthorizationText || null,
-    ...Object.fromEntries(["privacy", "pia", "security", "license"].flatMap((prefix) => {
-      const key = `${prefix[0].toUpperCase()}${prefix.slice(1)}Approved`;
-      const approved = policy[`biometric${key}` as keyof VisitorKioskPolicy] === true;
-      const previous = existing[`biometric_${prefix}_approved` as keyof VisitorKioskConfigRow] === true;
-      return [
-        [`biometric_${prefix}_approved`, approved],
-        [`biometric_${prefix}_approved_by`, approved ? (previous ? existing[`biometric_${prefix}_approved_by` as keyof VisitorKioskConfigRow] : ctx!.userId) : null],
-        [`biometric_${prefix}_approved_at`, approved ? (previous ? existing[`biometric_${prefix}_approved_at` as keyof VisitorKioskConfigRow] : now) : null],
-      ];
-    })),
+    ...biometricApprovalFields("privacy", policy.biometricPrivacyApproved === true, biometricEvidence.privacy, biometricNoticeChanged),
+    ...biometricApprovalFields("pia", policy.biometricPiaApproved === true, biometricEvidence.pia, biometricNoticeChanged),
+    ...biometricApprovalFields("security", policy.biometricSecurityApproved === true, biometricEvidence.security),
+    ...biometricApprovalFields("license", policy.biometricLicenseApproved === true, biometricEvidence.license),
+    ...biometricApprovalFields("retention", biometricRetentionApproved, biometricEvidence.retention),
     revision: existing.revision + 1, updated_at: now, updated_by: ctx!.userId,
   };
   const { data: saved, error } = await db.from("visitor_kiosk_configuration").update(payload)
@@ -2541,6 +2682,7 @@ const SUPER_ADMIN_ONLY = { kind: "roles", roles: ["SUPER_ADMIN"] } as const;
 const ACCOUNT_UPDATE_ONLY = { kind: "roles", roles: [...ACCOUNT_UPDATE_ALLOWED_ROLES] } as const;
 const SYSTEM_ADMIN_ONLY = { kind: "roles", roles: ["SYSTEM_ADMIN"] } as const;
 const ADMIN_PORTAL_ROLES = { kind: "roles", roles: ["SUPER_ADMIN", "SYSTEM_ADMIN"] } as const;
+const DIRECT_SUPER_ADMIN = { kind: "assignedRoles", roles: ["SUPER_ADMIN"] } as const;
 const OVERSIGHT_ADMIN_ROLES = { kind: "roles", roles: ["SUPER_ADMIN", "COMPLIANCE_MANAGER"] } as const;
 
 const routes = [
@@ -2571,6 +2713,7 @@ const routes = [
   { method: "PUT", path: "/admin/config/:key", guard: SYSTEM_ADMIN_ONLY, handler: handleUpsertConfig },
   { method: "GET", path: "/admin/visitor-kiosk-config", guard: ADMIN_PORTAL_ROLES, handler: handleGetVisitorKioskConfig },
   { method: "PUT", path: "/admin/visitor-kiosk-config", guard: ADMIN_PORTAL_ROLES, handler: handleUpdateVisitorKioskConfig },
+  { method: "POST", path: "/admin/visitor-biometric-readiness", guard: DIRECT_SUPER_ADMIN, handler: handleCheckVisitorBiometricReadiness },
   { method: "GET", path: "/admin/integrations", guard: SYSTEM_ADMIN_ONLY, handler: handleListIntegrations },
   { method: "GET", path: "/admin/integrations/:systemName", guard: SYSTEM_ADMIN_ONLY, handler: handleGetIntegration },
   { method: "GET", path: "/admin/hr-assistance", guard: SUPER_ADMIN_ONLY, handler: handleListHrRequests },

@@ -86,6 +86,20 @@ describe('visitor OCR recovery', () => {
     expect(result.warnings[0]).toMatch(/blurry/i);
   });
 
+  it('merges missing fields from a later OCR region without replacing classified evidence', async () => {
+    const { runtime, recognize } = runtimeFor([
+      { text: 'PHLPOST\nPOSTAL IDENTITY CARD\nADDRESS MANILA\nPOSTAL REFERENCE NO 12345678', confidence: 82 },
+      { text: 'NAME\nANA SANTOS', confidence: 70 },
+    ]);
+    const result = await screenIdentityDocument('postal-image', 'Postal ID', accepted, undefined, runtime);
+    expect(recognize).toHaveBeenCalledTimes(2);
+    expect(result.classification).toBe('SUPPORTED_ID_TYPE');
+    expect(result.detectedIdType).toBe('Postal ID');
+    expect(result.extracted.fullName).toBe('ANA SANTOS');
+    expect(result.extracted.idNumberLast4).toBe('5678');
+    expect(result.extracted.issuingAuthority).toBe('PHLPost');
+  });
+
   it.each([
     new Error('worker initialization failed'),
     new Error('404 while loading eng.traineddata.gz'),

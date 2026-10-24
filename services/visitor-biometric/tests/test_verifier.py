@@ -1,13 +1,24 @@
 import base64
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
+from PIL import Image
+
 from app.verifier import VerificationInputError, VerificationSettings, compare_faces, decode_data_url
 
-JPEG = b"\xff\xd8\xff" + b"synthetic-test-image"
-DATA_URL = "data:image/jpeg;base64," + base64.b64encode(JPEG).decode()
+
+def test_image_data_url() -> str:
+    image = Image.new("RGB", (128, 128))
+    image.putdata([((x * 7) % 255, (y * 11) % 255, ((x + y) * 5) % 255) for y in range(128) for x in range(128)])
+    output = BytesIO()
+    image.save(output, format="JPEG")
+    return "data:image/jpeg;base64," + base64.b64encode(output.getvalue()).decode()
+
+
+DATA_URL = test_image_data_url()
 
 
 class Adapter:
@@ -31,6 +42,13 @@ class VerifierTests(unittest.TestCase):
             decode_data_url("data:text/plain;base64,SGVsbG8=")
         with self.assertRaises(VerificationInputError):
             decode_data_url("data:image/jpeg;base64,not-base64")
+
+    def test_rejects_tiny_or_flat_images_before_deepface(self):
+        output = BytesIO()
+        Image.new("RGB", (32, 32), "black").save(output, format="PNG")
+        tiny = "data:image/png;base64," + base64.b64encode(output.getvalue()).decode()
+        with self.assertRaises(VerificationInputError):
+            decode_data_url(tiny)
 
     def test_reports_actual_match_and_mismatch(self):
         matched = compare_faces(Adapter(verified=True), DATA_URL, DATA_URL, VerificationSettings())

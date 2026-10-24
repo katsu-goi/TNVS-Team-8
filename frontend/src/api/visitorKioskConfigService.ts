@@ -29,9 +29,21 @@ export type VisitorKioskAdminConfig = {
   biometricPiaApproved?: boolean;
   biometricSecurityApproved?: boolean;
   biometricLicenseApproved?: boolean;
+  biometricPrivacyEvidence?: string;
+  biometricPiaEvidence?: string;
+  biometricSecurityEvidence?: string;
+  biometricLicenseEvidence?: string;
+  biometricRetentionApproved?: boolean;
+  biometricRetentionEvidence?: string;
   revision: number;
   updatedAt: string;
   approvals: Record<'privacy' | 'security' | 'operations', { approved: boolean; approvedAt: string | null }>;
+  biometricApprovals?: Record<'privacy' | 'pia' | 'security' | 'license' | 'retention', {
+    approved: boolean;
+    approvedBy: string | null;
+    approvedAt: string | null;
+    evidence: string;
+  }>;
 };
 
 export type VisitorKioskAdminState = {
@@ -53,9 +65,48 @@ export type VisitorKioskAdminState = {
   };
 };
 
-export type VisitorKioskConfigUpdate = Omit<VisitorKioskAdminConfig, 'revision' | 'updatedAt' | 'approvals'> & {
+export type VisitorKioskConfigUpdate = Omit<VisitorKioskAdminConfig, 'revision' | 'updatedAt' | 'approvals' | 'biometricApprovals'> & {
   expectedRevision: number;
   changeReason: string;
+};
+
+export type VisitorBiometricReadiness = {
+  checkedAt: string;
+  activationAllowed: boolean;
+  enabled: boolean;
+  missing: string[];
+  technical: {
+    checkedAt: string;
+    overallStatus: 'READY' | 'NOT_CONFIGURED' | 'DISABLED' | 'UNAVAILABLE' | 'MODEL_NOT_TESTED' | 'ERROR';
+    ready: boolean;
+    edge: {
+      featureFlagEnabled: boolean;
+      serviceUrlConfigured: boolean;
+      secureTransport: boolean;
+      serviceKeyConfigured: boolean;
+    };
+    service: {
+      connected: boolean;
+      featureFlagEnabled: boolean | null;
+      model: string | null;
+      detector: string | null;
+      modelStatus: 'INITIALIZED' | 'NOT_INITIALIZED' | 'ERROR' | 'UNKNOWN';
+      inferenceStatus: 'PASSED' | 'NOT_TESTED' | 'FAILED' | 'UNKNOWN';
+      inferenceTestedAt: string | null;
+      errorCode: string | null;
+    };
+    missing: string[];
+  };
+  policy: {
+    noticeApproved: boolean;
+    authorizationApproved: boolean;
+    legalReviewCompleted: boolean;
+    piaReviewCompleted: boolean;
+    securityReviewCompleted: boolean;
+    licenseReviewCompleted: boolean;
+    retentionReviewCompleted: boolean;
+    manualAlternativeConfigured: boolean;
+  };
 };
 
 export type VisitorGmailOAuthStatus = {
@@ -82,6 +133,11 @@ export const visitorKioskConfigService = {
 
   async update(payload: VisitorKioskConfigUpdate): Promise<VisitorKioskAdminState> {
     const { data } = await apiClient.put('/admin/visitor-kiosk-config', payload);
+    return data?.data;
+  },
+
+  async checkBiometricReadiness(): Promise<VisitorBiometricReadiness> {
+    const { data } = await apiClient.post('/admin/visitor-biometric-readiness');
     return data?.data;
   },
 

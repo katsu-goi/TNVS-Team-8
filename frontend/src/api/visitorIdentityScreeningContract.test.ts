@@ -6,6 +6,9 @@ const root = resolve(process.cwd(), '..');
 const visitor = readFileSync(resolve(root, 'supabase/functions/visitor/index.ts'), 'utf8');
 const policy = readFileSync(resolve(root, 'supabase/functions/_shared/visitor-kiosk-config.ts'), 'utf8');
 const migration = readFileSync(resolve(root, 'supabase/migrations/20261024000100_visitor_identity_screening.sql'), 'utf8');
+const readinessMigration = readFileSync(resolve(root, 'supabase/migrations/20261024000200_visitor_biometric_readiness.sql'), 'utf8');
+const readiness = readFileSync(resolve(root, 'supabase/functions/_shared/visitor-biometric.ts'), 'utf8');
+const admin = readFileSync(resolve(root, 'supabase/functions/admin/index.ts'), 'utf8');
 const python = readFileSync(resolve(root, 'services/visitor-biometric/app/main.py'), 'utf8');
 
 describe('visitor identity screening security contract', () => {
@@ -21,7 +24,7 @@ describe('visitor identity screening security contract', () => {
     expect(migration).toContain('biometric_processing_enabled boolean not null default false');
     expect(policy).toContain('policy.biometricPrivacyApproved && policy.biometricPiaApproved');
     expect(policy).toContain('policy.biometricSecurityApproved && policy.biometricLicenseApproved');
-    expect(visitor).toContain('VISITOR_BIOMETRIC_ENABLED');
+    expect(readiness).toContain('VISITOR_BIOMETRIC_ENABLED');
     expect(visitor).toContain('VISITOR_BIOMETRIC_SERVICE_KEY');
   });
 
@@ -36,7 +39,18 @@ describe('visitor identity screening security contract', () => {
     expect(python).toContain('hmac.compare_digest');
     expect(python).toContain('VISITOR_BIOMETRIC_ENABLED", "false"');
     expect(python).toContain('asyncio.Semaphore');
-    expect(python).toContain('asyncio.wait_for');
+    expect(python).toContain('asyncio.wait({task}, timeout=timeout)');
     expect(python).not.toContain('allow_origins=["*"]');
+  });
+
+  it('requires evidence-backed reviews and a real authenticated inference readiness check', () => {
+    expect(readinessMigration).toContain('biometric_retention_approved boolean not null default false');
+    expect(readinessMigration).toContain("length(trim(coalesce(biometric_privacy_evidence, ''))) >= 10");
+    expect(readiness).toContain('X-Visitor-Verification-Key');
+    expect(readiness).toContain('/v1/readiness');
+    expect(readiness).toContain('inferenceStatus !== "PASSED"');
+    expect(admin).toContain('path: "/admin/visitor-biometric-readiness", guard: DIRECT_SUPER_ADMIN');
+    expect(admin).toContain('BIOMETRIC_TECHNICAL_NOT_READY');
+    expect(visitor).toContain('checkVisitorBiometricTechnicalReadiness(false)');
   });
 });

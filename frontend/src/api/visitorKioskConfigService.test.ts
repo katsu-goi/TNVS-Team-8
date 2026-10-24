@@ -21,6 +21,13 @@ describe('visitor kiosk administrator API', () => {
     expect(api.put).toHaveBeenCalledWith('/admin/visitor-kiosk-config', payload);
   });
 
+  it('uses the protected administrator readiness endpoint', async () => {
+    const readiness = { activationAllowed: false, missing: ['DEEPFACE_INFERENCE_NOT_TESTED'] };
+    api.post.mockResolvedValueOnce({ data: { data: readiness } });
+    await expect(visitorKioskConfigService.checkBiometricReadiness()).resolves.toBe(readiness);
+    expect(api.post).toHaveBeenCalledWith('/admin/visitor-biometric-readiness');
+  });
+
   it('uses protected visitor-function routes for Gmail management', async () => {
     const status = { provider: 'GMAIL', connected: false };
     api.get.mockResolvedValueOnce({ data: { data: status } });

@@ -132,6 +132,53 @@ describe('VisitorIdScanner camera lifecycle', () => {
     expect(onImageChange).toHaveBeenCalledWith('', false);
     expect(screen.queryByText(/captured successfully/i)).not.toBeInTheDocument();
   });
+
+  it('retries OCR against the retained local candidate and accepts it only after supported classification', async () => {
+    const onImageChange = vi.fn();
+    const onScreeningChange = vi.fn();
+    vi.spyOn(detection, 'captureDocumentFrame').mockReturnValue('data:image/jpeg;base64,retry');
+    vi.mocked(screenIdentityDocument)
+      .mockResolvedValueOnce({
+        ocrStatus: 'SUCCEEDED', classification: 'INCONCLUSIVE', detectedIdType: null,
+        extracted: { fullName: '', detectedIdType: '', idNumberLast4: '', expirationDate: '', issuingAuthority: '' },
+        warnings: ['Text could not be read.'], textQuality: 'LOW', reason: 'UNREADABLE_TEXT',
+      })
+      .mockResolvedValueOnce({
+        ocrStatus: 'SUCCEEDED', classification: 'SUPPORTED_ID_TYPE', detectedIdType: 'Philippine Passport',
+        extracted: { fullName: 'ANA SANTOS', detectedIdType: 'Philippine Passport', idNumberLast4: '1234', expirationDate: '', issuingAuthority: 'Department of Foreign Affairs' },
+        warnings: [], textQuality: 'HIGH', reason: 'CLASSIFIED',
+      });
+    render(<VisitorIdScanner {...scannerProps} onScreeningChange={onScreeningChange} image="" confirmed={false} onImageChange={onImageChange} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Use camera' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manual capture' }));
+    expect(await screen.findByRole('button', { name: 'Retry OCR' })).toBeInTheDocument();
+    expect(onImageChange).toHaveBeenCalledWith('', false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry OCR' }));
+    await waitFor(() => expect(onScreeningChange).toHaveBeenCalledWith(expect.objectContaining({ classification: 'SUPPORTED_ID_TYPE' })));
+    expect(onImageChange).toHaveBeenLastCalledWith('data:image/jpeg;base64,retry', false);
+    expect(await screen.findByText(/information extracted/i)).toBeInTheDocument();
+  });
+
+  it('ignores an OCR response that resolves after the visitor retakes the photo', async () => {
+    let resolveOcr: ((value: Awaited<ReturnType<typeof screenIdentityDocument>>) => void) | undefined;
+    vi.mocked(screenIdentityDocument).mockImplementationOnce(() => new Promise((resolve) => { resolveOcr = resolve; }));
+    const onImageChange = vi.fn();
+    const onScreeningChange = vi.fn();
+    render(<VisitorIdScanner {...scannerProps} onScreeningChange={onScreeningChange} image="data:image/jpeg;base64,old" confirmed={false} onImageChange={onImageChange} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry OCR' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retake photo' }));
+    resolveOcr?.({
+      ocrStatus: 'SUCCEEDED', classification: 'SUPPORTED_ID_TYPE', detectedIdType: 'Philippine Passport',
+      extracted: { fullName: 'STALE NAME', detectedIdType: 'Philippine Passport', idNumberLast4: '', expirationDate: '', issuingAuthority: '' },
+      warnings: [], textQuality: 'HIGH', reason: 'CLASSIFIED',
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onScreeningChange).not.toHaveBeenCalledWith(expect.objectContaining({ extracted: expect.objectContaining({ fullName: 'STALE NAME' }) }));
+    expect(onImageChange).not.toHaveBeenCalledWith('data:image/jpeg;base64,old', false);
+  });
 });
 
 describe('visitorCameraFailureMessage', () => {

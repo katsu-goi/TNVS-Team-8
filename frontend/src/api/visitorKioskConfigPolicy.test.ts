@@ -101,4 +101,21 @@ describe('visitor kiosk readiness policy', () => {
     expect(publicConfig).not.toHaveProperty('revision');
     expect(publicConfig).not.toHaveProperty('updatedBy');
   });
+
+  it('does not publish biometric text or enable comparison when policy placeholders remain', () => {
+    const policy = {
+      ...completePolicy(),
+      biometricProcessingEnabled: true,
+      biometricNoticeText: 'Approved notice for [INSERT ORGANIZATION DETAILS HERE].',
+      biometricAuthorizationText: 'I authorize the optional comparison.',
+      biometricPrivacyApproved: true,
+      biometricPiaApproved: true,
+      biometricSecurityApproved: true,
+      biometricLicenseApproved: true,
+    };
+    const publicConfig = publicVisitorKioskPrivacy(policy, evaluateVisitorKioskReadiness(policy, departments), true);
+    expect(publicConfig.identityVerification.status).toBe('DISABLED');
+    expect(publicConfig.identityVerification.biometricNotice).toBe('');
+    expect(JSON.stringify(publicConfig)).not.toContain('INSERT ORGANIZATION DETAILS HERE');
+  });
 });

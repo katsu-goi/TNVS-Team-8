@@ -28,6 +28,13 @@ function cameraErrorName(error: unknown): string {
   return typeof error === 'object' && error && 'name' in error ? String((error as { name?: unknown }).name ?? '') : '';
 }
 
+function ocrPhaseMessage(status: string): string {
+  const normalized = status.toLowerCase();
+  if (normalized.includes('recognizing')) return 'Extracting information...';
+  if (normalized.includes('loading') || normalized.includes('initializing')) return 'Preparing the OCR engine...';
+  return 'Analyzing your identification document...';
+}
+
 export function visitorCameraFailureMessage(error: unknown, secureContext = window.isSecureContext): string {
   if (!secureContext) return 'Camera access requires HTTPS or localhost. Open the kiosk directly in a secure tab, or upload a clear ID photo.';
   const name = cameraErrorName(error);
@@ -122,6 +129,7 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, selectedId
   const sessionRef = useRef(0);
   const activeRef = useRef(false);
   const captureLockRef = useRef(false);
+  const ocrRequestRef = useRef(0);
   const restartAfterClearRef = useRef(false);
   const lastAnalysisAtRef = useRef(0);
   const analysisRef = useRef<DocumentFrameAnalysis | null>(null);
@@ -137,6 +145,7 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, selectedId
   const [capturing, setCapturing] = useState(false);
   const [candidateImage, setCandidateImage] = useState('');
   const [ocrProgress, setOcrProgress] = useState(0);
+  const [ocrPhase, setOcrPhase] = useState('Analyzing your identification document...');
   const [screeningResult, setScreeningResult] = useState<DocumentScreeningResult | null>(null);
   const [manualAssistanceRequested, setManualAssistanceRequested] = useState(false);
   const [videoLayout, setVideoLayout] = useState<{ left: number; top: number; width: number; height: number; guide: { left: number; top: number; width: number; height: number } } | null>(null);
@@ -180,25 +189,38 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, selectedId
       return;
     }
     stopCamera();
+    const requestId = ocrRequestRef.current + 1;
+    ocrRequestRef.current = requestId;
     setCapturing(true);
     setCandidateImage(dataUrl);
     setOcrProgress(0);
+    setOcrPhase('Analyzing your identification document...');
     setScreeningResult(null);
     setManualAssistanceRequested(false);
-    const result = await screenIdentityDocument(dataUrl, selectedIdType, acceptedIdTypes, ({ progress }) => {
+    onScreeningChange(null);
+    const result = await screenIdentityDocument(dataUrl, selectedIdType, acceptedIdTypes, ({ progress, status }) => {
+      if (ocrRequestRef.current !== requestId) return;
       setOcrProgress(Math.max(0, Math.min(1, progress)));
+      setOcrPhase(ocrPhaseMessage(status));
     });
+    if (ocrRequestRef.current !== requestId) return;
     setCapturing(false);
     setScreeningResult(result);
     if (result.classification === 'SUPPORTED_ID_TYPE') {
+      setOcrPhase(result.extracted.fullName || result.extracted.expirationDate || result.extracted.issuingAuthority
+        ? 'Information extracted. Please review.'
+        : 'Some details could not be read. Please complete them manually.');
       onScreeningChange(result);
       onImageChange(dataUrl, false);
       setCandidateImage('');
       return;
     }
-    // Rejected candidates are discarded before they can enter the registration payload.
-    setCandidateImage('');
-    onScreeningChange(null);
+    // Payment cards and recognized unsupported documents are discarded immediately.
+    // Other inconclusive candidates remain only in component memory for an explicit retry.
+    if (result.classification === 'PAYMENT_CARD_DETECTED' || result.classification === 'UNSUPPORTED_DOCUMENT') {
+      setCandidateImage('');
+    }
+    onScreeningChange(result);
     onImageChange('', false);
   }, [acceptedIdTypes, onImageChange, onScreeningChange, selectedIdType, stopCamera]);
 
@@ -298,11 +320,19 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, selectedId
   };
 
   const retake = () => {
+    ocrRequestRef.current += 1;
     restartAfterClearRef.current = true;
     clearOcrResultCache(); onScreeningChange(null); onImageChange('', false); captureLockRef.current = false; autoCaptureRef.current = initialAutoCapture;
-    setCandidateImage(''); setScreeningResult(null); setOcrProgress(0);
+    setCandidateImage(''); setScreeningResult(null); setOcrProgress(0); setOcrPhase('Analyzing your identification document...');
     setManualAssistanceRequested(false);
     setAnalysis(null); analysisRef.current = null; setCaptureProgress(0); setError('');
+  };
+
+  const retryOcr = () => {
+    const source = candidateImage || image;
+    if (!source || capturing) return;
+    clearOcrResultCache();
+    void processCandidate(source);
   };
 
   const upload = async (file?: File) => {
@@ -318,7 +348,10 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, selectedId
     finally { if (fileRef.current) fileRef.current.value = ''; }
   };
 
-  useEffect(() => { void listCameras().then(setDevices); return () => stopCamera(); }, [stopCamera]);
+  useEffect(() => {
+    void listCameras().then(setDevices);
+    return () => { ocrRequestRef.current += 1; stopCamera(); };
+  }, [stopCamera]);
   useEffect(() => {
     if (!active) return undefined;
     updateVideoLayout();
@@ -367,9 +400,9 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, selectedId
           {state === 'green' && <div className="absolute inset-x-[18%] bottom-1 h-1.5 overflow-hidden rounded-full bg-white/25"><div className="h-full bg-emerald-400 transition-[width] duration-150" style={{ width: `${Math.round(captureProgress * 100)}%` }} /></div>}
         </>}
 
-        {!image && !active && !starting && <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center text-slate-300"><ScanLine className="h-12 w-12" /><p className="mt-3 text-sm font-bold">Camera preview appears here</p><p className="mt-1 max-w-sm text-xs text-slate-400">The camera starts only when you choose it. A photo upload remains available.</p></div>}
+        {!image && !candidateImage && !active && !starting && <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center text-slate-300"><ScanLine className="h-12 w-12" /><p className="mt-3 text-sm font-bold">Camera preview appears here</p><p className="mt-1 max-w-sm text-xs text-slate-400">The camera starts only when you choose it. A photo upload remains available.</p></div>}
         {starting && <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/65 text-white"><Loader2 className="h-9 w-9 animate-spin" /><p className="mt-3 text-sm font-bold">Starting camera…</p></div>}
-        {capturing && <div className="absolute inset-0 flex items-center justify-center bg-white/90 text-slate-950"><div className="w-64 text-center"><Loader2 className="mx-auto h-10 w-10 animate-spin text-red-700" /><p className="mt-2 text-sm font-black">Checking document type with OCR…</p><div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full bg-red-700 transition-[width]" style={{ width: `${Math.round(ocrProgress * 100)}%` }} /></div><p className="mt-2 text-xs text-slate-600">The image remains in this browser while it is screened.</p></div></div>}
+        {capturing && <div className="absolute inset-0 flex items-center justify-center bg-white/90 text-slate-950"><div className="w-72 text-center"><Loader2 className="mx-auto h-10 w-10 animate-spin text-red-700" /><p className="mt-2 text-sm font-black" aria-live="polite">{ocrPhase}</p><div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full bg-red-700 transition-[width]" style={{ width: `${Math.round(ocrProgress * 100)}%` }} /></div><p className="mt-2 text-xs text-slate-600">The original captured image remains temporarily in this browser during review.</p></div></div>}
         {image && <div className="absolute left-4 top-4 rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white"><Check className="mr-1 inline h-3.5 w-3.5" />ID captured successfully</div>}
       </div>
 
@@ -377,15 +410,17 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, selectedId
       <div className="mt-3 flex flex-wrap gap-2">
         {image ? <>
           {!confirmed && <button type="button" onClick={() => onImageChange(image, true)} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-bold text-white"><Check className="h-4 w-4" />Use photo</button>}
+          <button type="button" onClick={retryOcr} disabled={capturing} className="inline-flex items-center gap-2 rounded-xl border border-blue-300 bg-blue-50 px-4 py-2.5 text-sm font-bold text-blue-900 disabled:opacity-50"><RefreshCw className="h-4 w-4" />Retry OCR</button>
           <button type="button" onClick={retake} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold"><RotateCcw className="h-4 w-4" />Retake photo</button>
-        </> : active ? <>
+        </> : candidateImage ? <><button type="button" onClick={retryOcr} disabled={capturing} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"><RefreshCw className="h-4 w-4" />Retry OCR</button><button type="button" onClick={retake} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold"><RotateCcw className="h-4 w-4" />Retake Photo</button></> : active ? <>
           <button type="button" onClick={() => saveCurrentFrame('manual')} disabled={capturing} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"><Camera className="h-4 w-4" />Manual capture</button>
           <button type="button" onClick={stopCamera} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold"><RefreshCw className="h-4 w-4" />Stop camera</button>
         </> : <button type="button" disabled={starting} onClick={() => void startCamera()} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50">{starting ? <Loader2 className="h-4 w-4 animate-spin" /> : error ? <RefreshCw className="h-4 w-4" /> : <Camera className="h-4 w-4" />}{error ? 'Retry camera' : 'Use camera'}</button>}
         {!image && <button type="button" onClick={() => fileRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold"><ImageUp className="h-4 w-4" />Upload photo</button>}
         {active && devices.length > 1 && <button type="button" onClick={() => { const current = devices.findIndex((device) => device.deviceId === selectedDeviceId); switchCamera(devices[(current + 1) % devices.length]?.deviceId ?? ''); }} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold"><SwitchCamera className="h-4 w-4" />Switch camera</button>}
       </div>
-      {screeningResult && screeningResult.classification !== 'SUPPORTED_ID_TYPE' && <div role="alert" className="mt-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"><p className="font-black">{screeningResult.classification === 'PAYMENT_CARD_DETECTED' ? 'Unsupported Document Detected' : screeningResult.classification === 'UNSUPPORTED_DOCUMENT' ? 'Unsupported document' : screeningResult.reason === 'ENGINE_UNAVAILABLE' ? 'OCR temporarily unavailable' : 'Document screening inconclusive'}</p><p className="mt-1">{screeningMessage}</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={retake} className="rounded-xl bg-red-700 px-4 py-2.5 text-sm font-bold text-white">Retake Photo</button><button type="button" onClick={retake} className="rounded-xl border border-amber-400 bg-white px-4 py-2.5 text-sm font-bold text-amber-950">Scan Another ID</button>{screeningResult.classification !== 'PAYMENT_CARD_DETECTED' && <button type="button" onClick={() => setManualAssistanceRequested(true)} className="rounded-xl border border-slate-400 bg-white px-4 py-2.5 text-sm font-bold text-slate-800">Request Manual Assistance</button>}</div>{manualAssistanceRequested && <p className="mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs font-semibold leading-5 text-blue-900">Please ask an authorized staff member to assist with another capture or the approved manual identity-verification procedure. This image was not accepted or uploaded, and registration has not been approved.</p>}</div>}
+      {screeningResult?.classification === 'SUPPORTED_ID_TYPE' && <p role="status" className="mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm font-semibold text-blue-900">{ocrPhase}</p>}
+      {screeningResult && screeningResult.classification !== 'SUPPORTED_ID_TYPE' && <div role="alert" className="mt-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"><p className="font-black">{screeningResult.classification === 'PAYMENT_CARD_DETECTED' ? 'Unsupported Document Detected' : screeningResult.classification === 'UNSUPPORTED_DOCUMENT' ? 'Unsupported document' : screeningResult.reason === 'ENGINE_UNAVAILABLE' ? 'OCR temporarily unavailable' : 'Document screening inconclusive'}</p><p className="mt-1">{screeningMessage}</p><div className="mt-3 flex flex-wrap gap-2">{!candidateImage && <button type="button" onClick={retake} className="rounded-xl bg-red-700 px-4 py-2.5 text-sm font-bold text-white">Retake Photo</button>}<button type="button" onClick={retake} className="rounded-xl border border-amber-400 bg-white px-4 py-2.5 text-sm font-bold text-amber-950">Scan Another ID</button>{screeningResult.classification !== 'PAYMENT_CARD_DETECTED' && <button type="button" onClick={() => setManualAssistanceRequested(true)} className="rounded-xl border border-slate-400 bg-white px-4 py-2.5 text-sm font-bold text-slate-800">Request Manual Assistance</button>}</div>{manualAssistanceRequested && <p className="mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs font-semibold leading-5 text-blue-900">Please ask an authorized staff member to assist with another capture or the approved manual identity-verification procedure. This image was not accepted or uploaded, and registration has not been approved.</p>}</div>}
       {confirmed && <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">Photo passed document-category screening and is selected for secure submission. This does not prove authenticity or identity.</p>}
       {error && <div role="alert" className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error}</span></div>}
     </div>

@@ -5,10 +5,11 @@ import {
   visitorKioskConfigService,
   type VisitorKioskAdminConfig,
   type VisitorKioskAdminState,
+  type VisitorBiometricReadiness,
   type VisitorGmailOAuthStatus,
 } from '../../api/visitorKioskConfigService';
 import { useAuthStore } from '../../stores/authStore';
-import { findUnresolvedPrivacyPolicyContent } from '../../utils/visitorPrivacyPolicy';
+import { findUnresolvedBiometricPolicyContent, findUnresolvedPrivacyPolicyContent } from '../../utils/visitorPrivacyPolicy';
 import { Button, PageHeader, TextAreaField } from '../ui/SharedUI';
 
 const purposeLabels: Record<string, string> = {
@@ -30,6 +31,41 @@ const ocrSupportedIdTypes = [
   'Postal ID',
 ] as const;
 
+const biometricApprovalControls = [
+  { approvalName: 'privacy', approvalKey: 'biometricPrivacyApproved', evidenceKey: 'biometricPrivacyEvidence', label: 'DPO/legal and lawful-basis review', hint: 'Reference the authorized reviewer and approved decision record.' },
+  { approvalName: 'pia', approvalKey: 'biometricPiaApproved', evidenceKey: 'biometricPiaEvidence', label: 'Privacy impact, necessity, proportionality, and accuracy review', hint: 'Reference the approved PIA or equivalent assessment.' },
+  { approvalName: 'security', approvalKey: 'biometricSecurityApproved', evidenceKey: 'biometricSecurityEvidence', label: 'Python service, access control, incident response, and security review', hint: 'Reference the completed technical and security review.' },
+  { approvalName: 'license', approvalKey: 'biometricLicenseApproved', evidenceKey: 'biometricLicenseEvidence', label: 'DeepFace model and dependency license review', hint: 'Reference the model and dependency license decision.' },
+  { approvalName: 'retention', approvalKey: 'biometricRetentionApproved', evidenceKey: 'biometricRetentionEvidence', label: 'Biometric retention and secure deletion procedure', hint: 'Reference the approved, operational deletion procedure.' },
+] as const;
+
+const biometricRequirementLabels: Record<string, string> = {
+  SUPABASE_BIOMETRIC_FLAG_DISABLED: 'Enable VISITOR_BIOMETRIC_ENABLED through an authorized Supabase secret change.',
+  BIOMETRIC_SERVICE_URL_MISSING: 'Configure the private Python service URL in Supabase.',
+  BIOMETRIC_SERVICE_HTTPS_REQUIRED: 'Use an HTTPS Python service URL.',
+  BIOMETRIC_SERVICE_KEY_INVALID: 'Configure a matching service key of at least 32 characters on both servers.',
+  BIOMETRIC_SERVICE_AUTHENTICATION_FAILED: 'The Supabase and Python service keys do not match.',
+  BIOMETRIC_READINESS_ENDPOINT_NOT_FOUND: 'Deploy the current Python service with its authenticated readiness endpoint.',
+  BIOMETRIC_SERVICE_RATE_LIMITED: 'The Python service is at its configured request limit; retry after capacity is available.',
+  BIOMETRIC_SERVICE_CONFIGURATION_INVALID: 'The Python service authentication configuration is missing or malformed.',
+  BIOMETRIC_SERVICE_UNAVAILABLE: 'The Python service could not be reached.',
+  BIOMETRIC_SERVICE_TIMEOUT: 'The Python readiness check timed out.',
+  PYTHON_BIOMETRIC_FLAG_DISABLED: 'Enable VISITOR_BIOMETRIC_ENABLED on the Python host through an authorized change.',
+  DEEPFACE_MODEL_NOT_INITIALIZED: 'Initialize the selected DeepFace model and detector.',
+  DEEPFACE_INFERENCE_NOT_TESTED: 'Run real inference with authorized, non-sensitive readiness images.',
+  BIOMETRIC_NOTICE_INCOMPLETE: 'Save the organization-approved biometric-processing notice.',
+  BIOMETRIC_AUTHORIZATION_INCOMPLETE: 'Save the separate visitor authorization statement.',
+  BIOMETRIC_NOTICE_HAS_PLACEHOLDERS: 'Replace unresolved placeholders in the biometric notice.',
+  BIOMETRIC_AUTHORIZATION_HAS_PLACEHOLDERS: 'Replace unresolved placeholders in the authorization statement.',
+  BIOMETRIC_DPO_LEGAL_REVIEW_PENDING: 'Record DPO/legal approval evidence.',
+  BIOMETRIC_PIA_REVIEW_PENDING: 'Record privacy impact assessment evidence.',
+  BIOMETRIC_SECURITY_REVIEW_PENDING: 'Record security review evidence.',
+  BIOMETRIC_LICENSE_REVIEW_PENDING: 'Record model and dependency license review evidence.',
+  BIOMETRIC_RETENTION_REVIEW_PENDING: 'Record approved operational retention and deletion evidence.',
+  BIOMETRIC_MANUAL_ALTERNATIVE_MISSING: 'Configure the accessible manual-verification alternative.',
+  BIOMETRIC_ADMIN_ENABLEMENT_DISABLED: 'Administrator activation remains disabled.',
+};
+
 const fieldClass = 'mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-3 text-sm text-slate-900 outline-none transition focus:border-red-600 focus:ring-2 focus:ring-red-600/10';
 const sectionClass = 'rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6';
 
@@ -43,6 +79,17 @@ const Field: React.FC<React.InputHTMLAttributes<HTMLInputElement> & { label: str
 
 const PolicyArea: React.FC<React.TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string; hint?: string; requiredByPolicy?: boolean }> = ({ label, hint, requiredByPolicy = true, ...props }) => (
   <TextAreaField {...props} required={requiredByPolicy} label={label} hint={hint} className="min-h-28" />
+);
+
+const ReadinessItem: React.FC<{ label: string; ready: boolean; unknown?: boolean; detail?: string; readyLabel?: string; notReadyLabel?: string }> = ({ label, ready, unknown, detail, readyLabel = 'Ready', notReadyLabel = 'Incomplete' }) => (
+  <div className={`rounded-xl border p-3 ${unknown ? 'border-slate-200 bg-slate-50' : ready ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+    <div className="flex items-center gap-2">
+      {unknown ? <RefreshCw className="h-4 w-4 text-slate-500" /> : ready ? <CheckCircle2 className="h-4 w-4 text-emerald-700" /> : <AlertTriangle className="h-4 w-4 text-amber-700" />}
+      <p className="text-xs font-black uppercase tracking-wide text-slate-700">{label}</p>
+    </div>
+    <p className="mt-1 text-sm font-semibold text-slate-900">{unknown ? 'Not checked' : ready ? readyLabel : notReadyLabel}</p>
+    {detail && <p className="mt-1 break-words text-xs text-slate-600">{detail}</p>}
+  </div>
 );
 
 function localConfigurationComplete(config: VisitorKioskAdminConfig, fixedPurposes: string[], departments: string[]): boolean {
@@ -72,6 +119,9 @@ export const VisitorKioskConfigPage: React.FC = () => {
   const [gmailStatusError, setGmailStatusError] = useState('');
   const [gmailActionError, setGmailActionError] = useState('');
   const [gmailAction, setGmailAction] = useState<'connect' | 'disconnect' | ''>('');
+  const [biometricReadiness, setBiometricReadiness] = useState<VisitorBiometricReadiness | null>(null);
+  const [biometricBusy, setBiometricBusy] = useState(false);
+  const [biometricError, setBiometricError] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [changeReason, setChangeReason] = useState('');
@@ -104,6 +154,7 @@ export const VisitorKioskConfigPage: React.FC = () => {
   useEffect(() => { void loadGmailStatus(); }, [loadGmailStatus]);
 
   const unresolvedPolicyContent = useMemo(() => form ? findUnresolvedPrivacyPolicyContent(form) : [], [form]);
+  const unresolvedBiometricContent = useMemo(() => form ? findUnresolvedBiometricPolicyContent(form) : [], [form]);
   const processorDisclosureWarnings = useMemo(() => {
     if (!form || !state) return [];
     const disclosure = form.processors.toLowerCase();
@@ -122,6 +173,19 @@ export const VisitorKioskConfigPage: React.FC = () => {
 
   const update = <K extends keyof VisitorKioskAdminConfig>(key: K, value: VisitorKioskAdminConfig[K]) => {
     setForm((current) => current ? { ...current, [key]: value } : current);
+    if (String(key).startsWith('biometric')) {
+      setBiometricReadiness(null);
+      setBiometricError('');
+    }
+  };
+
+  const checkBiometricReadiness = async () => {
+    setBiometricBusy(true); setBiometricError('');
+    try { setBiometricReadiness(await visitorKioskConfigService.checkBiometricReadiness()); }
+    catch (readinessError) {
+      setBiometricReadiness(null);
+      setBiometricError(extractErrorMessage(readinessError));
+    } finally { setBiometricBusy(false); }
   };
 
   const save = async () => {
@@ -150,10 +214,26 @@ export const VisitorKioskConfigPage: React.FC = () => {
         privacyReviewApproved: form.privacyReviewApproved,
         securityReviewApproved: form.securityReviewApproved,
         operationsReviewApproved: form.operationsReviewApproved,
+        ...(directSuperAdmin ? {
+          biometricProcessingEnabled: form.biometricProcessingEnabled === true,
+          biometricNoticeText: form.biometricNoticeText ?? '',
+          biometricAuthorizationText: form.biometricAuthorizationText ?? '',
+          biometricPrivacyApproved: form.biometricPrivacyApproved === true,
+          biometricPrivacyEvidence: form.biometricPrivacyEvidence ?? '',
+          biometricPiaApproved: form.biometricPiaApproved === true,
+          biometricPiaEvidence: form.biometricPiaEvidence ?? '',
+          biometricSecurityApproved: form.biometricSecurityApproved === true,
+          biometricSecurityEvidence: form.biometricSecurityEvidence ?? '',
+          biometricLicenseApproved: form.biometricLicenseApproved === true,
+          biometricLicenseEvidence: form.biometricLicenseEvidence ?? '',
+          biometricRetentionApproved: form.biometricRetentionApproved === true,
+          biometricRetentionEvidence: form.biometricRetentionEvidence ?? '',
+        } : {}),
         expectedRevision: form.revision,
         changeReason: changeReason.trim(),
       });
       setState(saved); setForm(saved.config); setChangeReason('');
+      setBiometricReadiness(null);
       setNotice(saved.readiness.ready ? 'Configuration saved. Public visitor registration is enabled.' : 'Configuration saved. Registration remains disabled until every readiness requirement is complete.');
     } catch (saveError) { setError(extractErrorMessage(saveError)); }
     finally { setSaving(false); }
@@ -261,19 +341,52 @@ export const VisitorKioskConfigPage: React.FC = () => {
         <div className="mt-5 grid gap-4 md:grid-cols-2">{state.fixedDepartmentPurposes.map((purpose) => <label key={purpose} className="block"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">{purposeLabels[purpose] ?? purpose}</span><select className={fieldClass} value={form.purposeDepartmentRoutes[purpose] ?? ''} onChange={(e) => update('purposeDepartmentRoutes', { ...form.purposeDepartmentRoutes, [purpose]: e.target.value })}><option value="">Select an active department</option>{state.availableDepartments.map((department) => <option key={department} value={department}>{department}</option>)}</select></label>)}</div>
       </section>
 
-      <section className={sectionClass}>
-        <h2 className="text-lg font-black text-slate-900">Optional DeepFace biometric screening</h2>
-        <p className="mt-1 text-sm text-amber-700">Disabled by default. Enabling this administrator setting is not sufficient: the Edge runtime flag and private Python service configuration must also be present. Facial comparison remains supporting evidence and never approves identity.</p>
+      <section className={sectionClass} data-testid="biometric-identity-verification">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-3xl">
+            <h2 className="text-lg font-black text-slate-900">Biometric Identity Verification</h2>
+            <p className="mt-1 text-sm leading-6 text-slate-600">Optional facial comparison helps authorized staff compare a visitor&apos;s selfie with their identification photograph. This feature requires approved privacy safeguards, a configured verification service, and administrator authorization.</p>
+            <p className="mt-2 text-xs font-semibold text-amber-800">A match is supporting evidence only. It never authenticates an ID, clears identity, approves a visit, or authorizes entry.</p>
+          </div>
+          {directSuperAdmin && <Button busy={biometricBusy} disabled={biometricBusy} onClick={() => void checkBiometricReadiness()}><RefreshCw className="h-4 w-4" />Check Biometric Readiness</Button>}
+        </div>
+
+        {!directSuperAdmin && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">A directly assigned SUPER_ADMIN role is required to check or change biometric configuration.</p>}
+        {biometricError && <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">Biometric readiness could not be checked: {biometricError}</p>}
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <ReadinessItem label="DeepFace Python Service" unknown={!biometricReadiness} ready={biometricReadiness?.technical.service.connected === true} readyLabel="Connected" notReadyLabel={biometricReadiness?.technical.overallStatus === 'NOT_CONFIGURED' ? 'Not Configured' : 'Unavailable'} detail={biometricReadiness?.technical.service.errorCode ?? undefined} />
+          <ReadinessItem label="Supabase Integration" unknown={!biometricReadiness} ready={Boolean(biometricReadiness?.technical.edge.featureFlagEnabled && biometricReadiness.technical.edge.serviceUrlConfigured && biometricReadiness.technical.edge.secureTransport && biometricReadiness.technical.edge.serviceKeyConfigured)} readyLabel="Ready" notReadyLabel="Missing Configuration" />
+          <ReadinessItem label="DeepFace Model" unknown={!biometricReadiness} ready={biometricReadiness?.technical.service.inferenceStatus === 'PASSED'} readyLabel="Tested" notReadyLabel="Not Tested" detail={biometricReadiness ? `${biometricReadiness.technical.service.model ?? 'Unknown model'} / ${biometricReadiness.technical.service.detector ?? 'unknown detector'}` : undefined} />
+          <ReadinessItem label="Privacy Notice" unknown={!biometricReadiness} ready={biometricReadiness?.policy.noticeApproved === true} readyLabel="Approved" />
+          <ReadinessItem label="Visitor Authorization Statement" unknown={!biometricReadiness} ready={biometricReadiness?.policy.authorizationApproved === true} readyLabel="Approved" />
+          <ReadinessItem label="DPO / Legal Review" unknown={!biometricReadiness} ready={biometricReadiness?.policy.legalReviewCompleted === true} readyLabel="Completed" notReadyLabel="Pending" />
+          <ReadinessItem label="Privacy Impact Assessment" unknown={!biometricReadiness} ready={biometricReadiness?.policy.piaReviewCompleted === true} readyLabel="Completed" notReadyLabel="Pending" />
+          <ReadinessItem label="Security Review" unknown={!biometricReadiness} ready={biometricReadiness?.policy.securityReviewCompleted === true} readyLabel="Completed" notReadyLabel="Pending" />
+          <ReadinessItem label="Model License Review" unknown={!biometricReadiness} ready={biometricReadiness?.policy.licenseReviewCompleted === true} readyLabel="Completed" notReadyLabel="Pending" />
+          <ReadinessItem label="Biometric Processing" unknown={!biometricReadiness} ready={biometricReadiness?.enabled === true} readyLabel="Enabled" notReadyLabel="Disabled" detail={biometricReadiness?.checkedAt ? `Checked ${new Date(biometricReadiness.checkedAt).toLocaleString()}` : undefined} />
+        </div>
+
+        {biometricReadiness && biometricReadiness.missing.length > 0 && <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          <p className="font-black">Remaining requirements</p>
+          <ul className="mt-2 list-disc space-y-1 pl-5">{biometricReadiness.missing.map((code) => <li key={code}>{biometricRequirementLabels[code] ?? code}</li>)}</ul>
+        </div>}
+
+        {unresolvedBiometricContent.length > 0 && <div role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900"><p className="font-black">Biometric policy placeholders must be resolved</p><ul className="mt-2 list-disc pl-5">{unresolvedBiometricContent.map((item, index) => <li key={`${item.field}-${index}`}>{item.label}: <code>{item.token}</code></li>)}</ul></div>}
+
         <div className="mt-5 grid gap-4">
-          <PolicyArea requiredByPolicy={false} label="Approved biometric-processing notice" value={form.biometricNoticeText ?? ''} onChange={(e) => update('biometricNoticeText', e.target.value)} maxLength={8000} hint="Required only before biometric enablement. Supply only text approved by the organization after DPO/legal review and the privacy impact assessment." />
-          <PolicyArea requiredByPolicy={false} label="Separate visitor authorization statement" value={form.biometricAuthorizationText ?? ''} onChange={(e) => update('biometricAuthorizationText', e.target.value)} maxLength={2000} hint="Required only before biometric enablement. The public kiosk requires an affirmative action and always offers the approved manual alternative." />
-          <div className="grid gap-3 sm:grid-cols-2">{([
-            ['biometricPrivacyApproved', 'DPO/legal and lawful-basis review recorded'],
-            ['biometricPiaApproved', 'Privacy impact, necessity, proportionality, and accuracy review recorded'],
-            ['biometricSecurityApproved', 'Python service, retention, incident response, and access-control review recorded'],
-            ['biometricLicenseApproved', 'DeepFace model and dependency license review recorded'],
-          ] as const).map(([key, label]) => <label key={key} className="flex items-start gap-3 rounded-xl border border-slate-200 p-4"><input type="checkbox" className="mt-1 h-5 w-5 accent-red-700" checked={form[key] === true} onChange={(event) => update(key, event.target.checked)} /><span className="text-sm font-bold text-slate-800">{label}</span></label>)}</div>
-          <label className="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 p-4"><input type="checkbox" className="mt-1 h-5 w-5 accent-red-700" checked={form.biometricProcessingEnabled === true} onChange={(event) => update('biometricProcessingEnabled', event.target.checked)} /><span><span className="block text-sm font-black text-slate-900">Permit biometric processing after every server gate passes</span><span className="text-xs text-slate-600">This does not activate DeepFace unless the four reviews, notice, authorization statement, manual alternative, runtime feature flag, HTTPS service URL, and server key are all present.</span></span></label>
+          <PolicyArea disabled={!directSuperAdmin} requiredByPolicy={false} label="Approved biometric-processing notice" value={form.biometricNoticeText ?? ''} onChange={(e) => update('biometricNoticeText', e.target.value)} minLength={50} maxLength={8000} hint="Enter only organization-approved text. Saving this field does not constitute legal approval." />
+          <PolicyArea disabled={!directSuperAdmin} requiredByPolicy={false} label="Separate visitor authorization statement" value={form.biometricAuthorizationText ?? ''} onChange={(e) => update('biometricAuthorizationText', e.target.value)} minLength={20} maxLength={2000} hint="The visitor must take an affirmative action. The approved manual alternative remains available." />
+          <div className="grid gap-4 lg:grid-cols-2">{biometricApprovalControls.map(({ approvalName, approvalKey, evidenceKey, label, hint }) => {
+            const approval = form.biometricApprovals?.[approvalName];
+            const evidence = String(form[evidenceKey] ?? '');
+            return <div key={approvalKey} className="rounded-xl border border-slate-200 p-4">
+              <label className="flex items-start gap-3"><input type="checkbox" className="mt-1 h-5 w-5 accent-red-700" disabled={!directSuperAdmin || (form[approvalKey] !== true && evidence.trim().length < 10)} checked={form[approvalKey] === true} onChange={(event) => update(approvalKey, event.target.checked)} /><span><span className="block text-sm font-black text-slate-800">{label}</span><span className="text-xs text-slate-500">{hint}</span></span></label>
+              <textarea aria-label={`${label} evidence`} disabled={!directSuperAdmin} value={evidence} onChange={(event) => update(evidenceKey, event.target.value)} minLength={10} maxLength={2000} placeholder="Approval record, ticket, assessment, or decision reference" className={`${fieldClass} min-h-20`} />
+              {approval?.approvedAt && <p className="mt-2 text-xs text-slate-500">Recorded {new Date(approval.approvedAt).toLocaleString()} by user {approval.approvedBy ?? 'unknown'}.</p>}
+            </div>;
+          })}</div>
+          <label className={`flex items-start gap-3 rounded-xl border p-4 ${biometricReadiness?.activationAllowed ? 'border-emerald-200 bg-emerald-50' : 'border-rose-200 bg-rose-50'}`}><input type="checkbox" className="mt-1 h-5 w-5 accent-red-700" disabled={!directSuperAdmin || (!form.biometricProcessingEnabled && !biometricReadiness?.activationAllowed)} checked={form.biometricProcessingEnabled === true} onChange={(event) => update('biometricProcessingEnabled', event.target.checked)} /><span><span className="block text-sm font-black text-slate-900">Permit biometric processing after every server gate passes</span><span className="text-xs text-slate-600">Save organizational approvals first, run the live readiness check, then activate. The backend repeats the live check during activation and rejects stale or incomplete readiness.</span></span></label>
         </div>
       </section>
 

@@ -34,6 +34,7 @@ import {
   type GmailMessagePayload,
 } from "../_shared/visitor-gmail.ts";
 import QRCode from "npm:qrcode@1.5.4";
+import { checkVisitorBiometricTechnicalReadiness } from "../_shared/visitor-biometric.ts";
 
 const db = adminDb();
 
@@ -76,6 +77,9 @@ type KioskConfigRow = {
   biometric_processing_enabled: boolean; biometric_notice_text: string | null; biometric_authorization_text: string | null;
   biometric_privacy_approved: boolean; biometric_pia_approved: boolean; biometric_security_approved: boolean;
   biometric_license_approved: boolean;
+  biometric_privacy_evidence: string | null; biometric_pia_evidence: string | null;
+  biometric_security_evidence: string | null; biometric_license_evidence: string | null;
+  biometric_retention_approved: boolean; biometric_retention_evidence: string | null;
 };
 
 function preferDatabase(value: string | null | undefined, envName: string): string {
@@ -168,13 +172,19 @@ async function kioskPrivacyConfig(activeDepartments: string[]) {
     biometricLicenseApproved: row?.biometric_license_approved === true,
   };
   const readiness = evaluateVisitorKioskReadiness(policy, activeDepartments);
-  const biometricServiceUrl = envText("VISITOR_BIOMETRIC_SERVICE_URL");
-  const secureBiometricTransport = biometricServiceUrl.startsWith("https://")
-    || (envText("VISITOR_BIOMETRIC_ALLOW_INSECURE_LOCALHOST").toLowerCase() === "true"
-      && /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?(?:\/|$)/.test(biometricServiceUrl));
-  const biometricRuntimeReady = envText("VISITOR_BIOMETRIC_ENABLED").toLowerCase() === "true"
-    && secureBiometricTransport
-    && envText("VISITOR_BIOMETRIC_SERVICE_KEY").length >= 32;
+  const evidenceReady = Boolean(row?.biometric_privacy_evidence?.trim()
+    && row?.biometric_pia_evidence?.trim()
+    && row?.biometric_security_evidence?.trim()
+    && row?.biometric_license_evidence?.trim()
+    && row?.biometric_retention_approved === true
+    && row?.biometric_retention_evidence?.trim());
+  const shouldCheckRuntime = policy.biometricProcessingEnabled === true
+    && policy.biometricPrivacyApproved === true && policy.biometricPiaApproved === true
+    && policy.biometricSecurityApproved === true && policy.biometricLicenseApproved === true
+    && evidenceReady;
+  const biometricRuntimeReady = shouldCheckRuntime
+    ? (await checkVisitorBiometricTechnicalReadiness(false)).ready
+    : false;
   return {
     policy,
     privacy: publicVisitorKioskPrivacy(policy, readiness, biometricRuntimeReady),
