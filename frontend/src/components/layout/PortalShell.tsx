@@ -277,6 +277,7 @@ const PortalShellFrame: React.FC<PortalShellProps> = ({
             return (
               <div
                 key={slot.key}
+                data-portal-route-key={slot.key}
                 className={displayed ? 'relative' : 'pointer-events-none invisible absolute inset-0'}
                 aria-hidden={displayed ? undefined : 'true'}
               >

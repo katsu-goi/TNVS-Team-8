@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { act, cleanup, render } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NotificationFocusManager } from './NotificationFocusManager';
@@ -53,5 +53,34 @@ describe('NotificationFocusManager', () => {
       </MemoryRouter>,
     );
     expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it('waits for the destination slot instead of focusing the outgoing page copy', async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const routeKey = `/compliance/documents?focus=${recordId}`;
+    const { container } = render(
+      <MemoryRouter initialEntries={[routeKey]}>
+        <NotificationFocusManager />
+        <div id="portal-content">
+          <div data-portal-route-key="/compliance/documents">
+            <div data-testid="outgoing" data-notification-entity-id={recordId}>Old row</div>
+          </div>
+          <div data-portal-route-key={routeKey} aria-hidden="true">
+            <div data-testid="destination" data-notification-entity-id={recordId}>New row</div>
+          </div>
+        </div>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId('outgoing')).not.toHaveClass('notification-focus-target');
+    expect(screen.getByTestId('destination')).not.toHaveClass('notification-focus-target');
+
+    await act(async () => {
+      container.querySelector(`[data-portal-route-key="${routeKey}"]`)?.removeAttribute('aria-hidden');
+    });
+
+    await waitFor(() => expect(screen.getByTestId('destination')).toHaveClass('notification-focus-target'));
+    expect(screen.getByTestId('outgoing')).not.toHaveClass('notification-focus-target');
   });
 });

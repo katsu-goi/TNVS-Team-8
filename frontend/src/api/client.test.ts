@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { apiClient, extractErrorMessage, getApiUrl, safeFetchJson } from './client';
+import { apiClient, extractErrorMessage, getApiUrl, safeFetchJson, shouldRenewSessionForRequest } from './client';
 
 describe('safeFetchJson', () => {
   it('throws a normalized error instead of converting failures to null', async () => {
@@ -34,5 +34,18 @@ describe('extractErrorMessage', () => {
         headers: { 'retry-after': '42' },
       },
     })).toBe('AI processing is temporarily unavailable. Try again in 42 seconds.');
+  });
+});
+
+describe('session renewal eligibility', () => {
+  it('keeps public authentication failures on their current page', () => {
+    expect(shouldRenewSessionForRequest('/auth/login')).toBe(false);
+    expect(shouldRenewSessionForRequest('/auth/refresh')).toBe(false);
+    expect(shouldRenewSessionForRequest('/auth/forgot-password')).toBe(false);
+    expect(shouldRenewSessionForRequest('/auth/reset-password')).toBe(false);
+  });
+
+  it('renews sessions for protected requests', () => {
+    expect(shouldRenewSessionForRequest('/documents')).toBe(true);
   });
 });

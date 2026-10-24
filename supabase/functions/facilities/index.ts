@@ -706,7 +706,7 @@ async function handleRouteFacilityDocument(ctx: AuthContext | null, _req: Reques
     const { error: notificationError } = await db.rpc("phase5_notify_roles", buildFacilityPermitNotification({
       facilityName: facility.name ?? "TNVS hub",
       documentCategory,
-      recordId: savedResult.data.id,
+      documentId,
     }));
     if (notificationError) throw new Error(`permit notification failed: ${notificationError.message}`);
   }

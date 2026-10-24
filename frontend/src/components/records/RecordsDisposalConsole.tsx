@@ -145,7 +145,7 @@ export const RecordsDisposalConsole: React.FC = () => {
                 {items.map((item) => {
                   const isBusy = busyAction.endsWith(`:${item.id}`);
                   return (
-                    <tr key={item.id} className="align-top hover:bg-slate-50/70">
+                    <tr key={item.id} data-notification-entity-id={item.id} className="align-top hover:bg-slate-50/70">
                       <td className="px-5 py-4 font-mono text-xs text-slate-700">{item.id}</td>
                       <td className="px-5 py-4"><code className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-700">{item.source_table}</code></td>
                       <td className="max-w-md px-5 py-4 text-sm text-slate-700">{item.reason}</td>

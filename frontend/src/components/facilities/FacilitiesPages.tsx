@@ -153,7 +153,7 @@ export const ReservationsPage: React.FC = () => {
               </thead>
               <tbody>
                 {reservations.map((r: any) => (
-                  <tr key={r.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                  <tr key={r.id} data-notification-entity-id={r.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
                     <td className="p-3 font-medium text-slate-900">{r.title}</td>
                     <td className="p-3 text-slate-600">
                       <p>{r.employeeName}</p>
@@ -286,7 +286,7 @@ export const ApprovalPage: React.FC = () => {
           {reservations.map((r: any) => {
             const ai = aiSuggestions[r.id];
             return (
-              <article key={r.id} className="flex min-w-0 flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
+              <article key={r.id} data-notification-entity-id={r.id} className="flex min-w-0 flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
                 {/* Header: icon + reservation number + status */}
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-2.5">

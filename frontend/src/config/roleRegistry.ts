@@ -188,15 +188,57 @@ const notificationDestinations: Partial<Record<CanonicalRole, Record<string, str
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+const focusableNotificationTargets = new Set([
+  '/facilities/reservations:reservation',
+  '/facilities-officer/reservations:reservation',
+  '/facilities-officer/visitors:visitor',
+  '/facilities-officer/documents:document',
+  '/compliance/contracts:contract',
+  '/compliance/documents:document',
+  '/legal/requests-review:employeerequest',
+  '/legal/contracts:contract',
+  '/legal/documents:document',
+  '/procurement/requests-review:employeerequest',
+  '/procurement/contracts:contract',
+  '/procurement/documents:document',
+  '/employee/reservations:reservation',
+  '/employee/visitors:visitor',
+  '/employee/requests:employeerequest',
+  '/employee/documents:document',
+  '/compliance-management/incidents:incident',
+  '/compliance-management/signoffs:approval',
+  '/privacy/breaches:incident',
+  '/privacy/breaches:securityalert',
+  '/privacy/governance:document',
+  '/privacy/retention:retention',
+  '/legal-counsel/approvals:contract',
+  '/legal-counsel/approvals:approval',
+  '/records/repositories:document',
+  '/records/disposal:retention',
+  '/department/repository:document',
+  '/department/approvals:approval',
+  '/department/activity:audit',
+  '/department/activity:securitylog',
+  '/security-operations/incidents:incident',
+  '/security-operations/incidents:securityalert',
+  '/security-operations/reports:audit',
+  '/information-security/cyber-incidents:incident',
+  '/information-security/cyber-incidents:securityalert',
+]);
+
 export function getNotificationDestination(roles: string[], entityType?: unknown, entityId?: unknown): string | null {
   const entity = typeof entityType === 'string'
     ? entityType.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
     : '';
+  const compactEntity = entity.replace(/_/g, '');
   for (const role of roles.map(normalizeRole)) {
     const destinations = notificationDestinations[role];
-    const configured = destinations?.[entity] || destinations?.[entity.replace(/_/g, '')];
+    const configured = destinations?.[entity]
+      ?? Object.entries(destinations ?? {}).find(([key]) => key.replace(/_/g, '') === compactEntity)?.[1];
     if (configured) {
-      return typeof entityId === 'string' && UUID_PATTERN.test(entityId)
+      return typeof entityId === 'string'
+        && UUID_PATTERN.test(entityId)
+        && focusableNotificationTargets.has(`${configured}:${compactEntity}`)
         ? `${configured}?focus=${encodeURIComponent(entityId)}`
         : configured;
     }

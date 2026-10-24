@@ -199,11 +199,22 @@ async function renewSession(): Promise<RefreshedSession> {
   return refreshRequest;
 }
 
+const PUBLIC_AUTH_ENDPOINTS = [
+  '/auth/login',
+  '/auth/refresh',
+  '/auth/forgot-password',
+  '/auth/reset-password',
+] as const;
+
+export function shouldRenewSessionForRequest(url?: string): boolean {
+  return Boolean(url) && !PUBLIC_AUTH_ENDPOINTS.some((endpoint) => url!.includes(endpoint));
+}
+
 apiClient.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
     const request = error.config as RetriableRequest | undefined;
-    const isAuthRequest = request?.url?.includes('/auth/login') || request?.url?.includes('/auth/refresh');
+    const shouldRenewSession = shouldRenewSessionForRequest(request?.url);
 
     const errorCode = String((error.response?.data as { errorCode?: unknown } | undefined)?.errorCode ?? '');
     if (error.response?.status === 410 && errorCode === 'OVERSIGHT_SESSION_EXPIRED') {
@@ -217,7 +228,7 @@ apiClient.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    if (error.response?.status === 401 && request && !request._retry && !isAuthRequest) {
+    if (error.response?.status === 401 && request && !request._retry && shouldRenewSession) {
       request._retry = true;
       try {
         const session = await renewSession();

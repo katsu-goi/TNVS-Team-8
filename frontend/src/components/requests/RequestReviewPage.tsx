@@ -161,7 +161,7 @@ const RequestCard: React.FC<{
   const isPending = r.status === 'PENDING' || r.status === 'IN_REVIEW';
   const isApproved = r.status === 'APPROVED';
   return (
-    <div className="rounded-2xl bg-white border border-slate-200 p-5">
+    <div data-notification-entity-id={r.id} className="rounded-2xl bg-white border border-slate-200 p-5">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">

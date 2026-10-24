@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   Calendar, Clock, Building2,
   PlusCircle, FileText, Download, Edit3,
@@ -18,6 +19,7 @@ import { downloadCsv } from '../../utils/csvExport';
 import { downloadPdfReport } from '../../utils/pdfReport';
 import { DashboardHero } from '../ui/DashboardPrimitives';
 import { reservationsPdfReport } from './reservationPdfReport';
+import { getReservationFocusTab, ReservationTab } from './reservationFocus';
 
 export interface ReservationItem {
   id: string;
@@ -116,12 +118,13 @@ const QueueField: React.FC<{
 );
 
 export const FoReservationsPage: React.FC = () => {
+  const { search } = useLocation();
   const user = useAuthStore((state) => state.user);
   const syncData = useRealtimeSyncStore(s => s.syncData);
   const revision = useRealtimeSyncStore(s => s.revision);
   const syncConnected = useRealtimeSyncStore(s => s.connected);
   // Navigation & View States
-  const [activeTab, setActiveTab] = useState<'upcoming' | 'pending' | 'calendar' | 'recent' | 'utilization' | 'notices'>('upcoming');
+  const [activeTab, setActiveTab] = useState<ReservationTab>('upcoming');
 
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -170,6 +173,12 @@ export const FoReservationsPage: React.FC = () => {
   React.useEffect(() => {
     fetchReservations();
   }, [fetchReservations, revision]);
+
+  React.useEffect(() => {
+    const focusId = new URLSearchParams(search).get('focus');
+    const focusedReservation = focusId ? reservations.find((reservation) => reservation.id === focusId) : undefined;
+    if (focusedReservation) setActiveTab(getReservationFocusTab(focusedReservation.status));
+  }, [reservations, search]);
 
   const mapBackendReservation = (r: any): ReservationItem => ({
     id: r.id,
@@ -593,7 +602,7 @@ export const FoReservationsPage: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {reservations.filter(r => r.status === 'APPROVED').map((r) => (
-                  <tr key={r.id} className="hover:bg-slate-50 transition-colors">
+                  <tr key={r.id} data-notification-entity-id={r.id} className="hover:bg-slate-50 transition-colors">
                     <td className="py-3 px-3 font-mono font-bold text-slate-900">{r.reservationId}</td>
                     <td className="py-3 px-3 font-medium text-slate-800">
                       <div>{r.requesterName}</div>
@@ -653,7 +662,7 @@ export const FoReservationsPage: React.FC = () => {
               {reservations.filter(r => r.status === 'PENDING' || r.status === 'PENDING_MANAGER_APPROVAL').map(r => {
                 const status = STATUS_META[r.status];
                 return (
-                  <article key={r.id} className="flex min-w-0 flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
+                  <article key={r.id} data-notification-entity-id={r.id} className="flex min-w-0 flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-2.5">
                         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
@@ -745,7 +754,7 @@ export const FoReservationsPage: React.FC = () => {
               .slice()
               .sort((a, b) => `${a.reservationDate}T${a.startTime}`.localeCompare(`${b.reservationDate}T${b.startTime}`))
               .map((reservation) => (
-                <article key={reservation.id} className="grid gap-2 p-4 text-xs sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
+                <article key={reservation.id} data-notification-entity-id={reservation.id} className="grid gap-2 p-4 text-xs sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
                   <div className="min-w-0">
                     <p className="truncate font-bold text-slate-900">{reservation.facilityName || 'Unassigned facility'}</p>
                     <p className="truncate text-slate-500">{reservation.title}</p>
@@ -772,7 +781,7 @@ export const FoReservationsPage: React.FC = () => {
 
           <div className="space-y-2.5">
             {reservations.map((r) => (
-              <div key={r.id} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 hover:bg-white transition flex items-start justify-between text-xs">
+              <div key={r.id} data-notification-entity-id={r.id} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 hover:bg-white transition flex items-start justify-between text-xs">
                 <div className="space-y-1">
                   <div className="flex items-center space-x-2">
                     <span className="font-mono font-bold text-slate-900">{r.reservationId}</span>

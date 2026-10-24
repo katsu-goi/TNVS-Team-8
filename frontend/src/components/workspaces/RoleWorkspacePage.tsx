@@ -214,7 +214,7 @@ const GenericRoleWorkspacePage: React.FC<{ config: WorkspaceConfig; section: str
               {payload.rows.map((row) => {
                 const status = rowStatus(row);
                 return (
-                  <article key={row.id || rowTitle(row)} className="p-5 transition-colors hover:bg-[var(--hirna-surface-hover)]">
+                  <article key={row.id || rowTitle(row)} data-notification-entity-id={row.id || undefined} className="p-5 transition-colors hover:bg-[var(--hirna-surface-hover)]">
                     <div className="flex flex-col items-start justify-between gap-5 lg:flex-row">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">

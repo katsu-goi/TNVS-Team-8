@@ -56,6 +56,7 @@ describe('EnterpriseDocumentArchive', () => {
     fireEvent.click(screen.getByRole('button', { name: /Existing Department/ }));
     await waitFor(() => expect(documentArchiveService.getDocuments).toHaveBeenCalledWith(expect.objectContaining({ departmentId: 'department-id' })));
     expect(await screen.findAllByText('Retention Schedule')).not.toHaveLength(0);
+    expect(document.querySelectorAll('[data-notification-entity-id="document-id"]')).not.toHaveLength(0);
   });
 
   it('shows only the API error and retries the department request', async () => {

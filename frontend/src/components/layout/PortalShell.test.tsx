@@ -1,6 +1,6 @@
 import React, { lazy } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { BarChart3, LayoutDashboard } from 'lucide-react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -146,6 +146,33 @@ describe('PortalShell route loading', () => {
     fireEvent.click(screen.getByRole('button', { name: /Audit Logs/ }));
     expect(screen.getByText('Loading audit logs...')).toBeInTheDocument();
     expect(await screen.findByText('Audit destination')).toBeInTheDocument();
+  });
+
+  it('focuses the destination record after same-page notification navigation settles', async () => {
+    const recordId = '1b8a9977-9874-4ea6-a79b-1b71c2a7b5ef';
+    Element.prototype.scrollIntoView = vi.fn();
+    const Records = () => {
+      const navigate = useNavigate();
+      return <><button onClick={() => navigate(`/records?focus=${recordId}`)}>Open record notification</button><div data-notification-entity-id={recordId}>Target record</div></>;
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/records']}>
+        <Routes>
+          <Route element={<PortalShell portalLabel="Test Portal" roleLabel="Test Role" searchPlaceholder="Search" navItems={[{ id: 'records', label: 'Records', path: '/records', icon: LayoutDashboard }]} />}>
+            <Route path="/records" element={<Records />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open record notification' }));
+
+    await waitFor(() => {
+      const destination = Array.from(document.querySelectorAll<HTMLElement>('[data-portal-route-key]'))
+        .find((slot) => slot.dataset.portalRouteKey === `/records?focus=${recordId}` && slot.getAttribute('aria-hidden') !== 'true');
+      expect(destination?.querySelector(`[data-notification-entity-id="${recordId}"]`)).toHaveClass('notification-focus-target');
+    });
   });
 });
 
