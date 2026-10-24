@@ -7,10 +7,13 @@ import {
   type NormalizedQuad,
 } from './idDocumentDetection';
 
-function syntheticIdFrame(cardLevel = 165, backgroundLevel = 28) {
+function syntheticIdFrame(
+  cardLevel = 165,
+  backgroundLevel = 28,
+  card = { x: 52, y: 32, width: 216, height: 136 },
+) {
   const width = 320; const height = 200;
   const data = new Uint8ClampedArray(width * height * 4);
-  const card = { x: 52, y: 32, width: 216, height: 136 };
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const inside = x >= card.x && x <= card.x + card.width && y >= card.y && y <= card.y + card.height;
@@ -78,6 +81,12 @@ describe('ID document detection', () => {
     const width = 320; const height = 200;
     const data = new Uint8ClampedArray(width * height * 4).fill(80);
     expect(analyzeDocumentFrame({ width, height, data } as ImageData)).toMatchObject({ detected: false, state: 'red' });
+  });
+
+  it('does not produce a green capture state for a partially cropped document', () => {
+    const result = analyzeDocumentFrame(syntheticIdFrame(165, 28, { x: -18, y: 32, width: 216, height: 136 }));
+    expect(result.state).not.toBe('green');
+    expect(result.cornersVisible && result.aligned).toBe(false);
   });
 });
 

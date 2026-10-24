@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as detection from './idDocumentDetection';
 import { VisitorIdScanner, visitorCameraFailureMessage } from './VisitorIdScanner';
+import { screenIdentityDocument } from './visitorOcr';
 
 vi.mock('./visitorOcr', () => ({
   clearOcrResultCache: vi.fn(),
@@ -26,6 +27,11 @@ describe('VisitorIdScanner camera lifecycle', () => {
 
   beforeEach(() => {
     stop.mockReset();
+    vi.mocked(screenIdentityDocument).mockResolvedValue({
+      ocrStatus: 'SUCCEEDED', classification: 'SUPPORTED_ID_TYPE', detectedIdType: 'Philippine Passport',
+      extracted: { fullName: '', detectedIdType: 'Philippine Passport', idNumberLast4: '', expirationDate: '', issuingAuthority: '' },
+      warnings: [], textQuality: 'HIGH', reason: 'CLASSIFIED',
+    });
     Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true });
     Object.defineProperty(HTMLVideoElement.prototype, 'readyState', { configurable: true, get: () => HTMLMediaElement.HAVE_CURRENT_DATA });
     Object.defineProperty(HTMLVideoElement.prototype, 'videoWidth', { configurable: true, get: () => 1280 });
@@ -103,6 +109,28 @@ describe('VisitorIdScanner camera lifecycle', () => {
       audio: false,
       video: expect.objectContaining({ deviceId: { exact: 'front-camera' } }),
     }));
+  });
+
+  it('shows precise recovery actions without accepting or uploading an inconclusive image', async () => {
+    const onImageChange = vi.fn();
+    const onScreeningChange = vi.fn();
+    vi.spyOn(detection, 'captureDocumentFrame').mockReturnValue('data:image/jpeg;base64,blurred');
+    vi.mocked(screenIdentityDocument).mockResolvedValue({
+      ocrStatus: 'SUCCEEDED', classification: 'INCONCLUSIVE', detectedIdType: null,
+      extracted: { fullName: '', detectedIdType: '', idNumberLast4: '', expirationDate: '', issuingAuthority: '' },
+      warnings: ['The image is blurry. Hold your ID steady and retake it.'], textQuality: 'LOW', reason: 'IMAGE_BLURRY',
+    });
+    render(<VisitorIdScanner {...scannerProps} onScreeningChange={onScreeningChange} image="" confirmed={false} onImageChange={onImageChange} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Use camera' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manual capture' }));
+    expect(await screen.findByText(/image is blurry/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retake Photo' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Scan Another ID' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Request Manual Assistance' }));
+    expect(screen.getByText(/registration has not been approved/i)).toBeInTheDocument();
+    expect(onScreeningChange).toHaveBeenCalledWith(null);
+    expect(onImageChange).toHaveBeenCalledWith('', false);
+    expect(screen.queryByText(/captured successfully/i)).not.toBeInTheDocument();
   });
 });
 

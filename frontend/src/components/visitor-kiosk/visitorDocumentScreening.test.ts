@@ -20,6 +20,18 @@ describe('visitor document screening', () => {
   });
 
   it.each([
+    ['Philippine Passport', 'P<PHL DELA<CRUZ<<JUAN REPUBLIC PHILIPPINES SURNAME DELA CRUZ DATE OF BIRTH'],
+    ["Philippine Driver's License", 'REPUBL1C PHILIPPINES LTO DR1VER S L1CENCE LICENSE NUMBER N01 23 456789 BLOOD TYPE O'],
+    ['PRC Professional Identification Card', 'PRC PROFESSIONAL ID REGISTERED PROFESSIONAL REG1STRATION NUMBER 7654321 PROFESSION ENGINEER'],
+    ['Company-Issued Employee ID', 'HIRNA MOBILITY INC STAFF ID HMI 2048 DIVISION OPERATIONS AUTHORIZED PERSONNEL'],
+    ['Postal ID', 'PHLPOST POSTAL ID ADDRESS QUEZON CITY DATE OF BIRTH 01 01 1990 POSTAL REFERENCE'],
+  ])('supports OCR noise and legitimate design variations for %s', (type, text) => {
+    const result = classifyIdentityDocument(text, type, accepted, 48);
+    expect(result.classification).toBe('SUPPORTED_ID_TYPE');
+    expect(result.reason).toBe('CLASSIFIED');
+  });
+
+  it.each([
     ['Visa', 'VISA DEBIT\n4111 1111 1111 1111\nVALID THRU 12/30\nCARDHOLDER'],
     ['Mastercard', 'MASTERCARD CREDIT\n5555 5555 5555 4444\nVALID THRU 11/29\nCARDHOLDER'],
   ])('rejects a %s payment card and returns no extracted card data', (_label, text) => {
@@ -46,6 +58,19 @@ describe('visitor document screening', () => {
   it('treats unreadable OCR as inconclusive instead of fake', () => {
     const result = classifyIdentityDocument('A B C', 'Postal ID', accepted, 9);
     expect(result.classification).toBe('INCONCLUSIVE');
+    expect(result.ocrStatus).toBe('SUCCEEDED');
+    expect(result.reason).toBe('UNREADABLE_TEXT');
     expect(result.warnings.join(' ')).not.toMatch(/fake|fraud/i);
+  });
+
+  it('distinguishes readable unknown documents from OCR engine failure', () => {
+    const result = classifyIdentityDocument(
+      'MEMBERSHIP REWARDS CLUB CUSTOMER NUMBER 12345 VALID THROUGH DECEMBER',
+      'Postal ID', accepted, 84,
+    );
+    expect(result.ocrStatus).toBe('SUCCEEDED');
+    expect(result.classification).toBe('INCONCLUSIVE');
+    expect(result.reason).toBe('UNRECOGNIZED_DOCUMENT');
+    expect(result.warnings.join(' ')).toMatch(/did not contain enough document-specific indicators/i);
   });
 });

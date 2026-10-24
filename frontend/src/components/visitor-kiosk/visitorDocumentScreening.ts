@@ -6,6 +6,20 @@ export type DocumentClassification =
 
 export type OcrStatus = 'NOT_STARTED' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED';
 
+export type DocumentScreeningReason =
+  | 'CLASSIFIED'
+  | 'PAYMENT_CARD'
+  | 'UNSUPPORTED_DOCUMENT'
+  | 'DOCUMENT_TYPE_MISMATCH'
+  | 'UNRECOGNIZED_DOCUMENT'
+  | 'UNREADABLE_TEXT'
+  | 'IMAGE_TOO_SMALL'
+  | 'IMAGE_BLURRY'
+  | 'LOW_LIGHT'
+  | 'OVEREXPOSED'
+  | 'CORNERS_NOT_VISIBLE'
+  | 'ENGINE_UNAVAILABLE';
+
 export type ExtractedIdInformation = {
   fullName: string;
   detectedIdType: string;
@@ -22,6 +36,8 @@ export type DocumentScreeningResult = {
   warnings: string[];
   /** A coarse OCR quality band, not an authenticity or identity score. */
   textQuality: 'HIGH' | 'MEDIUM' | 'LOW';
+  /** Explains recovery without changing the security classification. */
+  reason?: DocumentScreeningReason;
 };
 
 const normalize = (value: string) => value
@@ -57,28 +73,53 @@ type IdRule = { canonical: string; indicators: RegExp[]; authorities: RegExp[] }
 const ID_RULES: IdRule[] = [
   {
     canonical: 'Philippine Passport',
-    indicators: [/\bPASSPORT\b/, /\bPILIPINAS\b|\bPHILIPPINES\b/, /\bSURNAME\b|\bGIVEN NAMES?\b/],
-    authorities: [/DEPARTMENT OF FOREIGN AFFAIRS|REPUBLIC OF THE PHILIPPINES/],
+    indicators: [
+      /\bPAS+P[O0]RT\b|\bP<PHL\b/,
+      /\bPILIPINAS\b|\bPHILIPPINES\b|\bPHL\b/,
+      /\bSURNAME\b|\bGIVEN NAMES?\b|\bNATIONALITY\b/,
+      /\bDATE OF BIRTH\b|\bPLACE OF BIRTH\b|\bDATE OF ISSUE\b/,
+    ],
+    authorities: [/DEPARTMENT OF FOREIGN AFFAIRS|REPUBLIC OF (?:THE )?PHILIPPINES/],
   },
   {
     canonical: "Philippine Driver's License",
-    indicators: [/DRIVER.?S LICENSE|NON PROFESSIONAL|PROFESSIONAL/, /\bLICENSE NO\b|\bDL CODE\b/, /\bEXPIRATION DATE\b/],
-    authorities: [/LAND TRANSPORTATION OFFICE|REPUBLIC OF THE PHILIPPINES|\bLTO\b/],
+    indicators: [
+      /DR[I1]VER.?S L[I1]CEN[SC]E|NON.?PROFESSIONAL|PROFESSIONAL DRIVER/,
+      /\bL[I1]CEN[SC]E (?:NO|NUMBER)\b|\bDL C[O0]DES?\b/,
+      /\bEXPIR(?:Y|ATION)(?: DATE)?\b|\bAGENCY C[O0]DE\b/,
+      /\bBLOOD TYPE\b|\bRESTRICTIONS?\b|\bCONDITIONS?\b/,
+    ],
+    authorities: [/LAND TRANSPORTATION OFFICE|REPUBLIC OF (?:THE )?PHILIPPINES|\bLTO\b/],
   },
   {
     canonical: 'PRC Professional Identification Card',
-    indicators: [/PROFESSIONAL IDENTIFICATION CARD|PROFESSIONAL REGULATION/, /REGISTRATION NO|REGISTRATION DATE/, /VALID UNTIL|DATE OF EXPIRY/],
-    authorities: [/PROFESSIONAL REGULATION COMMISSION|REPUBLIC OF THE PHILIPPINES|\bPRC\b/],
+    indicators: [
+      /PROFESSIONAL (?:IDENTIFICATION CARD|REGULATION)|PROFESSIONAL ID/,
+      /REG[I1]STRATION (?:NO|NUMBER|DATE)\b|REG[I1]STERED PROFESSIONAL/,
+      /\bVALID UNTIL\b|\bDATE OF EXPIRY\b|\bEXPIRATION DATE\b/,
+      /\bPROFESSION\b|\bBOARD OF\b/,
+    ],
+    authorities: [/PROFESSIONAL REGULATION COMMISSION|REPUBLIC OF (?:THE )?PHILIPPINES|\bPRC\b/],
   },
   {
     canonical: 'Company-Issued Employee ID',
-    indicators: [/EMPLOYEE ID|EMPLOYEE NO|STAFF ID|PERSONNEL ID/, /DEPARTMENT|POSITION|JOB TITLE/, /COMPANY|CORPORATION|INCORPORATED|\bINC\b/],
-    authorities: [/HUMAN RESOURCES|AUTHORIZED SIGNATURE|PROPERTY OF/],
+    indicators: [
+      /EMPLOYEE (?:ID|NO|NUMBER)|STAFF ID|PERSONNEL ID|ASSOCIATE ID|TEAM MEMBER ID/,
+      /\bDEPARTMENT\b|\bPOSITION\b|\bJOB TITLE\b|\bDIVISION\b/,
+      /\bCOMPANY\b|\bCORPORATION\b|\bINCORPORATED\b|\bINC\b|\bEMPLOYER\b/,
+      /\bDATE HIRED\b|\bVALID UNTIL\b|\bEMPLOYMENT\b/,
+    ],
+    authorities: [/HUMAN RESOURCES|AUTHORIZED SIGNATURE|PROPERTY OF|AUTHORIZED PERSONNEL/],
   },
   {
     canonical: 'Postal ID',
-    indicators: [/POSTAL ID|POSTAL IDENTITY CARD/, /ADDRESS|DATE OF BIRTH/, /POST OFFICE|POSTAL CORPORATION/],
-    authorities: [/PHILIPPINE POSTAL CORPORATION|\bPHLPOST\b|REPUBLIC OF THE PHILIPPINES/],
+    indicators: [
+      /POSTAL (?:ID|IDENTITY CARD)|POSTAL I[D0]/,
+      /\bADDRESS\b|\bDATE OF BIRTH\b|\bBIRTHDATE\b/,
+      /POST OFFICE|POSTAL CORPORATION|\bPHLPOST\b/,
+      /\bPOSTAL REFERENCE\b|\bPRN\b/,
+    ],
+    authorities: [/PHILIPPINE POSTAL CORPORATION|\bPHLPOST\b|REPUBLIC OF (?:THE )?PHILIPPINES/],
   },
 ];
 
@@ -130,8 +171,8 @@ export function classifyIdentityDocument(
 ): DocumentScreeningResult {
   const text = normalize(rawText);
   const warnings: string[] = [];
-  const networkSignal = /\bVISA\b|\bMASTERCARD\b|\bMASTERCARD\b|\bAMERICAN EXPRESS\b|\bUNIONPAY\b/.test(text);
-  const bankingSignal = /\bDEBIT\b|\bCREDIT\b|\bATM\b|\bCARDHOLDER\b|\bVALID THRU\b|\bCVV\b|\bCVC\b/.test(text);
+  const networkSignal = /\bV[I1]SA\b|\bMASTER\s?CARD\b|\bAMERICAN EXPRESS\b|\bUNIONPAY\b|\bMAESTRO\b|\bJCB\b/.test(text);
+  const bankingSignal = /\bDEBIT\b|\bCREDIT\b|\bATM\b|\bCARDHOLDER\b|\bVALID THRU\b|\bCVV\b|\bCVC\b|\bBANK CARD\b/.test(text);
   const numberSignal = hasPaymentCardNumber(text);
   const paymentSignals = [networkSignal, bankingSignal, numberSignal].filter(Boolean).length;
 
@@ -144,6 +185,7 @@ export function classifyIdentityDocument(
       extracted: emptyExtracted,
       warnings: ['Payment-card signals were detected. The image and OCR text must be discarded.'],
       textQuality: confidence >= 60 ? 'HIGH' : confidence >= 35 ? 'MEDIUM' : 'LOW',
+      reason: 'PAYMENT_CARD',
     };
   }
 
@@ -153,11 +195,17 @@ export function classifyIdentityDocument(
     authorityHits: rule.authorities.filter((pattern) => pattern.test(text)).length,
   })).map((value) => ({ ...value, score: value.indicatorHits + Math.min(1, value.authorityHits) }));
   scored.sort((a, b) => b.score - a.score);
-  const best = scored[0];
+  const selectedRule = scored.find(({ rule }) => Boolean(acceptedCanonicalType(rule.canonical, [selectedIdType])));
+  const best = selectedRule && selectedRule.score >= 2 && selectedRule.score >= (scored[0]?.score ?? 0) - 1
+    ? selectedRule
+    : scored[0];
   const acceptedType = best ? acceptedCanonicalType(best.rule.canonical, acceptedIdTypes) : null;
   const selectedMatches = best && normalizeType(selectedIdType) === normalizeType(acceptedType ?? best.rule.canonical)
     || Boolean(best && acceptedCanonicalType(best.rule.canonical, [selectedIdType]));
-  const sufficientEvidence = Boolean(best && best.score >= 2 && best.indicatorHits >= 1);
+  const minimumConfidence = (best?.score ?? 0) >= 3 ? 12 : 22;
+  const readableLength = text.replace(/[^A-Z0-9]/g, '').length;
+  const sufficientEvidence = Boolean(best && best.score >= 2 && best.indicatorHits >= 1
+    && confidence >= minimumConfidence && readableLength >= 18);
 
   if (sufficientEvidence && !acceptedType) {
     return {
@@ -165,14 +213,19 @@ export function classifyIdentityDocument(
       extracted: emptyExtracted,
       warnings: ['The detected document category is not in the administrator-approved ID list.'],
       textQuality: confidence >= 60 ? 'HIGH' : confidence >= 35 ? 'MEDIUM' : 'LOW',
+      reason: 'UNSUPPORTED_DOCUMENT',
     };
   }
-  if (!sufficientEvidence || confidence < 25 || text.length < 25) {
+  if (!sufficientEvidence) {
+    const unreadable = confidence < minimumConfidence || readableLength < 18;
     return {
       ocrStatus: 'SUCCEEDED', classification: 'INCONCLUSIVE', detectedIdType: best?.score ? best.rule.canonical : null,
       extracted: emptyExtracted,
-      warnings: ['There was not enough readable, document-specific evidence to classify this image.'],
+      warnings: [unreadable
+        ? 'OCR completed, but too little readable text was recovered from the image.'
+        : 'OCR completed, but the text did not contain enough document-specific indicators to identify the selected ID type.'],
       textQuality: confidence >= 60 ? 'HIGH' : confidence >= 35 ? 'MEDIUM' : 'LOW',
+      reason: unreadable ? 'UNREADABLE_TEXT' : 'UNRECOGNIZED_DOCUMENT',
     };
   }
   if (!selectedMatches) warnings.push(`The selected ID type does not match the detected ${acceptedType}.`);
@@ -191,13 +244,17 @@ export function classifyIdentityDocument(
     },
     warnings,
     textQuality: confidence >= 60 ? 'HIGH' : confidence >= 35 ? 'MEDIUM' : 'LOW',
+    reason: selectedMatches ? 'CLASSIFIED' : 'DOCUMENT_TYPE_MISMATCH',
   };
 }
 
-export function failedDocumentScreening(message: string): DocumentScreeningResult {
+export function failedDocumentScreening(
+  message: string,
+  reason: DocumentScreeningReason = 'ENGINE_UNAVAILABLE',
+): DocumentScreeningResult {
   return {
     ocrStatus: 'FAILED', classification: 'INCONCLUSIVE', detectedIdType: null,
     extracted: { fullName: '', detectedIdType: '', idNumberLast4: '', expirationDate: '', issuingAuthority: '' },
-    warnings: [message], textQuality: 'LOW',
+    warnings: [message], textQuality: 'LOW', reason,
   };
 }

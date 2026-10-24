@@ -138,6 +138,7 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, selectedId
   const [candidateImage, setCandidateImage] = useState('');
   const [ocrProgress, setOcrProgress] = useState(0);
   const [screeningResult, setScreeningResult] = useState<DocumentScreeningResult | null>(null);
+  const [manualAssistanceRequested, setManualAssistanceRequested] = useState(false);
   const [videoLayout, setVideoLayout] = useState<{ left: number; top: number; width: number; height: number; guide: { left: number; top: number; width: number; height: number } } | null>(null);
 
   const updateVideoLayout = useCallback(() => {
@@ -183,6 +184,7 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, selectedId
     setCandidateImage(dataUrl);
     setOcrProgress(0);
     setScreeningResult(null);
+    setManualAssistanceRequested(false);
     const result = await screenIdentityDocument(dataUrl, selectedIdType, acceptedIdTypes, ({ progress }) => {
       setOcrProgress(Math.max(0, Math.min(1, progress)));
     });
@@ -299,6 +301,7 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, selectedId
     restartAfterClearRef.current = true;
     clearOcrResultCache(); onScreeningChange(null); onImageChange('', false); captureLockRef.current = false; autoCaptureRef.current = initialAutoCapture;
     setCandidateImage(''); setScreeningResult(null); setOcrProgress(0);
+    setManualAssistanceRequested(false);
     setAnalysis(null); analysisRef.current = null; setCaptureProgress(0); setError('');
   };
 
@@ -336,6 +339,11 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, selectedId
   const colors = guideColors[state];
   const instruction = capturing ? 'Capturing ID…' : analysis?.instruction ?? (active ? 'Position your ID inside the frame' : 'Start the camera or upload a clear photo');
   const polygon = analysis?.quad?.map((point) => `${point.x * 100},${point.y * 100}`).join(' ');
+  const screeningMessage = screeningResult?.classification === 'PAYMENT_CARD_DETECTED'
+    ? 'This appears to be a payment card, not an accepted identification document. Please present an approved ID. The image and OCR output were discarded.'
+    : screeningResult?.reason === 'UNRECOGNIZED_DOCUMENT'
+      ? "We couldn't identify the document type. Check the selected ID type, retake the photo, or request manual assistance."
+      : screeningResult?.warnings[0];
 
   return (
     <div>
@@ -377,7 +385,7 @@ export const VisitorIdScanner: React.FC<Props> = ({ image, confirmed, selectedId
         {!image && <button type="button" onClick={() => fileRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold"><ImageUp className="h-4 w-4" />Upload photo</button>}
         {active && devices.length > 1 && <button type="button" onClick={() => { const current = devices.findIndex((device) => device.deviceId === selectedDeviceId); switchCamera(devices[(current + 1) % devices.length]?.deviceId ?? ''); }} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold"><SwitchCamera className="h-4 w-4" />Switch camera</button>}
       </div>
-      {screeningResult && screeningResult.classification !== 'SUPPORTED_ID_TYPE' && <div role="alertdialog" aria-modal="true" className="mt-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"><p className="font-black">{screeningResult.classification === 'PAYMENT_CARD_DETECTED' ? 'Unsupported Document Detected' : screeningResult.classification === 'UNSUPPORTED_DOCUMENT' ? 'Unsupported document' : 'Document screening inconclusive'}</p><p className="mt-1">{screeningResult.classification === 'PAYMENT_CARD_DETECTED' ? 'This appears to be a payment card, not an accepted identification document. Please present an approved ID. The image and OCR output were discarded.' : screeningResult.warnings[0]}</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={retake} className="rounded-xl bg-red-700 px-4 py-2.5 text-sm font-bold text-white">Scan Another ID</button><span className="self-center text-xs font-semibold">Or ask staff for the approved manual verification alternative.</span></div></div>}
+      {screeningResult && screeningResult.classification !== 'SUPPORTED_ID_TYPE' && <div role="alert" className="mt-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"><p className="font-black">{screeningResult.classification === 'PAYMENT_CARD_DETECTED' ? 'Unsupported Document Detected' : screeningResult.classification === 'UNSUPPORTED_DOCUMENT' ? 'Unsupported document' : screeningResult.reason === 'ENGINE_UNAVAILABLE' ? 'OCR temporarily unavailable' : 'Document screening inconclusive'}</p><p className="mt-1">{screeningMessage}</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={retake} className="rounded-xl bg-red-700 px-4 py-2.5 text-sm font-bold text-white">Retake Photo</button><button type="button" onClick={retake} className="rounded-xl border border-amber-400 bg-white px-4 py-2.5 text-sm font-bold text-amber-950">Scan Another ID</button>{screeningResult.classification !== 'PAYMENT_CARD_DETECTED' && <button type="button" onClick={() => setManualAssistanceRequested(true)} className="rounded-xl border border-slate-400 bg-white px-4 py-2.5 text-sm font-bold text-slate-800">Request Manual Assistance</button>}</div>{manualAssistanceRequested && <p className="mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs font-semibold leading-5 text-blue-900">Please ask an authorized staff member to assist with another capture or the approved manual identity-verification procedure. This image was not accepted or uploaded, and registration has not been approved.</p>}</div>}
       {confirmed && <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">Photo passed document-category screening and is selected for secure submission. This does not prove authenticity or identity.</p>}
       {error && <div role="alert" className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error}</span></div>}
     </div>
