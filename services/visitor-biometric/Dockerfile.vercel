@@ -1,0 +1,33 @@
+FROM python:3.11-slim-bookworm@sha256:f06d01d4ba3f8ad5af45a3ec87df19c1d317d8e8961edc0fabda61811af6f7cf
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    TF_CPP_MIN_LOG_LEVEL=2 \
+    VISITOR_BIOMETRIC_ENABLED=false \
+    VISITOR_BIOMETRIC_REQUIRE_STORAGE_REFERENCES=true \
+    VISITOR_BIOMETRIC_STORAGE_BUCKET=visitor-identity-private \
+    DEEPFACE_MODEL_PROFILE=opencv-sface-yunet-2021dec-2023mar \
+    DEEPFACE_MODEL=SFace \
+    DEEPFACE_DETECTOR=yunet \
+    DEEPFACE_MAX_CONCURRENCY=1 \
+    DEEPFACE_REQUEST_TIMEOUT_SECONDS=45 \
+    DEEPFACE_REQUESTS_PER_MINUTE=20
+
+WORKDIR /service
+COPY requirements.lock.txt ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock.txt
+COPY app ./app
+
+RUN useradd --create-home --uid 10001 verifier \
+    && chown -R verifier:verifier /service /home/verifier
+USER verifier
+
+# Download both recognition and detector weights during Vercel's cloud build,
+# not from the first visitor request. The build log also records the concrete
+# dependency/weight sizes needed for the Large Functions eligibility check.
+RUN python -m app.preload \
+    && pip check \
+    && python -m app.build_report
+
+EXPOSE 80
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-80} --workers 1 --proxy-headers"]

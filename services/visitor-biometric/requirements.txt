@@ -1,6 +1,15 @@
-fastapi>=0.115,<1
-uvicorn[standard]>=0.34,<1
-pydantic>=2.10,<3
-pillow>=11,<13
-deepface>=0.0.95,<1
-tf-keras>=2.18,<3
+# Human-readable direct dependency pins. Container builds use the reviewed,
+# fully transitive SHA-256-pinned requirements.lock.txt beside this file.
+fastapi==0.162.0
+uvicorn==0.54.0
+pydantic==2.14.1
+pillow==12.2.0
+deepface==0.0.103
+opencv-contrib-python-headless==5.0.0.93
+onnxruntime==1.31.0
+retina-face==0.0.19
+numpy==2.2.6
+pandas==3.1.0
+requests==2.34.2
+gdown==6.4.2
+tqdm==4.70.1

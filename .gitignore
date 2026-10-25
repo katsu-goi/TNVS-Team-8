@@ -21,6 +21,22 @@ Thumbs.db
 .vscode/
 .history/
 tmp/
+.venv/
+__pycache__/
+*.py[cod]
+services/visitor-biometric/fixtures/
+services/visitor-biometric/**/*.jpg
+services/visitor-biometric/**/*.jpeg
+services/visitor-biometric/**/*.png
+services/visitor-biometric/**/*.webp
+services/visitor-biometric/**/*.gif
+services/visitor-biometric/**/*.npy
+services/visitor-biometric/**/*.npz
+services/visitor-biometric/**/*.pkl
+services/visitor-biometric/**/*.h5
+services/visitor-biometric/**/*.onnx
+services/visitor-biometric/**/*.pt
+services/visitor-biometric/**/*.pth
 
 backend/src/main/java/com/photonicomega/facilities/module/ai/domain/AiHealthStatus.java
 backend/src/main/java/com/photonicomega/facilities/module/ai/domain/AiHumanOutcome.java
