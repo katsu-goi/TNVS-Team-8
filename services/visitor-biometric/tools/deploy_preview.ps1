@@ -216,7 +216,8 @@ foreach ($requiredName in $requiredPreviewVariables) {
         throw "Expected exactly one '$requiredName' environment variable."
     }
     $targets = @($matches[0].target)
-    if ($targets.Count -ne 1 -or $targets[0] -ne "preview" -or $matches[0].gitBranch) {
+    $gitBranch = Get-OptionalPropertyValue $matches[0] "gitBranch"
+    if ($targets.Count -ne 1 -or $targets[0] -ne "preview" -or $gitBranch) {
         throw "Environment variable '$requiredName' must be Preview-only and unscoped to a Git branch."
     }
 }
