@@ -125,6 +125,16 @@ class ApiSecurityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["detail"]["code"], "UNAUTHORIZED_SERVICE_REQUEST")
 
+    def test_missing_service_authentication_configuration_fails_closed(self):
+        with patch.dict(os.environ, {"VISITOR_BIOMETRIC_ENABLED": "false"}, clear=True):
+            response = self.client.post(
+                "/v1/readiness",
+                json={"runInference": False},
+                headers={"X-Visitor-Verification-Key": SERVICE_KEY},
+            )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"]["code"], "SERVICE_CONFIGURATION_INVALID")
+
     def test_readiness_reports_model_initialization_failure_without_details(self):
         with patch.dict(os.environ, {**MODEL_ENV, "VISITOR_BIOMETRIC_SERVICE_KEY": SERVICE_KEY}, clear=False), \
                 patch.object(main, "load_deepface", side_effect=RuntimeError("sensitive internal model path")):

@@ -1,4 +1,4 @@
-# Resolved for CPython 3.11 on Debian Bookworm x86_64 on 2026-10-24.
+# Resolved for CPython 3.11 on Debian Bookworm x86_64 on 2026-10-25.
 # Regenerate only through an approved dependency-review change.
 annotated-doc==0.0.5 --hash=sha256:117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101
 annotated-types==0.8.0 --hash=sha256:f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0
@@ -15,6 +15,7 @@ flatbuffers==25.12.19 --hash=sha256:7634f50c427838bb021c2d66a3d1168e9d199b0607e6
 gdown==6.4.2 --hash=sha256:feca9f54800b90f639729975a003958393f3003313c3e9cdb6c9838fe42ae5c6
 h11==0.16.0 --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
 idna==3.20 --hash=sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c
+markupsafe==3.0.4 --hash=sha256:6da83a088f8ef93b2d483a8232a4dbf4d69d3d8496b568a03c56becac43e1808
 numpy==2.2.6 --hash=sha256:ba10f8411898fc418a521833e014a77d3ca01c15b0c6cdcce6a0d2897e6dbbdf
 onnxruntime==1.31.0 --hash=sha256:d4092b78fc5bab77ce6522393098cdb2535423045ecdcff15cc0d022162d6b66
 opencv-contrib-python-headless==5.0.0.93 --hash=sha256:63ddadd47e36fbc903d5ac141d5c90bd305a8044188dd4936a73de80007c9e6c
@@ -38,3 +39,4 @@ typing-inspection==0.4.4 --hash=sha256:65b8397ba37ccbce054456aaccddfc91e6e3083c9
 tzdata==2026.5 --hash=sha256:b683bd1b6659ddcd810ff02ad09ba821d4bf1065072805063eb35c49617905ac
 urllib3==2.8.0 --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3
 uvicorn==0.54.0 --hash=sha256:505bdb0f318731d45f1f712071fc781a8981f6847a31c902c9f5e652d4f67faf
+werkzeug==3.1.9 --hash=sha256:6392e50c78460ba618e5b21f08a71f59c99ce99cdc6cf6e3dd7e6ccca8754fab

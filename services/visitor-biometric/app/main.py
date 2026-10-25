@@ -23,6 +23,9 @@ from .verifier import (
 )
 from .storage import StorageImageReference, download_storage_image
 from .model_manifest import APPROVED_MODEL_PROFILE
+from .deployment_guard import require_safe_vercel_environment
+
+require_safe_vercel_environment()
 
 app = FastAPI(title="HIRNA Visitor Biometric Screening", docs_url=None, redoc_url=None, openapi_url=None)
 

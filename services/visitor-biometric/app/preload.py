@@ -6,10 +6,12 @@ from pathlib import Path
 
 from PIL import Image
 
+from .deployment_guard import main as require_safe_staging_deployment
 from .model_manifest import install_model_license_notices, require_approved_profile, validate_model_artifacts
 
 
 def main() -> None:
+    require_safe_staging_deployment()
     from deepface import DeepFace  # type: ignore
 
     require_approved_profile()

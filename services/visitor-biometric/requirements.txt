@@ -5,6 +5,7 @@ uvicorn==0.54.0
 pydantic==2.14.1
 pillow==12.2.0
 deepface==0.0.103
+werkzeug==3.1.9
 opencv-contrib-python-headless==5.0.0.93
 onnxruntime==1.31.0
 retina-face==0.0.19
