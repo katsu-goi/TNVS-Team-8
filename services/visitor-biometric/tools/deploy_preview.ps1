@@ -23,8 +23,18 @@ function Invoke-CheckedCommand {
         [Parameter(Mandatory)] [string]$FailureMessage
     )
 
-    $result = & $FilePath @Arguments 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell can promote a native program's harmless stderr
+        # banner to a terminating error when the caller uses Stop globally.
+        $ErrorActionPreference = "Continue"
+        $result = & $FilePath @Arguments 2>$null
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -ne 0) {
         throw $FailureMessage
     }
     return ($result | Out-String).Trim()
