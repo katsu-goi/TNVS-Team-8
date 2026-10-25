@@ -60,8 +60,15 @@ MODEL_LICENSES = (
 
 
 def deepface_home() -> Path:
+    """Return DeepFace's effective .deepface directory.
+
+    DeepFace 0.0.103 treats DEEPFACE_HOME as the parent directory and appends
+    ``.deepface`` itself. Keep manifest validation on the identical path so a
+    Vercel runtime HOME override cannot redirect model loading.
+    """
     configured = os.getenv("DEEPFACE_HOME", "").strip()
-    return Path(configured).resolve() if configured else (Path.home() / ".deepface").resolve()
+    parent = Path(configured).resolve() if configured else Path.home().resolve()
+    return (parent / ".deepface").resolve()
 
 
 def require_approved_profile() -> str:
@@ -96,6 +103,8 @@ def validate_model_artifacts() -> list[dict[str, str | int]]:
         if len(matches) != 1:
             raise RuntimeError(f"Expected exactly one {artifact.role} model artifact.")
         path = matches[0]
+        if not os.access(path, os.R_OK):
+            raise RuntimeError(f"The {artifact.role} model artifact is not readable by the runtime user.")
         actual_bytes = path.stat().st_size
         actual_sha256 = _sha256(path)
         if actual_bytes != artifact.bytes or actual_sha256 != artifact.sha256:
