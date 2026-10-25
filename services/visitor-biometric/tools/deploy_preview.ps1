@@ -54,6 +54,36 @@ function Get-OptionalPropertyValue {
     return $property.Value
 }
 
+function Get-DeploymentIdFromCliResponse {
+    param([Parameter(Mandatory)] [object]$Response)
+
+    $deployment = Get-OptionalPropertyValue $Response "deployment"
+    $candidates = @($Response)
+    if ($null -ne $deployment) {
+        $candidates += $deployment
+    }
+    foreach ($candidate in $candidates) {
+        $id = Get-OptionalPropertyValue $candidate "id"
+        if ($id -and [string]$id -match "^dpl_[A-Za-z0-9]+$") {
+            return [string]$id
+        }
+        $inspectorUrl = Get-OptionalPropertyValue $candidate "inspectorUrl"
+        if ($inspectorUrl) {
+            try {
+                $slug = ([uri]$inspectorUrl).AbsolutePath.Trim("/").Split("/")[-1]
+                if ($slug -match "^[A-Za-z0-9]+$") {
+                    return "dpl_$slug"
+                }
+            }
+            catch {
+                # Keep looking. The authoritative API check below still fails
+                # closed if no valid deployment identifier can be recovered.
+            }
+        }
+    }
+    return $null
+}
+
 function Assert-PreviewDeploymentMetadata {
     param(
         [Parameter(Mandatory)] [object]$Metadata,
@@ -109,6 +139,23 @@ function Invoke-MetadataSelfTest {
     $result = Assert-PreviewDeploymentMetadata $valid $approvedBranch $approvedCommit
     if ($result.ApiTarget -ne "null" -or $result.Environment -ne "preview") {
         throw "Valid target=null Preview metadata did not pass."
+    }
+
+    $wrappedCliResponse = [pscustomobject]@{
+        status = "ok"
+        deployment = [pscustomobject]@{
+            id = "dpl_AbCd1234"
+            inspectorUrl = "https://vercel.com/team/project/AbCd1234"
+        }
+    }
+    if ((Get-DeploymentIdFromCliResponse $wrappedCliResponse) -ne "dpl_AbCd1234") {
+        throw "Wrapped Vercel CLI deployment metadata was not parsed."
+    }
+    $inspectorOnlyResponse = [pscustomobject]@{
+        inspectorUrl = "https://vercel.com/team/project/XyZ987"
+    }
+    if ((Get-DeploymentIdFromCliResponse $inspectorOnlyResponse) -ne "dpl_XyZ987") {
+        throw "Vercel inspector URL fallback was not parsed."
     }
 
     $failureFixtures = @(
@@ -282,7 +329,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $deployment = ($deploymentJson | Out-String) | ConvertFrom-Json
-$deploymentId = Get-OptionalPropertyValue $deployment "id"
+$deploymentId = Get-DeploymentIdFromCliResponse $deployment
 if (-not $deploymentId) {
     throw "Vercel did not return a deployment ID; target classification cannot be verified."
 }
