@@ -59,6 +59,8 @@ def validate_signed_storage_url(value: str) -> str:
     bucket = os.getenv("VISITOR_BIOMETRIC_STORAGE_BUCKET", "visitor-identity-private").strip()
     if not bucket or not parsed.path.startswith(f"/storage/v1/object/sign/{quote(bucket, safe='')}/"):
         raise VerificationInputError("Private storage reference has an unauthorized object path.")
+    if not parsed.query:
+        raise VerificationInputError("Private storage reference is not signed correctly.")
     query = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
     if set(query) != {"token"} or len(query["token"]) != 1 or not query["token"][0]:
         raise VerificationInputError("Private storage reference is not signed correctly.")
