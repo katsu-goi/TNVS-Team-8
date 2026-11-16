@@ -130,6 +130,8 @@ class AnalyticsControllerTest {
                 List.of(new SimpleGrantedAuthority("ROLE_SUPER_ADMIN")));
         adminToken = jwtTokenProvider.generateAccessToken(userDetails);
         aiStateService.reset();
+        securityLogRepository.deleteAll();
+        loginHistoryRepository.deleteAll();
 
         // Capture bootstrap-seeded baseline so assertions are robust regardless
         // of shared application-context seed data.
