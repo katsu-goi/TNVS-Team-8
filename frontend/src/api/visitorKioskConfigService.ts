@@ -88,12 +88,21 @@ export type VisitorBiometricReadiness = {
     service: {
       connected: boolean;
       featureFlagEnabled: boolean | null;
+      modelProfile?: string | null;
       model: string | null;
       detector: string | null;
       modelStatus: 'INITIALIZED' | 'NOT_INITIALIZED' | 'ERROR' | 'UNKNOWN';
       inferenceStatus: 'PASSED' | 'NOT_TESTED' | 'FAILED' | 'UNKNOWN';
+      inferenceOutcome?: 'MATCH_INDICATED' | 'MISMATCH_INDICATED' | 'INCONCLUSIVE' | 'NO_FACE_DETECTED' | 'MULTIPLE_FACES_DETECTED' | 'PROCESSING_FAILED' | null;
       inferenceTestedAt: string | null;
       errorCode: string | null;
+      modelInitializationMilliseconds?: number | null;
+      inferenceDurationMilliseconds?: number | null;
+      peakResidentMemoryBytes?: number | null;
+      processStartedAt?: string | null;
+      processUptimeMilliseconds?: number | null;
+      requestDurationMilliseconds?: number | null;
+      coldStart?: boolean | null;
     };
     missing: string[];
   };

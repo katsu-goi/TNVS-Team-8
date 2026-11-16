@@ -11,11 +11,13 @@ from typing import Any, Protocol
 
 from PIL import Image, ImageStat, UnidentifiedImageError
 
+from .model_manifest import require_approved_profile, validate_model_artifacts
+
 ALLOWED_MIME = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_IMAGE_PIXELS = 25_000_000
-SUPPORTED_MODELS = {"VGG-Face", "Facenet", "Facenet512", "ArcFace", "SFace"}
-SUPPORTED_DETECTORS = {"opencv", "retinaface", "mtcnn", "fastmtcnn", "yunet", "centerface", "ssd"}
+SUPPORTED_MODELS = {"SFace"}
+SUPPORTED_DETECTORS = {"yunet"}
 
 
 class VerificationInputError(ValueError):
@@ -30,8 +32,8 @@ class DeepFaceAdapter(Protocol):
 
 @dataclass(frozen=True)
 class VerificationSettings:
-    model_name: str = "Facenet512"
-    detector_backend: str = "retinaface"
+    model_name: str = "SFace"
+    detector_backend: str = "yunet"
     anti_spoofing: bool = False
 
 
@@ -189,11 +191,15 @@ def load_deepface() -> DeepFaceAdapter:
 
 def initialize_deepface(adapter: DeepFaceAdapter, settings: VerificationSettings) -> None:
     adapter.build_model(model_name=settings.model_name)
+    # Detection weights are preloaded during the image build. Validate both
+    # immutable artifacts again when a fresh Vercel instance initializes.
+    validate_model_artifacts()
 
 
 def settings_from_environment() -> VerificationSettings:
-    model_name = os.getenv("DEEPFACE_MODEL", "Facenet512").strip() or "Facenet512"
-    detector_backend = os.getenv("DEEPFACE_DETECTOR", "retinaface").strip().lower() or "retinaface"
+    require_approved_profile()
+    model_name = os.getenv("DEEPFACE_MODEL", "").strip()
+    detector_backend = os.getenv("DEEPFACE_DETECTOR", "").strip().lower()
     if model_name not in SUPPORTED_MODELS:
         raise RuntimeError("Unsupported DeepFace model configuration.")
     if detector_backend not in SUPPORTED_DETECTORS:

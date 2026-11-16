@@ -1,35 +1,30 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm@sha256:f06d01d4ba3f8ad5af45a3ec87df19c1d317d8e8961edc0fabda61811af6f7cf
 
-ARG DEEPFACE_MODEL=Facenet512
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     TF_CPP_MIN_LOG_LEVEL=2 \
     VISITOR_BIOMETRIC_ENABLED=false \
-    DEEPFACE_MODEL=${DEEPFACE_MODEL} \
-    DEEPFACE_DETECTOR=retinaface \
+    DEEPFACE_MODEL_PROFILE=opencv-sface-yunet-2021dec-2023mar \
+    DEEPFACE_MODEL=SFace \
+    DEEPFACE_DETECTOR=yunet \
     DEEPFACE_MAX_CONCURRENCY=1 \
     DEEPFACE_REQUEST_TIMEOUT_SECONDS=45 \
     DEEPFACE_REQUESTS_PER_MINUTE=20
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /service
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.lock.txt ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock.txt
 COPY app ./app
 
 RUN useradd --create-home --uid 10001 verifier \
     && chown -R verifier:verifier /service
 USER verifier
 
-# Production image builds may set this to true to download and initialize the
-# selected recognition model during the controlled build rather than on the
-# first readiness check. Detector initialization is verified by the authorized
-# readiness inference using the configured non-sensitive test images.
+# Production image builds may set this to true to download and initialize both
+# approved models, validate their exact byte counts and SHA-256 digests, and
+# install their license notices during the controlled build.
 ARG DEEPFACE_PRELOAD_MODEL=false
-RUN if [ "$DEEPFACE_PRELOAD_MODEL" = "true" ]; then python -c "import os; from deepface import DeepFace; DeepFace.build_model(model_name=os.environ['DEEPFACE_MODEL'])"; fi
+RUN if [ "$DEEPFACE_PRELOAD_MODEL" = "true" ]; then python -m app.preload; fi
 
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \

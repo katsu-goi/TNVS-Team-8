@@ -91,19 +91,36 @@ type FacialScreening = {
   distance: number | null; threshold: number | null; antiSpoofingStatus: string;
 };
 
-async function runFacialScreening(requestId: string, idImage: string, selfieImage: string): Promise<FacialScreening> {
+type BiometricImageReference = {
+  signedUrl: string;
+  expectedMime: "image/jpeg" | "image/png" | "image/webp";
+  expectedBytes: number;
+};
+
+async function runFacialScreening(
+  requestId: string,
+  idImageReference: BiometricImageReference,
+  selfieImageReference: BiometricImageReference,
+): Promise<FacialScreening> {
   const endpoint = envText("VISITOR_BIOMETRIC_SERVICE_URL").replace(/\/+$/, "");
   const key = envText("VISITOR_BIOMETRIC_SERVICE_KEY");
   const fallback: FacialScreening = {
     status: "PROCESSING_FAILED", provider: "DEEPFACE", model: null, detector: null,
     distance: null, threshold: null, antiSpoofingStatus: "INCONCLUSIVE",
   };
+  const timeoutSeconds = Math.max(10, Math.min(120, Number(envText("VISITOR_BIOMETRIC_VERIFY_TIMEOUT_SECONDS")) || 90));
   try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "X-Visitor-Verification-Key": key,
+    };
+    const vercelBypass = envText("VISITOR_BIOMETRIC_VERCEL_BYPASS_SECRET");
+    if (vercelBypass) headers["x-vercel-protection-bypass"] = vercelBypass;
     const response = await fetch(`${endpoint}/v1/verify`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Visitor-Verification-Key": key },
-      body: JSON.stringify({ requestId, idImage, selfieImage }),
-      signal: AbortSignal.timeout(50_000),
+      headers,
+      body: JSON.stringify({ requestId, idImageReference, selfieImageReference }),
+      signal: AbortSignal.timeout(timeoutSeconds * 1000),
     });
     if (!response.ok) {
       console.error(`visitor biometric service failed category=HTTP_${response.status}`);
@@ -129,6 +146,65 @@ async function runFacialScreening(requestId: string, idImage: string, selfieImag
     console.error(`visitor biometric service failed category=${error instanceof DOMException && error.name === "TimeoutError" ? "TIMEOUT" : "UNAVAILABLE"}`);
     return fallback;
   }
+}
+
+async function cleanupSecretAuthorized(req: Request): Promise<boolean> {
+  const expected = envText("VISITOR_BIOMETRIC_CLEANUP_KEY");
+  const provided = req.headers.get("X-Visitor-Biometric-Cleanup-Key")?.trim() ?? "";
+  if (expected.length < 32 || provided.length < 32) return false;
+  const expectedHash = await sha256(expected);
+  const providedHash = await sha256(provided);
+  let difference = expectedHash.length ^ providedHash.length;
+  const comparedLength = Math.max(expectedHash.length, providedHash.length);
+  for (let index = 0; index < comparedLength; index += 1) {
+    difference |= (expectedHash.charCodeAt(index) || 0) ^ (providedHash.charCodeAt(index) || 0);
+  }
+  return difference === 0;
+}
+
+async function recordTemporaryObjectDeleted(id: string, errorCode: string | null) {
+  const values: Record<string, unknown> = {
+    deletion_attempts: 1,
+    last_deletion_attempt_at: new Date().toISOString(),
+    last_error_code: errorCode,
+  };
+  if (!errorCode) values.deleted_at = new Date().toISOString();
+  const { error } = await db.from("visitor_biometric_temporary_objects").update(values).eq("id", id);
+  if (error) console.error("temporary visitor selfie ledger update failed category=DATABASE_UPDATE_FAILED");
+}
+
+async function handleBiometricTemporaryCleanup(_ctx: AuthContext | null, req: Request) {
+  if (envText("VISITOR_BIOMETRIC_CLEANUP_KEY").length < 32) {
+    return jsonResponse(fail("Temporary-object cleanup is not configured.", "BIOMETRIC_CLEANUP_NOT_CONFIGURED"), 503);
+  }
+  if (!await cleanupSecretAuthorized(req)) {
+    return jsonResponse(fail("Temporary-object cleanup authentication failed.", "BIOMETRIC_CLEANUP_UNAUTHORIZED"), 401);
+  }
+  const { data, error } = await db.from("visitor_biometric_temporary_objects")
+    .select("id, storage_path, deletion_attempts")
+    .is("deleted_at", null)
+    .lte("delete_after", new Date().toISOString())
+    .order("delete_after", { ascending: true })
+    .limit(100);
+  if (error) throw new Error(`temporary visitor selfie cleanup lookup failed: ${error.message}`);
+  let deleted = 0;
+  let failed = 0;
+  for (const row of data ?? []) {
+    const { error: removalError } = await db.storage.from(IMAGE_BUCKET).remove([row.storage_path]);
+    const attempts = Math.max(0, Number(row.deletion_attempts) || 0) + 1;
+    const values: Record<string, unknown> = {
+      deletion_attempts: attempts,
+      last_deletion_attempt_at: new Date().toISOString(),
+      last_error_code: removalError ? "STORAGE_DELETE_FAILED" : null,
+    };
+    if (!removalError) values.deleted_at = new Date().toISOString();
+    const { error: updateError } = await db.from("visitor_biometric_temporary_objects")
+      .update(values).eq("id", row.id);
+    if (removalError || updateError) failed += 1;
+    else deleted += 1;
+  }
+  console.log(`visitor_biometric_temporary_cleanup candidates=${data?.length ?? 0} deleted=${deleted} failed=${failed}`);
+  return jsonResponse(ok({ candidates: data?.length ?? 0, deleted, failed }, "Temporary biometric object cleanup completed"), 200);
 }
 
 async function kioskPrivacyConfig(activeDepartments: string[]) {
@@ -729,25 +805,66 @@ async function handleKioskRegister(_ctx: AuthContext | null, req: Request, body:
     }, "This registration was already received"), 200);
   }
 
-  const facial = biometricEnabled && selfie && biometricAuthorization
-    ? await runFacialScreening(crypto.randomUUID(), idImageDataUrl, selfieDataUrl)
-    : {
-      status: biometricEnabled ? "INCONCLUSIVE" : "PROVIDER_NOT_CONFIGURED",
-      provider: null, model: null, detector: null, distance: null, threshold: null,
-      antiSpoofingStatus: "NOT_PERFORMED",
-    };
-
   const visitorId = crypto.randomUUID();
-  const statusTokenIssuedAt = new Date().toISOString();
-  const statusToken = await signedVisitorToken("vss_", "visitor-status", visitorId, statusTokenIssuedAt);
-  const statusTokenHash = await sha256(statusToken);
   const storagePath = `${visitorId}/id-front-${crypto.randomUUID()}.${image.extension}`;
   const { error: uploadError } = await db.storage.from(IMAGE_BUCKET).upload(storagePath, image.bytes, {
     contentType: image.mime,
+    cacheControl: "0",
     upsert: false,
   });
   if (uploadError) throw new Error(`secure ID image upload failed: ${uploadError.message}`);
 
+  let facial: FacialScreening = {
+      status: biometricEnabled ? "INCONCLUSIVE" : "PROVIDER_NOT_CONFIGURED",
+      provider: null, model: null, detector: null, distance: null, threshold: null,
+      antiSpoofingStatus: "NOT_PERFORMED",
+    };
+  if (biometricEnabled && selfie && biometricAuthorization) {
+    const selfieStoragePath = `${visitorId}/face-capture-${crypto.randomUUID()}.${selfie.extension}`;
+    const temporaryObjectId = crypto.randomUUID();
+    const { error: ledgerError } = await db.from("visitor_biometric_temporary_objects").insert({
+      id: temporaryObjectId,
+      storage_path: selfieStoragePath,
+      delete_after: new Date(Date.now() + 15 * 60_000).toISOString(),
+    });
+    if (ledgerError) {
+      await db.storage.from(IMAGE_BUCKET).remove([storagePath]);
+      throw new Error(`temporary selfie deletion ledger failed: ${ledgerError.message}`);
+    }
+    const { error: selfieUploadError } = await db.storage.from(IMAGE_BUCKET).upload(selfieStoragePath, selfie.bytes, {
+      contentType: selfie.mime,
+      cacheControl: "0",
+      upsert: false,
+    });
+    if (selfieUploadError) {
+      await recordTemporaryObjectDeleted(temporaryObjectId, null);
+      await db.storage.from(IMAGE_BUCKET).remove([storagePath]);
+      throw new Error(`temporary selfie upload failed: ${selfieUploadError.message}`);
+    }
+    try {
+      const [{ data: idSigned, error: idSignError }, { data: selfieSigned, error: selfieSignError }] = await Promise.all([
+        db.storage.from(IMAGE_BUCKET).createSignedUrl(storagePath, 300),
+        db.storage.from(IMAGE_BUCKET).createSignedUrl(selfieStoragePath, 300),
+      ]);
+      if (idSignError || selfieSignError || !idSigned?.signedUrl || !selfieSigned?.signedUrl) {
+        console.error("visitor biometric service failed category=STORAGE_REFERENCE_CREATION_FAILED");
+      } else {
+        facial = await runFacialScreening(
+          crypto.randomUUID(),
+          { signedUrl: idSigned.signedUrl, expectedMime: image.mime, expectedBytes: image.bytes.length },
+          { signedUrl: selfieSigned.signedUrl, expectedMime: selfie.mime, expectedBytes: selfie.bytes.length },
+        );
+      }
+    } finally {
+      const { error: selfieDeleteError } = await db.storage.from(IMAGE_BUCKET).remove([selfieStoragePath]);
+      await recordTemporaryObjectDeleted(temporaryObjectId, selfieDeleteError ? "STORAGE_DELETE_FAILED" : null);
+      if (selfieDeleteError) console.error("temporary visitor selfie cleanup failed category=STORAGE_DELETE_FAILED");
+    }
+  }
+
+  const statusTokenIssuedAt = new Date().toISOString();
+  const statusToken = await signedVisitorToken("vss_", "visitor-status", visitorId, statusTokenIssuedAt);
+  const statusTokenHash = await sha256(statusToken);
   const retentionDays = Number(policy.retentionDays);
   const deleteAfter = Number.isInteger(retentionDays) && retentionDays > 0
     ? new Date(Date.now() + retentionDays * 24 * 60 * 60_000).toISOString()
@@ -2169,6 +2286,7 @@ const routes = [
   { method: "POST", path: "/admin/gmail-oauth/disconnect", guard: DIRECT_SUPER_ADMIN, handler: handleGmailOAuthDisconnect },
   { method: "GET", path: "/visitor-kiosk/config", guard: { kind: "public" }, handler: handleKioskConfig },
   { method: "POST", path: "/visitor-kiosk/register", guard: { kind: "public" }, handler: handleKioskRegister },
+  { method: "POST", path: "/visitor-biometric/temporary-cleanup", guard: { kind: "public" }, handler: handleBiometricTemporaryCleanup },
   { method: "POST", path: "/visitor-pass/inspect", guard: { kind: "public" }, handler: handleInspectVisitorPass },
   { method: "POST", path: "/visitor-status/inspect", guard: { kind: "public" }, handler: handleInspectVisitorStatus },
   { method: "POST", path: "/visitor-passes/check-in", guard: { kind: "assignedRoles", roles: VISITOR_OPERATIONS_ROLES }, handler: (ctx: AuthContext | null, req: Request, body: unknown) => handleVisitorPassScan(ctx, req, body, false) },
